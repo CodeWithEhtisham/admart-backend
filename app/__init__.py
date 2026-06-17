@@ -1,0 +1,1 @@
+"""Admart FastAPI backend package."""
