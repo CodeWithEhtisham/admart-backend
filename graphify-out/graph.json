@@ -1,0 +1,3162 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {
+    "hyperedges": [
+      {
+        "id": "flux_image_generation_proxy_flow",
+        "label": "Flux Image Generation Proxy Flow",
+        "nodes": [
+          "app_main_text_to_image",
+          "services_flux_client_start_text_to_image",
+          "dgx_flux_text2image_server_generate",
+          "dgx_flux_text2image_server_run_text2img"
+        ],
+        "relation": "implement",
+        "confidence": "INFERRED",
+        "confidence_score": 0.85,
+        "source_file": "app/services/flux_client.py"
+      },
+      {
+        "id": "django_app_bootstrap",
+        "label": "Django Application Bootstrap",
+        "nodes": [
+          "config_settings_django_settings",
+          "config_urls_urlpatterns",
+          "config_asgi_application",
+          "config_wsgi_application"
+        ],
+        "relation": "participate_in",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": "config/settings.py"
+      },
+      {
+        "id": "api_design_and_implementation",
+        "label": "API Design and Implementation Template Flow",
+        "nodes": [
+          "api_design_principles_skill",
+          "resources_implementation_playbook",
+          "assets_rest_api_template"
+        ],
+        "relation": "participate_in",
+        "confidence": "INFERRED",
+        "confidence_score": 0.85,
+        "source_file": ".agent/skills/api-design-principles/SKILL.md"
+      },
+      {
+        "id": "full_stack_orchestration_collaborators",
+        "label": "Full Stack Orchestration Subagent Collaboration",
+        "nodes": [
+          "full_stack_orchestration_full_stack_feature_skill",
+          "backend_architect_skill",
+          "security_auditor_skill"
+        ],
+        "relation": "implement",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": ".agent/skills/full-stack-orchestration-full-stack-feature/SKILL.md"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "label": "manage.py",
+      "file_type": "code",
+      "source_file": "manage.py",
+      "source_location": "L1",
+      "id": "manage_py",
+      "community": 6,
+      "norm_label": "manage.py"
+    },
+    {
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "manage.py",
+      "source_location": "L7",
+      "id": "admart_backend_manage_main",
+      "community": 6,
+      "norm_label": "main()"
+    },
+    {
+      "label": "Run administrative tasks.",
+      "file_type": "rationale",
+      "source_file": "manage.py",
+      "source_location": "L8",
+      "id": "admart_backend_manage_rationale_8",
+      "community": 6,
+      "norm_label": "run administrative tasks."
+    },
+    {
+      "label": "dgx_flux_text2image_server.py",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L1",
+      "id": "dgx_flux_text2image_server_py",
+      "community": 2,
+      "norm_label": "dgx_flux_text2image_server.py"
+    },
+    {
+      "label": "_torch_dtype()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L76",
+      "id": "admart_backend_dgx_flux_text2image_server_torch_dtype",
+      "community": 2,
+      "norm_label": "_torch_dtype()"
+    },
+    {
+      "label": "_round_to_multiple()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L84",
+      "id": "admart_backend_dgx_flux_text2image_server_round_to_multiple",
+      "community": 2,
+      "norm_label": "_round_to_multiple()"
+    },
+    {
+      "label": "_clear_cuda_cache()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L88",
+      "id": "admart_backend_dgx_flux_text2image_server_clear_cuda_cache",
+      "community": 2,
+      "norm_label": "_clear_cuda_cache()"
+    },
+    {
+      "label": "_gpu_max_memory()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L98",
+      "id": "admart_backend_dgx_flux_text2image_server_gpu_max_memory",
+      "community": 2,
+      "norm_label": "_gpu_max_memory()"
+    },
+    {
+      "label": "_resolve_size()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L110",
+      "id": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "community": 2,
+      "norm_label": "_resolve_size()"
+    },
+    {
+      "label": "_resolve_generation_size()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L122",
+      "id": "admart_backend_dgx_flux_text2image_server_resolve_generation_size",
+      "community": 2,
+      "norm_label": "_resolve_generation_size()"
+    },
+    {
+      "label": "_generation_attempt_sizes()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L134",
+      "id": "admart_backend_dgx_flux_text2image_server_generation_attempt_sizes",
+      "community": 2,
+      "norm_label": "_generation_attempt_sizes()"
+    },
+    {
+      "label": "_is_cuda_oom()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L147",
+      "id": "admart_backend_dgx_flux_text2image_server_is_cuda_oom",
+      "community": 2,
+      "norm_label": "_is_cuda_oom()"
+    },
+    {
+      "label": "_build_prompt()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L151",
+      "id": "admart_backend_dgx_flux_text2image_server_build_prompt",
+      "community": 2,
+      "norm_label": "_build_prompt()"
+    },
+    {
+      "label": "get_t2i_pipe()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L159",
+      "id": "admart_backend_dgx_flux_text2image_server_get_t2i_pipe",
+      "community": 2,
+      "norm_label": "get_t2i_pipe()"
+    },
+    {
+      "label": "run_text2img()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L184",
+      "id": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "community": 2,
+      "norm_label": "run_text2img()"
+    },
+    {
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L278",
+      "id": "admart_backend_dgx_flux_text2image_server_health",
+      "community": 2,
+      "norm_label": "health()"
+    },
+    {
+      "label": "get_styles()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L292",
+      "id": "admart_backend_dgx_flux_text2image_server_get_styles",
+      "community": 2,
+      "norm_label": "get_styles()"
+    },
+    {
+      "label": "generate()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L297",
+      "id": "admart_backend_dgx_flux_text2image_server_generate",
+      "community": 2,
+      "norm_label": "generate()"
+    },
+    {
+      "label": "get_status()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L347",
+      "id": "admart_backend_dgx_flux_text2image_server_get_status",
+      "community": 2,
+      "norm_label": "get_status()"
+    },
+    {
+      "label": "serve_output()",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L374",
+      "id": "admart_backend_dgx_flux_text2image_server_serve_output",
+      "community": 2,
+      "norm_label": "serve_output()"
+    },
+    {
+      "label": "Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has",
+      "file_type": "rationale",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L1",
+      "id": "admart_backend_dgx_flux_text2image_server_rationale_1",
+      "community": 2,
+      "norm_label": "admart dgx1 flux text-to-image api.  copy this file to the dgx1 server that has"
+    },
+    {
+      "label": "rest-api-template.py",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L1",
+      "id": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "community": 1,
+      "norm_label": "rest-api-template.py"
+    },
+    {
+      "label": "UserStatus",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L38",
+      "id": "assets_rest_api_template_userstatus",
+      "community": 1,
+      "norm_label": "userstatus"
+    },
+    {
+      "label": "str",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "id": "str",
+      "community": 3,
+      "norm_label": "str"
+    },
+    {
+      "label": "Enum",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "id": "enum",
+      "community": 1,
+      "norm_label": "enum"
+    },
+    {
+      "label": "UserBase",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L43",
+      "id": "assets_rest_api_template_userbase",
+      "community": 1,
+      "norm_label": "userbase"
+    },
+    {
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "id": "basemodel",
+      "community": 1,
+      "norm_label": "basemodel"
+    },
+    {
+      "label": "UserCreate",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L48",
+      "id": "assets_rest_api_template_usercreate",
+      "community": 1,
+      "norm_label": "usercreate"
+    },
+    {
+      "label": "UserUpdate",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L51",
+      "id": "assets_rest_api_template_userupdate",
+      "community": 1,
+      "norm_label": "userupdate"
+    },
+    {
+      "label": "User",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L56",
+      "id": "assets_rest_api_template_user",
+      "community": 1,
+      "norm_label": "user"
+    },
+    {
+      "label": "PaginationParams",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L64",
+      "id": "assets_rest_api_template_paginationparams",
+      "community": 1,
+      "norm_label": "paginationparams"
+    },
+    {
+      "label": "PaginatedResponse",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L68",
+      "id": "assets_rest_api_template_paginatedresponse",
+      "community": 1,
+      "norm_label": "paginatedresponse"
+    },
+    {
+      "label": "ErrorDetail",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L76",
+      "id": "assets_rest_api_template_errordetail",
+      "community": 1,
+      "norm_label": "errordetail"
+    },
+    {
+      "label": "ErrorResponse",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L81",
+      "id": "assets_rest_api_template_errorresponse",
+      "community": 1,
+      "norm_label": "errorresponse"
+    },
+    {
+      "label": "http_exception_handler()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L87",
+      "id": "assets_rest_api_template_http_exception_handler",
+      "community": 1,
+      "norm_label": "http_exception_handler()"
+    },
+    {
+      "label": "list_users()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L99",
+      "id": "assets_rest_api_template_list_users",
+      "community": 1,
+      "norm_label": "list_users()"
+    },
+    {
+      "label": "create_user()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L129",
+      "id": "assets_rest_api_template_create_user",
+      "community": 1,
+      "norm_label": "create_user()"
+    },
+    {
+      "label": "get_user()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L142",
+      "id": "assets_rest_api_template_get_user",
+      "community": 1,
+      "norm_label": "get_user()"
+    },
+    {
+      "label": "update_user()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L161",
+      "id": "assets_rest_api_template_update_user",
+      "community": 1,
+      "norm_label": "update_user()"
+    },
+    {
+      "label": "delete_user()",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L175",
+      "id": "assets_rest_api_template_delete_user",
+      "community": 1,
+      "norm_label": "delete_user()"
+    },
+    {
+      "label": "Production-ready REST API template using FastAPI. Includes pagination, filtering",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L1",
+      "id": "assets_rest_api_template_rationale_1",
+      "community": 1,
+      "norm_label": "production-ready rest api template using fastapi. includes pagination, filtering"
+    },
+    {
+      "label": "List users with pagination and filtering.",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L105",
+      "id": "assets_rest_api_template_rationale_105",
+      "community": 1,
+      "norm_label": "list users with pagination and filtering."
+    },
+    {
+      "label": "Partially update user.",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L162",
+      "id": "assets_rest_api_template_rationale_162",
+      "community": 1,
+      "norm_label": "partially update user."
+    },
+    {
+      "label": "urls.py",
+      "file_type": "code",
+      "source_file": "config/urls.py",
+      "source_location": "L1",
+      "id": "config_urls_py",
+      "community": 11,
+      "norm_label": "urls.py"
+    },
+    {
+      "label": "URL configuration for config project.  The `urlpatterns` list routes URLs to vie",
+      "file_type": "rationale",
+      "source_file": "config/urls.py",
+      "source_location": "L1",
+      "id": "config_urls_rationale_1",
+      "community": 11,
+      "norm_label": "url configuration for config project.  the `urlpatterns` list routes urls to vie"
+    },
+    {
+      "label": "settings.py",
+      "file_type": "code",
+      "source_file": "config/settings.py",
+      "source_location": "L1",
+      "id": "config_settings_py",
+      "community": 10,
+      "norm_label": "settings.py"
+    },
+    {
+      "label": "Django settings for config project.  Generated by 'django-admin startproject' us",
+      "file_type": "rationale",
+      "source_file": "config/settings.py",
+      "source_location": "L1",
+      "id": "config_settings_rationale_1",
+      "community": 10,
+      "norm_label": "django settings for config project.  generated by 'django-admin startproject' us"
+    },
+    {
+      "label": "asgi.py",
+      "file_type": "code",
+      "source_file": "config/asgi.py",
+      "source_location": "L1",
+      "id": "config_asgi_py",
+      "community": 9,
+      "norm_label": "asgi.py"
+    },
+    {
+      "label": "ASGI config for config project.  It exposes the ASGI callable as a module-level",
+      "file_type": "rationale",
+      "source_file": "config/asgi.py",
+      "source_location": "L1",
+      "id": "config_asgi_rationale_1",
+      "community": 9,
+      "norm_label": "asgi config for config project.  it exposes the asgi callable as a module-level"
+    },
+    {
+      "label": "wsgi.py",
+      "file_type": "code",
+      "source_file": "config/wsgi.py",
+      "source_location": "L1",
+      "id": "config_wsgi_py",
+      "community": 12,
+      "norm_label": "wsgi.py"
+    },
+    {
+      "label": "WSGI config for config project.  It exposes the WSGI callable as a module-level",
+      "file_type": "rationale",
+      "source_file": "config/wsgi.py",
+      "source_location": "L1",
+      "id": "config_wsgi_rationale_1",
+      "community": 12,
+      "norm_label": "wsgi config for config project.  it exposes the wsgi callable as a module-level"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "config/__init__.py",
+      "source_location": "L1",
+      "id": "config_init_py",
+      "community": 17,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L1",
+      "id": "app_main_py",
+      "community": 3,
+      "norm_label": "main.py"
+    },
+    {
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L27",
+      "id": "app_main_health",
+      "community": 3,
+      "norm_label": "health()"
+    },
+    {
+      "label": "text_to_image()",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L43",
+      "id": "app_main_text_to_image",
+      "community": 3,
+      "norm_label": "text_to_image()"
+    },
+    {
+      "label": "text_to_image_status()",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L51",
+      "id": "app_main_text_to_image_status",
+      "community": 3,
+      "norm_label": "text_to_image_status()"
+    },
+    {
+      "label": "text_to_image_file()",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L59",
+      "id": "app_main_text_to_image_file",
+      "community": 3,
+      "norm_label": "text_to_image_file()"
+    },
+    {
+      "label": "text_to_image_alias()",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": "L68",
+      "id": "app_main_text_to_image_alias",
+      "community": 3,
+      "norm_label": "text_to_image_alias()"
+    },
+    {
+      "label": "schemas.py",
+      "file_type": "code",
+      "source_file": "app/schemas.py",
+      "source_location": "L1",
+      "id": "app_schemas_py",
+      "community": 3,
+      "norm_label": "schemas.py"
+    },
+    {
+      "label": "normalize_style()",
+      "file_type": "code",
+      "source_file": "app/schemas.py",
+      "source_location": "L25",
+      "id": "app_schemas_normalize_style",
+      "community": 3,
+      "norm_label": "normalize_style()"
+    },
+    {
+      "label": "TextToImageRequest",
+      "file_type": "code",
+      "source_file": "app/schemas.py",
+      "source_location": "L29",
+      "id": "app_schemas_texttoimagerequest",
+      "community": 3,
+      "norm_label": "texttoimagerequest"
+    },
+    {
+      "label": "TextToImageJobResponse",
+      "file_type": "code",
+      "source_file": "app/schemas.py",
+      "source_location": "L37",
+      "id": "app_schemas_texttoimagejobresponse",
+      "community": 3,
+      "norm_label": "texttoimagejobresponse"
+    },
+    {
+      "label": "TextToImageStatusResponse",
+      "file_type": "code",
+      "source_file": "app/schemas.py",
+      "source_location": "L43",
+      "id": "app_schemas_texttoimagestatusresponse",
+      "community": 3,
+      "norm_label": "texttoimagestatusresponse"
+    },
+    {
+      "label": "config.py",
+      "file_type": "code",
+      "source_file": "app/config.py",
+      "source_location": "L1",
+      "id": "app_config_py",
+      "community": 0,
+      "norm_label": "config.py"
+    },
+    {
+      "label": "_load_dotenv()",
+      "file_type": "code",
+      "source_file": "app/config.py",
+      "source_location": "L6",
+      "id": "app_config_load_dotenv",
+      "community": 0,
+      "norm_label": "_load_dotenv()"
+    },
+    {
+      "label": "_split_csv()",
+      "file_type": "code",
+      "source_file": "app/config.py",
+      "source_location": "L20",
+      "id": "app_config_split_csv",
+      "community": 0,
+      "norm_label": "_split_csv()"
+    },
+    {
+      "label": "Settings",
+      "file_type": "code",
+      "source_file": "app/config.py",
+      "source_location": "L28",
+      "id": "app_config_settings",
+      "community": 0,
+      "norm_label": "settings"
+    },
+    {
+      "label": ".__post_init__()",
+      "file_type": "code",
+      "source_file": "app/config.py",
+      "source_location": "L36",
+      "id": "app_config_settings_post_init",
+      "community": 0,
+      "norm_label": ".__post_init__()"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "app/__init__.py",
+      "source_location": "L1",
+      "id": "app_init_py",
+      "community": 8,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "Admart FastAPI backend package.",
+      "file_type": "rationale",
+      "source_file": "app/__init__.py",
+      "source_location": "L1",
+      "id": "app_init_rationale_1",
+      "community": 8,
+      "norm_label": "admart fastapi backend package."
+    },
+    {
+      "label": "flux_client.py",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L1",
+      "id": "app_services_flux_client_py",
+      "community": 0,
+      "norm_label": "flux_client.py"
+    },
+    {
+      "label": "FluxClientError",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L12",
+      "id": "services_flux_client_fluxclienterror",
+      "community": 0,
+      "norm_label": "fluxclienterror"
+    },
+    {
+      "label": "Exception",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "id": "exception",
+      "community": 0,
+      "norm_label": "exception"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L13",
+      "id": "services_flux_client_fluxclienterror_init",
+      "community": 0,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": "_absolute_url()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L18",
+      "id": "services_flux_client_absolute_url",
+      "community": 0,
+      "norm_label": "_absolute_url()"
+    },
+    {
+      "label": "_download_image()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L22",
+      "id": "services_flux_client_download_image",
+      "community": 0,
+      "norm_label": "_download_image()"
+    },
+    {
+      "label": "_cache_image()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L40",
+      "id": "services_flux_client_cache_image",
+      "community": 0,
+      "norm_label": "_cache_image()"
+    },
+    {
+      "label": "get_dgx_health()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L56",
+      "id": "services_flux_client_get_dgx_health",
+      "community": 0,
+      "norm_label": "get_dgx_health()"
+    },
+    {
+      "label": "start_text_to_image()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L63",
+      "id": "services_flux_client_start_text_to_image",
+      "community": 0,
+      "norm_label": "start_text_to_image()"
+    },
+    {
+      "label": "get_text_to_image_status()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L101",
+      "id": "services_flux_client_get_text_to_image_status",
+      "community": 0,
+      "norm_label": "get_text_to_image_status()"
+    },
+    {
+      "label": "fetch_text_to_image_file()",
+      "file_type": "code",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L149",
+      "id": "services_flux_client_fetch_text_to_image_file",
+      "community": 0,
+      "norm_label": "fetch_text_to_image_file()"
+    },
+    {
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "app/services/__init__.py",
+      "source_location": "L1",
+      "id": "app_services_init_py",
+      "community": 16,
+      "norm_label": "__init__.py"
+    },
+    {
+      "label": "Service clients for external model APIs.",
+      "file_type": "rationale",
+      "source_file": "app/services/__init__.py",
+      "source_location": "L1",
+      "id": "services_init_rationale_1",
+      "community": 16,
+      "norm_label": "service clients for external model apis."
+    },
+    {
+      "label": "FastAPI App Instance",
+      "file_type": "code",
+      "source_file": "app/main.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "app_main_app",
+      "community": 3,
+      "norm_label": "fastapi app instance"
+    },
+    {
+      "label": "FastAPI DGX1 Flux API App Instance",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Hosted on a separate high-performance DGX1 GPU server (CUDA_VISIBLE_DEVICES=4,5,6,7, 22GiB limit per GPU) to handle resource-heavy Flux models offloading from Django web server.",
+      "id": "dgx_flux_text2image_server_app",
+      "community": 0,
+      "norm_label": "fastapi dgx1 flux api app instance"
+    },
+    {
+      "label": "run_text2img",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_run_text2img",
+      "community": 0,
+      "norm_label": "run_text2img"
+    },
+    {
+      "label": "generate",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_generate",
+      "community": 0,
+      "norm_label": "generate"
+    },
+    {
+      "label": "get_status",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_get_status",
+      "community": 0,
+      "norm_label": "get_status"
+    },
+    {
+      "label": "serve_output",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_serve_output",
+      "community": 0,
+      "norm_label": "serve_output"
+    },
+    {
+      "label": "health",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_health",
+      "community": 0,
+      "norm_label": "health"
+    },
+    {
+      "label": "AD_STYLES",
+      "file_type": "code",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "dgx_flux_text2image_server_ad_styles",
+      "community": 3,
+      "norm_label": "ad_styles"
+    },
+    {
+      "label": "main",
+      "file_type": "code",
+      "source_file": "manage.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "manage_main",
+      "community": 18,
+      "norm_label": "main"
+    },
+    {
+      "label": "Django Settings Configuration",
+      "file_type": "code",
+      "source_file": "config/settings.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "config_settings_django_settings",
+      "community": 7,
+      "norm_label": "django settings configuration"
+    },
+    {
+      "label": "urlpatterns",
+      "file_type": "code",
+      "source_file": "config/urls.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "config_urls_urlpatterns",
+      "community": 19,
+      "norm_label": "urlpatterns"
+    },
+    {
+      "label": "application (ASGI)",
+      "file_type": "code",
+      "source_file": "config/asgi.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "config_asgi_application",
+      "community": 20,
+      "norm_label": "application (asgi)"
+    },
+    {
+      "label": "application (WSGI)",
+      "file_type": "code",
+      "source_file": "config/wsgi.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "config_wsgi_application",
+      "community": 21,
+      "norm_label": "application (wsgi)"
+    },
+    {
+      "label": "The Video Pipeline",
+      "file_type": "concept",
+      "source_file": "admart_backend_spec.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "The end-to-end video generation and publishing flow, transitioning from /create wizard to /progress, /result, and /publish.",
+      "id": "admart_backend_spec_video_pipeline",
+      "community": 22,
+      "norm_label": "the video pipeline"
+    },
+    {
+      "label": "Flux AI Image Generation Integration",
+      "file_type": "concept",
+      "source_file": "admart_backend_spec.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Flux Pro integration rules, parameter sizing map, styles, and predictions API flow using fal.ai or Replicate.",
+      "id": "admart_backend_spec_flux_ai_integration",
+      "community": 0,
+      "norm_label": "flux ai image generation integration"
+    },
+    {
+      "label": "FastAPI Proxy Architecture",
+      "file_type": "rationale",
+      "source_file": "README_FASTAPI.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Deploys a separate FastAPI proxy service specifically for lightweight async processing of Text-to-Image requests, bypassing core Django web application thread constraints.",
+      "id": "readme_fastapi_proxy_architecture",
+      "community": 0,
+      "norm_label": "fastapi proxy architecture"
+    },
+    {
+      "label": "Django Backend Architectural Guardrails",
+      "file_type": "rationale",
+      "source_file": "AGENT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Enforces business logic separation (services/selectors instead of views), strict typing, PEP 8 compliance, security guidelines (no hardcoding, CORS setup), and OpenAPI documentation requirements.",
+      "id": "agent_architectural_guardrails",
+      "community": 7,
+      "norm_label": "django backend architectural guardrails"
+    },
+    {
+      "label": "Knowledge Graph Usage Guideline",
+      "file_type": "rationale",
+      "source_file": ".agents/rules/graphify.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Mandates consulting the graphify knowledge graph at graphify-out/ before answering design/codebase questions, and keeping it up to date via 'graphify update .'.",
+      "id": "rules_graphify_knowledge_graph_guideline",
+      "community": 13,
+      "norm_label": "knowledge graph usage guideline"
+    },
+    {
+      "label": "Graphify Workflow Instruction",
+      "file_type": "concept",
+      "source_file": ".agents/workflows/graphify.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "workflows_graphify_graphify_workflow",
+      "community": 13,
+      "norm_label": "graphify workflow instruction"
+    },
+    {
+      "label": "REST API FastAPI Template",
+      "file_type": "code",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "assets_rest_api_template",
+      "community": 4,
+      "norm_label": "rest api fastapi template"
+    },
+    {
+      "label": "Python Project Scaffolding Skill",
+      "file_type": "document",
+      "source_file": ".agent/skills/python-development-python-scaffold/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "python_development_python_scaffold_skill",
+      "community": 5,
+      "norm_label": "python project scaffolding skill"
+    },
+    {
+      "label": "Uv Dependency Management & Venv Setup",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/python-development-python-scaffold/SKILL.md",
+      "source_location": "39-57",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "python_development_python_scaffold_skill_uv",
+      "community": 23,
+      "norm_label": "uv dependency management & venv setup"
+    },
+    {
+      "label": "Backend Architect Skill",
+      "file_type": "document",
+      "source_file": ".agent/skills/backend-architect/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "backend_architect_skill",
+      "community": 5,
+      "norm_label": "backend architect skill"
+    },
+    {
+      "label": "Authentication & Authorization Architecture Patterns",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/backend-architect/SKILL.md",
+      "source_location": "92-104",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "backend_architect_skill_auth",
+      "community": 15,
+      "norm_label": "authentication & authorization architecture patterns"
+    },
+    {
+      "label": "Resilience & Fault Tolerance Patterns",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/backend-architect/SKILL.md",
+      "source_location": "118-130",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "backend_architect_skill_resilience",
+      "community": 24,
+      "norm_label": "resilience & fault tolerance patterns"
+    },
+    {
+      "label": "Observability & Monitoring Strategies",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/backend-architect/SKILL.md",
+      "source_location": "131-143",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "backend_architect_skill_observability",
+      "community": 14,
+      "norm_label": "observability & monitoring strategies"
+    },
+    {
+      "label": "Full-Stack Orchestration Skill",
+      "file_type": "document",
+      "source_file": ".agent/skills/full-stack-orchestration-full-stack-feature/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "full_stack_orchestration_full_stack_feature_skill",
+      "community": 5,
+      "norm_label": "full-stack orchestration skill"
+    },
+    {
+      "label": "API Design Principles Skill",
+      "file_type": "document",
+      "source_file": ".agent/skills/api-design-principles/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "api_design_principles_skill",
+      "community": 4,
+      "norm_label": "api design principles skill"
+    },
+    {
+      "label": "API Design Principles Implementation Playbook",
+      "file_type": "document",
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "resources_implementation_playbook",
+      "community": 4,
+      "norm_label": "api design principles implementation playbook"
+    },
+    {
+      "label": "DataLoader Pattern",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "428-471",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "resources_implementation_playbook_dataloader",
+      "community": 25,
+      "norm_label": "dataloader pattern"
+    },
+    {
+      "label": "API Versioning Strategies",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "40-60",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "resources_implementation_playbook_versioning",
+      "community": 26,
+      "norm_label": "api versioning strategies"
+    },
+    {
+      "label": "Standardized Error Handling Response Schema",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "145-205",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "resources_implementation_playbook_error_handling",
+      "community": 4,
+      "norm_label": "standardized error handling response schema"
+    },
+    {
+      "label": "API Design Checklist",
+      "file_type": "document",
+      "source_file": ".agent/skills/api-design-principles/assets/api-design-checklist.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "assets_api_design_checklist",
+      "community": 4,
+      "norm_label": "api design checklist"
+    },
+    {
+      "label": "REST API Best Practices Reference",
+      "file_type": "document",
+      "source_file": ".agent/skills/api-design-principles/references/rest-best-practices.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "references_rest_best_practices",
+      "community": 4,
+      "norm_label": "rest api best practices reference"
+    },
+    {
+      "label": "Rate Limiting Headers & Implementation Pattern",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/api-design-principles/references/rest-best-practices.md",
+      "source_location": "180-234",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "references_rest_best_practices_rate_limiting",
+      "community": 27,
+      "norm_label": "rate limiting headers & implementation pattern"
+    },
+    {
+      "label": "GraphQL Schema Design Reference",
+      "file_type": "document",
+      "source_file": ".agent/skills/api-design-principles/references/graphql-schema-design.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "references_graphql_schema_design",
+      "community": 4,
+      "norm_label": "graphql schema design reference"
+    },
+    {
+      "label": "Security Auditor Skill",
+      "file_type": "document",
+      "source_file": ".agent/skills/security-auditor/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "security_auditor_skill",
+      "community": 5,
+      "norm_label": "security auditor skill"
+    },
+    {
+      "label": "DevSecOps & Security Pipeline Integration",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/security-auditor/SKILL.md",
+      "source_location": "45-52",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "security_auditor_skill_devsecops",
+      "community": 14,
+      "norm_label": "devsecops & security pipeline integration"
+    },
+    {
+      "label": "Zero-Trust Architecture Principles",
+      "file_type": "rationale",
+      "source_file": ".agent/skills/security-auditor/SKILL.md",
+      "source_location": "53-60",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "security_auditor_skill_zero_trust",
+      "community": 15,
+      "norm_label": "zero-trust architecture principles"
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "manage.py",
+      "source_location": "L7",
+      "weight": 1.0,
+      "source": "manage_py",
+      "target": "admart_backend_manage_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "manage.py",
+      "source_location": "L8",
+      "weight": 1.0,
+      "source": "admart_backend_manage_rationale_8",
+      "target": "admart_backend_manage_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L76",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_torch_dtype",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L84",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_round_to_multiple",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L88",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_clear_cuda_cache",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L98",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_gpu_max_memory",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L110",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L122",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_generation_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L134",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_generation_attempt_sizes",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_is_cuda_oom",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L151",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_build_prompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L159",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_get_t2i_pipe",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L184",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L278",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_health",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L292",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_get_styles",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L297",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_generate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L347",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_get_status",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L374",
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_py",
+      "target": "admart_backend_dgx_flux_text2image_server_serve_output",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_rationale_1",
+      "target": "dgx_flux_text2image_server_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L166",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_get_t2i_pipe",
+      "target": "admart_backend_dgx_flux_text2image_server_torch_dtype",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L118",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "target": "admart_backend_dgx_flux_text2image_server_round_to_multiple",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L130",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_resolve_generation_size",
+      "target": "admart_backend_dgx_flux_text2image_server_round_to_multiple",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L142",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_generation_attempt_sizes",
+      "target": "admart_backend_dgx_flux_text2image_server_round_to_multiple",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L222",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_clear_cuda_cache",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L169",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_get_t2i_pipe",
+      "target": "admart_backend_dgx_flux_text2image_server_gpu_max_memory",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L123",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_resolve_generation_size",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L193",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L311",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_generate",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L194",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_resolve_generation_size",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L213",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_generation_attempt_sizes",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L241",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_is_cuda_oom",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L148",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_is_cuda_oom",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L197",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_build_prompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L196",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "admart_backend_dgx_flux_text2image_server_get_t2i_pipe",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L260",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_run_text2img",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L313",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_generate",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": "L378",
+      "weight": 1.0,
+      "source": "admart_backend_dgx_flux_text2image_server_serve_output",
+      "target": "str"
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L13",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "enum",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_userstatus",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L43",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_userbase",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L48",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_usercreate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L51",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_userupdate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L56",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L64",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_paginationparams",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L68",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_paginatedresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L76",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_errordetail",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L81",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_errorresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L87",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_http_exception_handler",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L99",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_list_users",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L129",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_create_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L142",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_get_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L161",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_update_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L175",
+      "weight": 1.0,
+      "source": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "target": "assets_rest_api_template_delete_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_rationale_1",
+      "target": "agent_skills_api_design_principles_assets_rest_api_template_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_userstatus",
+      "target": "str",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_userstatus",
+      "target": "enum",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L110",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_list_users",
+      "target": "str",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "app/main.py",
+      "source_location": "L32",
+      "weight": 1.0,
+      "source": "app_main_health",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "app/main.py",
+      "source_location": "L47",
+      "weight": 1.0,
+      "source": "app_main_text_to_image",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "app/main.py",
+      "source_location": "L55",
+      "weight": 1.0,
+      "source": "app_main_text_to_image_status",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "app/main.py",
+      "source_location": "L64",
+      "weight": 1.0,
+      "source": "app_main_text_to_image_file",
+      "target": "str"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L72",
+      "weight": 1.0,
+      "source": "services_flux_client_start_text_to_image",
+      "target": "str"
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L43",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_userbase",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L48",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_usercreate",
+      "target": "assets_rest_api_template_userbase",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L56",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_user",
+      "target": "assets_rest_api_template_userbase",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L51",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_userupdate",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L64",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_paginationparams",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L68",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_paginatedresponse",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L76",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_errordetail",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L81",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_errorresponse",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "app_schemas_texttoimagerequest",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L37",
+      "weight": 1.0,
+      "source": "app_schemas_texttoimagejobresponse",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L43",
+      "weight": 1.0,
+      "source": "app_schemas_texttoimagestatusresponse",
+      "target": "basemodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_list_users",
+      "target": "assets_rest_api_template_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L132",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_create_user",
+      "target": "assets_rest_api_template_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L151",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_get_user",
+      "target": "assets_rest_api_template_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "98-101",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_list_users",
+      "target": "assets_rest_api_template_paginationparams"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L120",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_list_users",
+      "target": "assets_rest_api_template_paginatedresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L90",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_http_exception_handler",
+      "target": "assets_rest_api_template_errorresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L105",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_rationale_105",
+      "target": "assets_rest_api_template_list_users",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "164",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "assets_rest_api_template_update_user",
+      "target": "assets_rest_api_template_get_user"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "177",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "assets_rest_api_template_delete_user",
+      "target": "assets_rest_api_template_get_user"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "L162",
+      "weight": 1.0,
+      "source": "assets_rest_api_template_rationale_162",
+      "target": "assets_rest_api_template_update_user",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "config/urls.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "config_urls_rationale_1",
+      "target": "config_urls_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "config/settings.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "config_settings_rationale_1",
+      "target": "config_settings_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "config/asgi.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "config_asgi_rationale_1",
+      "target": "config_asgi_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "config/wsgi.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "config_wsgi_rationale_1",
+      "target": "config_wsgi_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": "L27",
+      "weight": 1.0,
+      "source": "app_main_py",
+      "target": "app_main_health",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": "L43",
+      "weight": 1.0,
+      "source": "app_main_py",
+      "target": "app_main_text_to_image",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": "L51",
+      "weight": 1.0,
+      "source": "app_main_py",
+      "target": "app_main_text_to_image_status",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "app_main_py",
+      "target": "app_main_text_to_image_file",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": "L68",
+      "weight": 1.0,
+      "source": "app_main_py",
+      "target": "app_main_text_to_image_alias",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_health",
+      "target": "services_flux_client_get_dgx_health"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_main_health"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "app_main_text_to_image_alias",
+      "target": "app_main_text_to_image"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image",
+      "target": "services_flux_client_start_text_to_image"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_main_text_to_image"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image",
+      "target": "app_schemas_texttoimagerequest"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image",
+      "target": "app_schemas_texttoimagejobresponse"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image_status",
+      "target": "services_flux_client_get_text_to_image_status"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_main_text_to_image_status"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image_status",
+      "target": "app_schemas_texttoimagestatusresponse"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image_file",
+      "target": "services_flux_client_fetch_text_to_image_file"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_main_text_to_image_file"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_main_text_to_image_alias"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image_alias",
+      "target": "app_schemas_texttoimagerequest"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_text_to_image_alias",
+      "target": "app_schemas_texttoimagejobresponse"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L25",
+      "weight": 1.0,
+      "source": "app_schemas_py",
+      "target": "app_schemas_normalize_style",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "app_schemas_py",
+      "target": "app_schemas_texttoimagerequest",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L37",
+      "weight": 1.0,
+      "source": "app_schemas_py",
+      "target": "app_schemas_texttoimagejobresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/schemas.py",
+      "source_location": "L43",
+      "weight": 1.0,
+      "source": "app_schemas_py",
+      "target": "app_schemas_texttoimagestatusresponse",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_start_text_to_image",
+      "target": "app_schemas_normalize_style"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "app/schemas.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_schemas_normalize_style",
+      "target": "dgx_flux_text2image_server_ad_styles"
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L7",
+      "weight": 0.8,
+      "source": "services_flux_client_fluxclienterror",
+      "target": "app_schemas_texttoimagerequest",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "app/schemas.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_schemas_texttoimagerequest",
+      "target": "dgx_flux_text2image_server_generate"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/config.py",
+      "source_location": "L6",
+      "weight": 1.0,
+      "source": "app_config_py",
+      "target": "app_config_load_dotenv",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/config.py",
+      "source_location": "L20",
+      "weight": 1.0,
+      "source": "app_config_py",
+      "target": "app_config_split_csv",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/config.py",
+      "source_location": "L28",
+      "weight": 1.0,
+      "source": "app_config_py",
+      "target": "app_config_settings",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/config.py",
+      "source_location": "L42",
+      "weight": 1.0,
+      "source": "app_config_settings_post_init",
+      "target": "app_config_split_csv",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "app/config.py",
+      "source_location": "L36",
+      "weight": 1.0,
+      "source": "app_config_settings",
+      "target": "app_config_settings_post_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/main.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "app_main_app",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_absolute_url",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_download_image",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_get_dgx_health",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_start_text_to_image",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_get_text_to_image_status",
+      "target": "app_config_settings"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "app/__init__.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "app_init_rationale_1",
+      "target": "app_init_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L12",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_fluxclienterror",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L18",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_absolute_url",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L22",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_download_image",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L40",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_cache_image",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L56",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_get_dgx_health",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L63",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_start_text_to_image",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L101",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_get_text_to_image_status",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L149",
+      "weight": 1.0,
+      "source": "app_services_flux_client_py",
+      "target": "services_flux_client_fetch_text_to_image_file",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L12",
+      "weight": 1.0,
+      "source": "services_flux_client_fluxclienterror",
+      "target": "exception",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L13",
+      "weight": 1.0,
+      "source": "services_flux_client_fluxclienterror",
+      "target": "services_flux_client_fluxclienterror_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L28",
+      "weight": 1.0,
+      "source": "services_flux_client_download_image",
+      "target": "services_flux_client_fluxclienterror",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L82",
+      "weight": 1.0,
+      "source": "services_flux_client_start_text_to_image",
+      "target": "services_flux_client_fluxclienterror",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L107",
+      "weight": 1.0,
+      "source": "services_flux_client_get_text_to_image_status",
+      "target": "services_flux_client_fluxclienterror",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": "L161",
+      "weight": 1.0,
+      "source": "services_flux_client_fetch_text_to_image_file",
+      "target": "services_flux_client_fluxclienterror",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_get_text_to_image_status",
+      "target": "services_flux_client_absolute_url"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_fetch_text_to_image_file",
+      "target": "services_flux_client_absolute_url"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_cache_image",
+      "target": "services_flux_client_download_image"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_download_image",
+      "target": "dgx_flux_text2image_server_serve_output"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_get_text_to_image_status",
+      "target": "services_flux_client_cache_image"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_fetch_text_to_image_file",
+      "target": "services_flux_client_cache_image"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_get_dgx_health",
+      "target": "dgx_flux_text2image_server_health"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_start_text_to_image",
+      "target": "dgx_flux_text2image_server_generate"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "admart_backend_spec.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "admart_backend_spec_flux_ai_integration",
+      "target": "services_flux_client_start_text_to_image"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "services_flux_client_fetch_text_to_image_file",
+      "target": "services_flux_client_get_text_to_image_status"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "app/services/flux_client.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "services_flux_client_get_text_to_image_status",
+      "target": "dgx_flux_text2image_server_get_status"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "app/services/__init__.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "services_init_rationale_1",
+      "target": "app_services_init_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README_FASTAPI.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_fastapi_proxy_architecture",
+      "target": "app_main_app"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_app",
+      "target": "dgx_flux_text2image_server_health"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_app",
+      "target": "dgx_flux_text2image_server_generate"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_app",
+      "target": "dgx_flux_text2image_server_get_status"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_app",
+      "target": "dgx_flux_text2image_server_serve_output"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README_FASTAPI.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "readme_fastapi_proxy_architecture",
+      "target": "dgx_flux_text2image_server_app"
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dgx_flux_text2image_server.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "dgx_flux_text2image_server_generate",
+      "target": "dgx_flux_text2image_server_run_text2img"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "agent_architectural_guardrails",
+      "target": "config_settings_django_settings"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agents/rules/graphify.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "rules_graphify_knowledge_graph_guideline",
+      "target": "workflows_graphify_graphify_workflow"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "510",
+      "weight": 1.0,
+      "source": "resources_implementation_playbook",
+      "target": "assets_rest_api_template"
+    },
+    {
+      "relation": "implements",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": ".agent/skills/api-design-principles/assets/rest-api-template.py",
+      "source_location": "86-95",
+      "weight": 1.0,
+      "source": "assets_rest_api_template",
+      "target": "resources_implementation_playbook_error_handling"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": ".agent/skills/python-development-python-scaffold/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "python_development_python_scaffold_skill",
+      "target": "backend_architect_skill"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/full-stack-orchestration-full-stack-feature/SKILL.md",
+      "source_location": "35",
+      "weight": 1.0,
+      "source": "full_stack_orchestration_full_stack_feature_skill",
+      "target": "backend_architect_skill"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": ".agent/skills/security-auditor/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "security_auditor_skill_zero_trust",
+      "target": "backend_architect_skill_auth"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": ".agent/skills/backend-architect/SKILL.md",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "backend_architect_skill_observability",
+      "target": "security_auditor_skill_devsecops"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/full-stack-orchestration-full-stack-feature/SKILL.md",
+      "source_location": "81",
+      "weight": 1.0,
+      "source": "full_stack_orchestration_full_stack_feature_skill",
+      "target": "security_auditor_skill"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/SKILL.md",
+      "source_location": "33",
+      "weight": 1.0,
+      "source": "api_design_principles_skill",
+      "target": "resources_implementation_playbook"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "507",
+      "weight": 1.0,
+      "source": "resources_implementation_playbook",
+      "target": "references_rest_best_practices"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "508",
+      "weight": 1.0,
+      "source": "resources_implementation_playbook",
+      "target": "references_graphql_schema_design"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/api-design-principles/resources/implementation-playbook.md",
+      "source_location": "512",
+      "weight": 1.0,
+      "source": "resources_implementation_playbook",
+      "target": "assets_api_design_checklist"
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "flux_image_generation_proxy_flow",
+      "label": "Flux Image Generation Proxy Flow",
+      "nodes": [
+        "app_main_text_to_image",
+        "services_flux_client_start_text_to_image",
+        "dgx_flux_text2image_server_generate",
+        "dgx_flux_text2image_server_run_text2img"
+      ],
+      "relation": "implement",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "app/services/flux_client.py"
+    },
+    {
+      "id": "django_app_bootstrap",
+      "label": "Django Application Bootstrap",
+      "nodes": [
+        "config_settings_django_settings",
+        "config_urls_urlpatterns",
+        "config_asgi_application",
+        "config_wsgi_application"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "config/settings.py"
+    },
+    {
+      "id": "api_design_and_implementation",
+      "label": "API Design and Implementation Template Flow",
+      "nodes": [
+        "api_design_principles_skill",
+        "resources_implementation_playbook",
+        "assets_rest_api_template"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": ".agent/skills/api-design-principles/SKILL.md"
+    },
+    {
+      "id": "full_stack_orchestration_collaborators",
+      "label": "Full Stack Orchestration Subagent Collaboration",
+      "nodes": [
+        "full_stack_orchestration_full_stack_feature_skill",
+        "backend_architect_skill",
+        "security_auditor_skill"
+      ],
+      "relation": "implement",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": ".agent/skills/full-stack-orchestration-full-stack-feature/SKILL.md"
+    }
+  ],
+  "built_at_commit": "de07c45627d3715c944dc77a71f78447627b7af4"
+}
