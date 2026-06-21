@@ -4,25 +4,20 @@
     "ast_hash": "09ce28f22db4398409f377833475117f",
     "semantic_hash": "09ce28f22db4398409f377833475117f"
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/dgx_flux_text2image_server.py": {
-    "mtime": 1781959359.4120207,
-    "ast_hash": "ec707d88419a37bf3daa300f15f6d950",
-    "semantic_hash": "ec707d88419a37bf3daa300f15f6d950"
-  },
   "/media/koraspond/DataDrive/admart/admart-backend/.agent/skills/api-design-principles/assets/rest-api-template.py": {
     "mtime": 1781907114.7735732,
     "ast_hash": "555aac62aac8fe64cc1029ac84c9ce95",
     "semantic_hash": "555aac62aac8fe64cc1029ac84c9ce95"
   },
   "/media/koraspond/DataDrive/admart/admart-backend/config/urls.py": {
-    "mtime": 1779173209.4855816,
-    "ast_hash": "b8f1149babb0349ffe97c04a2fa3c0a9",
-    "semantic_hash": "b8f1149babb0349ffe97c04a2fa3c0a9"
+    "mtime": 1781961590.0832944,
+    "ast_hash": "b9b10a54a3a4f651ca7be9813e40c94f",
+    "semantic_hash": ""
   },
   "/media/koraspond/DataDrive/admart/admart-backend/config/settings.py": {
-    "mtime": 1779173209.4849577,
-    "ast_hash": "516edf2e13c0e41ff8d0b01a2b51624a",
-    "semantic_hash": "516edf2e13c0e41ff8d0b01a2b51624a"
+    "mtime": 1781961583.0472581,
+    "ast_hash": "cc462cf147a0675363afd34a3325c1d7",
+    "semantic_hash": ""
   },
   "/media/koraspond/DataDrive/admart/admart-backend/config/asgi.py": {
     "mtime": 1779173209.4860396,
@@ -39,60 +34,75 @@
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/main.py": {
-    "mtime": 1781959359.4106143,
-    "ast_hash": "8f90355ec62d890c03def5cc2a32eaf2",
-    "semantic_hash": "8f90355ec62d890c03def5cc2a32eaf2"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/urls.py": {
+    "mtime": 1781961632.4805126,
+    "ast_hash": "a62d218df11bb48f9d2f78c814443324",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/schemas.py": {
-    "mtime": 1781959359.4108317,
-    "ast_hash": "4bfb1ed210249610f5bf906d8807db0a",
-    "semantic_hash": "4bfb1ed210249610f5bf906d8807db0a"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/tests.py": {
+    "mtime": 1781961811.6874354,
+    "ast_hash": "cd845fd63904c4aa5a126c8a6beb7729",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/config.py": {
-    "mtime": 1781959359.4102266,
-    "ast_hash": "7bfa02e7161b558687505f6bfb89e76e",
-    "semantic_hash": "7bfa02e7161b558687505f6bfb89e76e"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/views.py": {
+    "mtime": 1781962104.5549433,
+    "ast_hash": "220c1af8bbcd4aa5886c68943b935c06",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/__init__.py": {
-    "mtime": 1781959359.4097185,
-    "ast_hash": "517d75810abb0df6dc6b393834517251",
-    "semantic_hash": "517d75810abb0df6dc6b393834517251"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/apps.py": {
+    "mtime": 1781961517.2609196,
+    "ast_hash": "aa77f94093efad351a32d7bc6ef791bf",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/services/flux_client.py": {
-    "mtime": 1781959359.4112718,
-    "ast_hash": "ea38e13a9faa29ba64303b601ac41a64",
-    "semantic_hash": "ea38e13a9faa29ba64303b601ac41a64"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/admin.py": {
+    "mtime": 1781961660.7426581,
+    "ast_hash": "d3fbee7625b957890d1b094eb74ed585",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/app/services/__init__.py": {
-    "mtime": 1781959359.4108317,
-    "ast_hash": "25b342e52d36fb7da024e985f0f95b4d",
-    "semantic_hash": "25b342e52d36fb7da024e985f0f95b4d"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/models.py": {
+    "mtime": 1781961511.4448895,
+    "ast_hash": "642146181aa5844f070760dda0e046c7",
+    "semantic_hash": ""
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/README_FASTAPI.md": {
-    "mtime": 1781959359.4084978,
-    "ast_hash": "54bf62d7e85d850e2f70e25f418943d9",
-    "semantic_hash": "54bf62d7e85d850e2f70e25f418943d9"
+  "/media/koraspond/DataDrive/admart/admart-backend/users/serializers.py": {
+    "mtime": 1781962088.6218612,
+    "ast_hash": "66361624a4598b16bcbb2e5400633b0e",
+    "semantic_hash": ""
+  },
+  "/media/koraspond/DataDrive/admart/admart-backend/users/__init__.py": {
+    "mtime": 1781961522.7849479,
+    "ast_hash": "39c3f58457f7fc522672e8778bca6ed0",
+    "semantic_hash": ""
+  },
+  "/media/koraspond/DataDrive/admart/admart-backend/users/migrations/0001_initial.py": {
+    "mtime": 1782048908.0855768,
+    "ast_hash": "966fe65c1946d35a0ddbfa264f52fcf8",
+    "semantic_hash": ""
+  },
+  "/media/koraspond/DataDrive/admart/admart-backend/users/migrations/__init__.py": {
+    "mtime": 1782048908.081456,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
   },
   "/media/koraspond/DataDrive/admart/admart-backend/AGENT.md": {
     "mtime": 1781907114.7749584,
     "ast_hash": "1688a022f93097b0c4a7129908a2618b",
     "semantic_hash": "1688a022f93097b0c4a7129908a2618b"
   },
-  "/media/koraspond/DataDrive/admart/admart-backend/requirements-fastapi.txt": {
-    "mtime": 1781959359.4200008,
-    "ast_hash": "60b8a710531a895087d8d163c6c5d409",
-    "semantic_hash": "60b8a710531a895087d8d163c6c5d409"
-  },
   "/media/koraspond/DataDrive/admart/admart-backend/admart_backend_spec.md": {
     "mtime": 1781959359.4097185,
     "ast_hash": "4d2f263e3ef41535feba58c90e69a397",
     "semantic_hash": "4d2f263e3ef41535feba58c90e69a397"
   },
+  "/media/koraspond/DataDrive/admart/admart-backend/schema.yml": {
+    "mtime": 1781962133.5708523,
+    "ast_hash": "607c11d8e4062b9a6641ca45da2832c8",
+    "semantic_hash": ""
+  },
   "/media/koraspond/DataDrive/admart/admart-backend/requirements.txt": {
-    "mtime": 1779173159.2159622,
-    "ast_hash": "915c119b665c1a4d5dc4f2c237c3b955",
-    "semantic_hash": "915c119b665c1a4d5dc4f2c237c3b955"
+    "mtime": 1781961745.6330953,
+    "ast_hash": "900799c1c929c8d9db3cc6640e9988cd",
+    "semantic_hash": ""
   },
   "/media/koraspond/DataDrive/admart/admart-backend/.agent/skills/python-development-python-scaffold/SKILL.md": {
     "mtime": 1781907114.774208,
@@ -150,12 +160,12 @@
     "semantic_hash": "1926e27ae34f71eff4de2777e41d52be"
   },
   "/media/koraspond/DataDrive/admart/admart-backend/.github/dependabot.yml": {
-    "mtime": 1781959568.3850372,
+    "mtime": 1781960008.4231842,
     "ast_hash": "cb62b9dd18c128689b20a6f8993c0a33",
     "semantic_hash": ""
   },
   "/media/koraspond/DataDrive/admart/admart-backend/.github/workflows/quality-and-security.yml": {
-    "mtime": 1781959744.767933,
+    "mtime": 1781960008.4241135,
     "ast_hash": "903326674d44744833944504a7205b22",
     "semantic_hash": ""
   }

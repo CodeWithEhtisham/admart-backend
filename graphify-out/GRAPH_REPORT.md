@@ -1,16 +1,16 @@
 # Graph Report - admart-backend  (2026-06-20)
 
 ## Corpus Check
-- 28 files · ~21,070 words
+- 30 files · ~22,234 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 562 nodes · 600 edges · 62 communities (40 shown, 22 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 20 edges (avg confidence: 0.83)
+- 686 nodes · 776 edges · 86 communities (51 shown, 35 thin omitted)
+- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 85 edges (avg confidence: 0.6)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d95d945d`
+- Built from commit: `44a95523`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -76,18 +76,39 @@
 - [[_COMMUNITY_Community 59|Community 59]]
 - [[_COMMUNITY_Community 60|Community 60]]
 - [[_COMMUNITY_Community 61|Community 61]]
+- [[_COMMUNITY_Community 62|Community 62]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 64|Community 64]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 71|Community 71]]
+- [[_COMMUNITY_Community 72|Community 72]]
+- [[_COMMUNITY_Community 73|Community 73]]
+- [[_COMMUNITY_Community 74|Community 74]]
+- [[_COMMUNITY_Community 75|Community 75]]
+- [[_COMMUNITY_Community 76|Community 76]]
+- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 81|Community 81]]
+- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 84|Community 84]]
+- [[_COMMUNITY_Community 85|Community 85]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `2.2 Route Map & Page Details` - 20 edges
 2. `Admart (Vidify) — Complete Backend Agent Specification` - 19 edges
 3. `Capabilities` - 18 edges
-4. `8. Complete API Endpoint Reference` - 16 edges
-5. `Pre-Implementation Review` - 15 edges
-6. `REST API Best Practices` - 15 edges
-7. `GraphQL Schema Design Patterns` - 13 edges
-8. `AGENTS.md — Backend (Django + DRF)` - 12 edges
-9. `Capabilities` - 12 edges
-10. `run_text2img()` - 9 edges
+4. `UserAuthTests` - 16 edges
+5. `8. Complete API Endpoint Reference` - 16 edges
+6. `Pre-Implementation Review` - 15 edges
+7. `REST API Best Practices` - 15 edges
+8. `GraphQL Schema Design Patterns` - 13 edges
+9. `RegisterView` - 12 edges
+10. `CustomTokenObtainPairView` - 12 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `normalize_style()` --semantically_similar_to--> `AD_STYLES`  [INFERRED] [semantically similar]
@@ -107,7 +128,7 @@
 - **API Design and Implementation Template Flow** — api_design_principles_skill, resources_implementation_playbook, assets_rest_api_template [INFERRED 0.85]
 - **Full Stack Orchestration Subagent Collaboration** — full_stack_orchestration_full_stack_feature_skill, backend_architect_skill, security_auditor_skill [EXTRACTED 1.00]
 
-## Communities (62 total, 22 thin omitted)
+## Communities (86 total, 35 thin omitted)
 
 ### Community 0 - "Flux Client & Proxy Services"
 Cohesion: 0.11
@@ -122,8 +143,8 @@ Cohesion: 0.2
 Nodes (14): _build_prompt(), _clear_cuda_cache(), generate(), _generation_attempt_sizes(), get_t2i_pipe(), _gpu_max_memory(), _is_cuda_oom(), Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has (+6 more)
 
 ### Community 3 - "FastAPI App & Schemas"
-Cohesion: 0.05
-Nodes (43): 10. Real-time Communication, 11. File Storage, 12. Environment Variables, 13. CORS Configuration, 14. Error Response Format, 15. Database Schema (PostgreSQL), 16. Recommended Tech Stack, 17. Key Implementation Notes (+35 more)
+Cohesion: 0.13
+Nodes (14): 11. File Storage, 12. Environment Variables, 13. CORS Configuration, 14. Error Response Format, 15. Database Schema (PostgreSQL), 17. Key Implementation Notes, 18. Development Order (Suggested), 1. Project Overview (+6 more)
 
 ### Community 4 - "API Design Principles & Best Practices"
 Cohesion: 0.29
@@ -198,8 +219,8 @@ Cohesion: 0.22
 Nodes (9): 1. Non-Null Types, 2. Interfaces for Polymorphism, 3. Unions for Heterogeneous Results, 4. Input Types, code:graphql (type User {), code:graphql (interface Node {), code:graphql (union SearchResult = User | Post | Comment), code:graphql (input CreateUserInput {) (+1 more)
 
 ### Community 43 - "Community 43"
-Cohesion: 0.29
-Nodes (6): Best Practices Summary, code:graphql (type Subscription {), code:graphql (scalar DateTime), Custom Scalars, GraphQL Schema Design Patterns, Subscriptions
+Cohesion: 0.2
+Nodes (9): Best Practices Summary, code:graphql (# user.graphql), code:graphql (type Subscription {), code:graphql (scalar DateTime), Custom Scalars, GraphQL Schema Design Patterns, Modular Schema Structure, Schema Organization (+1 more)
 
 ### Community 44 - "Community 44"
 Cohesion: 0.29
@@ -254,35 +275,67 @@ Cohesion: 0.5
 Nodes (4): code:json ({), Consistent Structure, Error Response Format, Status Code Guidelines
 
 ### Community 57 - "Community 57"
-Cohesion: 0.67
-Nodes (3): code:graphql (# user.graphql), Modular Schema Structure, Schema Organization
+Cohesion: 0.08
+Nodes (47): APIView, TokenObtainPairSerializer, TokenObtainPairView, AuthResponseSerializer, CustomTokenObtainPairSerializer, ForgotPasswordSerializer, GoogleAuthSerializer, MessageSerializer (+39 more)
 
 ### Community 58 - "Community 58"
+Cohesion: 0.07
+Nodes (16): APITestCase, Test forgot password request responds with success regardless of user existence., Test resetting password with a valid signed token., Test resetting password with an invalid token fails., Test suite for User Authentication and registration endpoints., Test mock Google OAuth exchange creates user and returns JWT tokens., Test logout returns standard success message., Set up test user data. (+8 more)
+
+### Community 59 - "Community 59"
+Cohesion: 0.12
+Nodes (13): AbstractBaseUser, BaseUserAdmin, BaseUserManager, PermissionsMixin, Custom UserAdmin class to support our custom User model in Django Admin., UserAdmin, Meta, Create and save a regular User with the given email and password. (+5 more)
+
+### Community 63 - "Community 63"
+Cohesion: 0.29
+Nodes (7): 7.1 Platform APIs, 7.2 Publish Endpoint, 7.3 OAuth Flows, 7. Publishing Pipeline, code:block16 (TikTok:    TikTok for Developers - Content Posting API v2), code:block17 (POST /videos/:id/publish), code:block18 (GET  /social/connect/tiktok      → redirect to TikTok OAuth)
+
+### Community 64 - "Community 64"
+Cohesion: 0.4
+Nodes (5): 10. Real-time Communication, code:block35 (GET /jobs/:jobId/stream), code:block36 (ws://api/ws), Option A: Server-Sent Events (SSE) — Recommended, Option B: WebSocket
+
+### Community 75 - "Community 75"
+Cohesion: 0.4
+Nodes (5): 6.1 Models & Credit Costs, 6.2 Video Generation Flow, 6.3 Job Status Stages, 6. Video Generation Pipeline, code:block15 (POST /videos/generate)
+
+### Community 76 - "Community 76"
+Cohesion: 0.4
+Nodes (5): 9.1 Credit Costs Summary, 9.2 Credit Operations, 9.3 Credit Reset, 9. Credits System, code:block34 (POST /credits/deduct      — internal, called by generation s)
+
+### Community 77 - "Community 77"
+Cohesion: 0.5
+Nodes (4): 4.1 Strategy, 4.2 Endpoints, 4. Authentication & Authorization, code:block9 (POST   /auth/register          — email + password signup, cr)
+
+### Community 78 - "Community 78"
+Cohesion: 0.67
+Nodes (3): 16. Recommended Tech Stack, Option A — Node.js (Express/Fastify), Option B — Python (FastAPI)
+
+### Community 79 - "Community 79"
 Cohesion: 0.67
 Nodes (3): Cache Headers, Caching, code:block20 (# Client caching)
 
-### Community 59 - "Community 59"
+### Community 80 - "Community 80"
 Cohesion: 0.67
 Nodes (3): code:block8 (# Filtering), Filtering, Sorting, and Searching, Query Parameters
 
 ## Knowledge Gaps
-- **305 isolated node(s):** `Run administrative tasks.`, `Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.` (+300 more)
+- **364 isolated node(s):** `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.`, `URL configuration for config project.  The `urlpatterns` list routes URLs to vie` (+359 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **22 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **35 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Admart (Vidify) — Complete Backend Agent Specification` connect `FastAPI App & Schemas` to `Community 32`, `Community 36`, `Community 28`, `Community 39`?**
-  _High betweenness centrality (0.043) - this node is a cross-community bridge._
-- **Why does `8. Complete API Endpoint Reference` connect `Community 28` to `FastAPI App & Schemas`?**
-  _High betweenness centrality (0.021) - this node is a cross-community bridge._
-- **What connects `Run administrative tasks.`, `Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has`, `Production-ready REST API template using FastAPI. Includes pagination, filtering` to the rest of the system?**
-  _305 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Why does `Admart (Vidify) — Complete Backend Agent Specification` connect `FastAPI App & Schemas` to `Community 32`, `Community 64`, `Community 36`, `Community 39`, `Community 75`, `Community 76`, `Community 77`, `Community 78`, `Community 28`, `Community 63`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **Why does `post()` connect `Community 57` to `Flux Client & Proxy Services`?**
+  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+- **What connects `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.` to the rest of the system?**
+  _364 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Flux Client & Proxy Services` be split into smaller, more focused modules?**
   _Cohesion score 0.11 - nodes in this community are weakly interconnected._
 - **Should `FastAPI App & Schemas` be split into smaller, more focused modules?**
-  _Cohesion score 0.05 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.13 - nodes in this community are weakly interconnected._
 - **Should `Community 28` be split into smaller, more focused modules?**
   _Cohesion score 0.06 - nodes in this community are weakly interconnected._
 - **Should `Community 29` be split into smaller, more focused modules?**
