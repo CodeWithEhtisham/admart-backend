@@ -70,6 +70,16 @@ class User(AbstractBaseUser, PermissionsMixin):
     credits_reset_at = models.DateTimeField(null=True, blank=True)
     onboarding_completed = models.BooleanField(default=False)
 
+    # Explicit pointer to the user's currently selected project. Nulled when the
+    # referenced project is deleted; the API falls back to most-recently-accessed.
+    active_project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
     # Brand Kit fields
     brand_name = models.CharField(max_length=255, blank=True)
     brand_industry = models.CharField(max_length=100, blank=True)
@@ -96,3 +106,4 @@ class User(AbstractBaseUser, PermissionsMixin):
             "brandColorHex": self.brand_color_hex,
             "logoUrl": self.brand_logo_url,
         }
+

@@ -9,7 +9,11 @@ User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """Serializer representing the user profile in camelCase format."""
+    """Serializer representing the user profile in camelCase format.
+
+    Accepts both camelCase and snake_case brand fields for write operations
+    (the frontend onboarding sends snake_case: brand_name, brand_industry, brand_color_hex).
+    """
 
     firstName = serializers.CharField(source="first_name", required=False, allow_blank=True)
     lastName = serializers.CharField(source="last_name", required=False, allow_blank=True)
@@ -20,7 +24,23 @@ class UserSerializer(serializers.ModelSerializer):
     creditsRemaining = serializers.IntegerField(source="credits_remaining", read_only=True)
     creditsResetAt = serializers.DateTimeField(source="credits_reset_at", read_only=True, allow_null=True)
     onboardingCompleted = serializers.BooleanField(source="onboarding_completed", default=False)
-    brandKit = serializers.DictField(read_only=True)
+    brandKit = serializers.SerializerMethodField(read_only=True)
+    projectCount = serializers.SerializerMethodField(read_only=True)
+    activeProjectId = serializers.SerializerMethodField(read_only=True)
+
+    def get_brandKit(self, obj) -> dict:
+        """Return the brand kit dict from the model property."""
+        return obj.brand_kit
+
+    def get_projectCount(self, obj) -> int:
+        """Number of projects the user owns (frontend routing signal)."""
+        return obj.projects.count()
+
+    def get_activeProjectId(self, obj) -> str | None:
+        """Resolved active project id (explicit selection or most recent)."""
+        from projects.views import resolve_active_project_id
+
+        return resolve_active_project_id(obj)
 
     class Meta:
         model = User
@@ -38,8 +58,19 @@ class UserSerializer(serializers.ModelSerializer):
             "creditsResetAt",
             "onboardingCompleted",
             "brandKit",
+            "projectCount",
+            "activeProjectId",
+            # Writable brand kit fields (snake_case, as sent by frontend onboarding)
+            "brand_name",
+            "brand_industry",
+            "brand_color_hex",
         ]
-        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "brandKit"]
+        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "brandKit", "projectCount", "activeProjectId"]
+        extra_kwargs = {
+            "brand_name": {"required": False, "allow_blank": True},
+            "brand_industry": {"required": False, "allow_blank": True},
+            "brand_color_hex": {"required": False},
+        }
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -129,3 +160,18 @@ class MessageSerializer(serializers.Serializer):
 
     message = serializers.CharField()
 
+
+class OnboardingCompleteSerializer(serializers.Serializer):
+    """Serializer for completing onboarding — saves platforms, brand info, and optional prompt."""
+
+    connectedPlatforms = serializers.ListField(
+        child=serializers.ChoiceField(choices=["tiktok", "youtube", "instagram", "facebook"]),
+        required=False,
+        default=list,
+    )
+    projectName = serializers.CharField(required=False, allow_blank=True, default="", max_length=80)
+    brandName = serializers.CharField(required=False, allow_blank=True, default="")
+    industry = serializers.CharField(required=False, allow_blank=True, default="")
+    brandColorHex = serializers.CharField(required=False, default="#2563eb")
+    prompt = serializers.CharField(required=False, allow_blank=True, default="")
+    template = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)

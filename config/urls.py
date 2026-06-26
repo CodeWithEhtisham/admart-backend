@@ -22,9 +22,14 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from projects.views import ProjectListCreateView
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("users.urls")),
+    # List/create at "/api/projects" (no trailing slash); sub-routes under "/api/projects/".
+    path("api/projects", ProjectListCreateView.as_view(), name="project_list_create"),
+    path("api/projects/", include("projects.urls")),
     # OpenAPI schema endpoints
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

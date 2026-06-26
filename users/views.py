@@ -2,6 +2,7 @@ import logging
 from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, extend_schema
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -11,12 +12,14 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from projects.models import Project, SocialAccount
 from users.serializers import (
     AuthResponseSerializer,
     CustomTokenObtainPairSerializer,
     ForgotPasswordSerializer,
     GoogleAuthSerializer,
     MessageSerializer,
+    OnboardingCompleteSerializer,
     RegisterSerializer,
     ResetPasswordSerializer,
     UserSerializer,
@@ -257,3 +260,66 @@ class LogoutView(APIView):
 
         return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
 
+
+class OnboardingCompleteView(APIView):
+    """Complete the onboarding flow in one call.
+
+    Creates the user's first Project (the parent for brand kit + social accounts),
+    connects the chosen platforms to it, makes it active, and marks the user as
+    onboarded. The brand kit is also mirrored onto the user for backward compat.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = OnboardingCompleteSerializer
+
+    @extend_schema(
+        summary="Complete onboarding",
+        request=OnboardingCompleteSerializer,
+        responses={200: UserSerializer},
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Create the first project from onboarding data and mark user onboarded."""
+        serializer = OnboardingCompleteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        data = serializer.validated_data
+        brand_name = data.get("brandName", "")
+        brand_industry = data.get("industry", "")
+        brand_color_hex = data.get("brandColorHex", "#2563eb")
+
+        # Mirror brand kit onto the user for backward compatibility.
+        user.brand_name = brand_name or user.brand_name
+        user.brand_industry = brand_industry or user.brand_industry
+        user.brand_color_hex = brand_color_hex or user.brand_color_hex
+        user.onboarding_completed = True
+
+        # Create the project that owns this brand kit + its social accounts.
+        project = Project.objects.create(
+            owner=user,
+            name=(data.get("projectName") or brand_name or "My Project")[:80],
+            color=brand_color_hex,
+            brand_name=brand_name,
+            brand_industry=brand_industry,
+            brand_color_hex=brand_color_hex,
+            last_accessed_at=timezone.now(),
+        )
+        user.active_project = project
+        user.save(update_fields=[
+            "brand_name", "brand_industry", "brand_color_hex",
+            "onboarding_completed", "active_project", "updated_at",
+        ])
+
+        for platform in data.get("connectedPlatforms", []):
+            SocialAccount.objects.get_or_create(
+                project=project,
+                platform=platform,
+                defaults={
+                    "connected": True,
+                    "handle": f"@{(user.first_name or 'user').lower()}_{platform}",
+                    "display_name": f"{user.first_name} {user.last_name}".strip() or user.email,
+                },
+            )
+
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)

@@ -173,6 +173,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/User'
           description: ''
+  /api/auth/onboarding/complete:
+    post:
+      operationId: auth_onboarding_complete_create
+      description: Create the first project from onboarding data and mark user onboarded.
+      summary: Complete onboarding
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
   /api/auth/refresh:
     post:
       operationId: auth_refresh_create
@@ -264,6 +291,262 @@ paths:
               schema:
                 $ref: '#/components/schemas/Message'
           description: ''
+  /api/projects:
+    get:
+      operationId: projects_list
+      description: Return the user's projects plus the resolved active project id.
+      summary: List the current user's projects
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+          description: ''
+    post:
+      operationId: projects_create
+      description: Create a project owned by the user and immediately make it active.
+      summary: Create a project
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+  /api/projects/{id}:
+    get:
+      operationId: projects_retrieve
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Get a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    put:
+      operationId: projects_update
+      description: Retrieve, partially update, or delete a single owned project.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    patch:
+      operationId: projects_partial_update
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Update a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    delete:
+      operationId: projects_destroy
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Delete a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/projects/{id}/activate:
+    post:
+      operationId: projects_activate_create
+      description: Set the project's last_accessed_at and the user's active pointer.
+      summary: Activate a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: '{ "activeProjectId": "<id>" }'
+  /api/projects/{project_id}/social/accounts:
+    get:
+      operationId: projects_social_accounts_retrieve
+      description: List social accounts connected within a project.
+      summary: List a project's connected social accounts
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/social/connect/{platform}:
+    post:
+      operationId: projects_social_connect_create
+      description: |-
+        Mock-connect a social platform within a project.
+
+        In production this initiates an OAuth flow; for dev it creates/re-activates a
+        SocialAccount immediately.
+      summary: Connect a social platform to a project
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/social/disconnect/{platform}:
+    delete:
+      operationId: projects_social_disconnect_destroy
+      description: Soft-disconnect a social platform within a project.
+      summary: Disconnect a social platform from a project
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
 components:
   schemas:
     AuthResponse:
@@ -281,6 +564,18 @@ components:
       - accessToken
       - refreshToken
       - user
+    ConnectedPlatformsEnum:
+      enum:
+      - tiktok
+      - youtube
+      - instagram
+      - facebook
+      type: string
+      description: |-
+        * `tiktok` - tiktok
+        * `youtube` - youtube
+        * `instagram` - instagram
+        * `facebook` - facebook
     CustomTokenObtainPair:
       type: object
       description: Custom Token Obtain Pair Serializer that adds user profile to the
@@ -320,9 +615,102 @@ components:
           type: string
       required:
       - message
+    OnboardingComplete:
+      type: object
+      description: Serializer for completing onboarding — saves platforms, brand info,
+        and optional prompt.
+      properties:
+        connectedPlatforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectedPlatformsEnum'
+        projectName:
+          type: string
+          default: ''
+          maxLength: 80
+        brandName:
+          type: string
+          default: ''
+        industry:
+          type: string
+          default: ''
+        brandColorHex:
+          type: string
+          default: '#2563eb'
+        prompt:
+          type: string
+          default: ''
+        template:
+          type: string
+          nullable: true
+    PatchedProject:
+      type: object
+      description: |-
+        Serializer for a Project in camelCase, matching the frontend shape.
+
+        Exposes the per-project brand kit and accepts the snake_case brand fields the
+        onboarding flow sends.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        icon:
+          type: string
+          maxLength: 16
+        color:
+          type: string
+          maxLength: 7
+        org:
+          type: string
+          maxLength: 120
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the project's brand kit dict.
+          readOnly: true
+        lastAccessedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        brand_name:
+          type: string
+          writeOnly: true
+          maxLength: 255
+        brand_industry:
+          type: string
+          writeOnly: true
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          writeOnly: true
+          maxLength: 7
+        brand_logo_url:
+          type: string
+          format: uri
+          writeOnly: true
+          nullable: true
+          maxLength: 1000
     PatchedUser:
       type: object
-      description: Serializer representing the user profile in camelCase format.
+      description: |-
+        Serializer representing the user profile in camelCase format.
+
+        Accepts both camelCase and snake_case brand fields for write operations
+        (the frontend onboarding sends snake_case: brand_name, brand_industry, brand_color_hex).
       properties:
         id:
           type: string
@@ -367,7 +755,26 @@ components:
         brandKit:
           type: object
           additionalProperties: {}
+          description: Return the brand kit dict from the model property.
           readOnly: true
+        projectCount:
+          type: integer
+          description: Number of projects the user owns (frontend routing signal).
+          readOnly: true
+        activeProjectId:
+          type: string
+          nullable: true
+          description: Resolved active project id (explicit selection or most recent).
+          readOnly: true
+        brand_name:
+          type: string
+          maxLength: 255
+        brand_industry:
+          type: string
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          maxLength: 7
     PlanEnum:
       enum:
       - free
@@ -380,6 +787,86 @@ components:
         * `starter` - Starter
         * `pro` - Pro
         * `agency` - Agency
+    PlatformEnum:
+      enum:
+      - tiktok
+      - youtube
+      - instagram
+      - facebook
+      type: string
+      description: |-
+        * `tiktok` - TikTok
+        * `youtube` - YouTube
+        * `instagram` - Instagram
+        * `facebook` - Facebook
+    Project:
+      type: object
+      description: |-
+        Serializer for a Project in camelCase, matching the frontend shape.
+
+        Exposes the per-project brand kit and accepts the snake_case brand fields the
+        onboarding flow sends.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        icon:
+          type: string
+          maxLength: 16
+        color:
+          type: string
+          maxLength: 7
+        org:
+          type: string
+          maxLength: 120
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the project's brand kit dict.
+          readOnly: true
+        lastAccessedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        brand_name:
+          type: string
+          writeOnly: true
+          maxLength: 255
+        brand_industry:
+          type: string
+          writeOnly: true
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          writeOnly: true
+          maxLength: 7
+        brand_logo_url:
+          type: string
+          format: uri
+          writeOnly: true
+          nullable: true
+          maxLength: 1000
+      required:
+      - brandKit
+      - createdAt
+      - id
+      - lastAccessedAt
+      - name
+      - updatedAt
     Register:
       type: object
       description: Serializer for registering a new user with 5 free credits.
@@ -412,6 +899,46 @@ components:
       required:
       - newPassword
       - token
+    SocialAccount:
+      type: object
+      description: Serializer for a connected social media account scoped to a project.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        projectId:
+          type: string
+          format: uuid
+          readOnly: true
+        platform:
+          $ref: '#/components/schemas/PlatformEnum'
+        handle:
+          type: string
+          maxLength: 255
+        displayName:
+          type: string
+        connected:
+          type: boolean
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        tokenExpiresAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - createdAt
+      - id
+      - platform
+      - projectId
+      - tokenExpiresAt
     TokenRefresh:
       type: object
       properties:
@@ -426,7 +953,11 @@ components:
       - refresh
     User:
       type: object
-      description: Serializer representing the user profile in camelCase format.
+      description: |-
+        Serializer representing the user profile in camelCase format.
+
+        Accepts both camelCase and snake_case brand fields for write operations
+        (the frontend onboarding sends snake_case: brand_name, brand_industry, brand_color_hex).
       properties:
         id:
           type: string
@@ -471,8 +1002,28 @@ components:
         brandKit:
           type: object
           additionalProperties: {}
+          description: Return the brand kit dict from the model property.
           readOnly: true
+        projectCount:
+          type: integer
+          description: Number of projects the user owns (frontend routing signal).
+          readOnly: true
+        activeProjectId:
+          type: string
+          nullable: true
+          description: Resolved active project id (explicit selection or most recent).
+          readOnly: true
+        brand_name:
+          type: string
+          maxLength: 255
+        brand_industry:
+          type: string
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          maxLength: 7
       required:
+      - activeProjectId
       - brandKit
       - creditsRemaining
       - creditsResetAt
@@ -481,6 +1032,7 @@ components:
       - email
       - id
       - plan
+      - projectCount
   securitySchemes:
     jwtAuth:
       type: http

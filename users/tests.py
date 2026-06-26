@@ -145,3 +145,74 @@ class UserAuthTests(APITestCase):
         response = self.client.post(self.logout_url, {"refreshToken": "mock-token"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("message", response.data)
+
+
+class OnboardingTests(APITestCase):
+    """Test suite for the onboarding endpoint (now creates the first project)."""
+
+    def setUp(self) -> None:
+        """Set up test data."""
+        self.onboarding_url = reverse("onboarding_complete")
+        self.me_url = reverse("auth_me")
+
+        self.user = User.objects.create_user(
+            email="onboard@example.com",
+            password="Password123!",
+            first_name="Test",
+            last_name="User",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_onboarding_creates_project_with_social_accounts(self) -> None:
+        """Onboarding creates a project that owns the brand kit and platforms."""
+        from projects.models import Project, SocialAccount
+
+        data = {
+            "projectName": "My Brand Project",
+            "connectedPlatforms": ["tiktok", "youtube"],
+            "brandName": "My Brand",
+            "industry": "SaaS",
+            "brandColorHex": "#7c3aed",
+        }
+        response = self.client.post(self.onboarding_url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["onboardingCompleted"])
+        self.assertEqual(response.data["projectCount"], 1)
+        self.assertIsNotNone(response.data["activeProjectId"])
+
+        project = Project.objects.get(owner=self.user)
+        self.assertEqual(project.name, "My Brand Project")
+        self.assertEqual(project.brand_name, "My Brand")
+        self.assertEqual(project.brand_color_hex, "#7c3aed")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.active_project_id, project.id)
+
+        accounts = SocialAccount.objects.filter(project=project)
+        self.assertEqual(accounts.count(), 2)
+        self.assertEqual(set(accounts.values_list("platform", flat=True)), {"tiktok", "youtube"})
+
+    def test_onboarding_defaults_project_name(self) -> None:
+        """With no project/brand name, a default project is still created."""
+        from projects.models import Project
+
+        response = self.client.post(self.onboarding_url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["onboardingCompleted"])
+        self.assertEqual(Project.objects.filter(owner=self.user).count(), 1)
+        self.assertEqual(Project.objects.get(owner=self.user).name, "My Project")
+
+    def test_patch_me_with_brand_fields(self) -> None:
+        """Test PATCH /api/auth/me with snake_case brand fields."""
+        data = {
+            "onboardingCompleted": True,
+            "brand_name": "Patched Brand",
+            "brand_industry": "E-commerce",
+            "brand_color_hex": "#ef4444",
+        }
+        response = self.client.patch(self.me_url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["onboardingCompleted"])
+        self.assertEqual(response.data["brandKit"]["brandName"], "Patched Brand")
+        self.assertEqual(response.data["brandKit"]["industry"], "E-commerce")
+        self.assertEqual(response.data["brandKit"]["brandColorHex"], "#ef4444")
+
