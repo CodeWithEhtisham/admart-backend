@@ -333,3 +333,93 @@ class YouTubeOAuthConnectionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertIn("error=youtube", response["Location"])
         self.assertFalse(SocialAccount.objects.filter(project=self.project).exists())
+
+
+@override_settings(
+    META_APP_ID="test-meta-app",
+    META_APP_SECRET="test-meta-secret",
+    FACEBOOK_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/facebook",
+    INSTAGRAM_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/instagram",
+    FRONTEND_URL="http://localhost:5173",
+)
+class MetaOAuthConnectionTests(APITestCase):
+    """Test suite for the shared Meta (Facebook + Instagram) OAuth flow."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="meta@example.com", password="Password123!", first_name="Maya", last_name="Meta"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand A")
+
+    def _connect_url(self, platform: str) -> str:
+        return reverse(
+            "project_social_connect_url",
+            kwargs={"project_id": self.project.id, "platform": platform},
+        )
+
+    def _valid_state(self, platform: str) -> str:
+        return signing.dumps(
+            {
+                "projectId": str(self.project.id),
+                "platform": platform,
+                "userId": str(self.user.id),
+                "nonce": "abc",
+            },
+            salt=OAUTH_STATE_SALT,
+        )
+
+    def test_facebook_connect_url(self) -> None:
+        response = self.client.get(self._connect_url("facebook"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("facebook.com", response.data["authUrl"])
+        self.assertIn("client_id=test-meta-app", response.data["authUrl"])
+        # Login works with a default scope; publishing scopes are gated behind App Review.
+        self.assertIn("public_profile", response.data["authUrl"])
+
+    def test_instagram_connect_url(self) -> None:
+        response = self.client.get(self._connect_url("instagram"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("facebook.com", response.data["authUrl"])
+        self.assertIn("public_profile", response.data["authUrl"])
+
+    @patch("projects.oauth.MetaProvider.fetch_profile")
+    @patch("projects.oauth.MetaProvider.exchange_code")
+    def test_facebook_callback_success(self, mock_exchange, mock_profile) -> None:
+        mock_exchange.return_value = {"access_token": "EAA.long", "expires_in": 5184000}
+        mock_profile.return_value = {
+            "externalId": "fb-123",
+            "displayName": "Maya's Page",
+            "handle": "",
+            "avatarUrl": None,
+        }
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "facebook"})
+        response = self.client.get(url, {"code": "c", "state": self._valid_state("facebook")})
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=facebook")
+        account = SocialAccount.objects.get(project=self.project, platform="facebook")
+        self.assertTrue(account.connected)
+        self.assertEqual(account.external_id, "fb-123")
+        self.assertEqual(account.get_access_token(), "EAA.long")
+
+    @patch("projects.oauth.InstagramProvider.fetch_profile")
+    @patch("projects.oauth.InstagramProvider.exchange_code")
+    def test_instagram_callback_success(self, mock_exchange, mock_profile) -> None:
+        mock_exchange.return_value = {"access_token": "EAA.iglong", "expires_in": 5184000}
+        mock_profile.return_value = {
+            "externalId": "ig-999",
+            "displayName": "maya.creates",
+            "handle": "maya.creates",
+            "avatarUrl": "https://cdn.example/ig.jpg",
+        }
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "instagram"})
+        response = self.client.get(url, {"code": "c", "state": self._valid_state("instagram")})
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=instagram")
+        account = SocialAccount.objects.get(project=self.project, platform="instagram")
+        self.assertEqual(account.handle, "maya.creates")
+        self.assertEqual(account.external_id, "ig-999")

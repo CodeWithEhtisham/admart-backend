@@ -193,6 +193,16 @@ YOUTUBE_OAUTH_REDIRECT_URI = os.getenv(
     "YOUTUBE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/youtube"
 )
 
+# Meta (Facebook + Instagram) OAuth — a single Meta app powers both platforms.
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
+    "FACEBOOK_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/facebook"
+)
+INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
+    "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
+)
+
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")

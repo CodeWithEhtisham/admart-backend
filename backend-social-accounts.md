@@ -274,11 +274,17 @@ sequenceDiagram
 Each later platform only needs its own OAuth app + config; the endpoints and `SocialAccount`
 model stay identical.
 
-| Platform   | OAuth provider / notes                                                                 |
-| ---------- | ------------------------------------------------------------------------------------- |
-| TikTok     | TikTok for Developers (Login Kit + Content Posting API). Scopes for video publish.    |
-| Instagram  | Instagram Graph API via Facebook Login (Business/Creator accounts).                   |
-| Facebook   | Facebook Login + Pages API (manage_posts, pages_read_engagement).                     |
+| Platform   | OAuth provider / notes                                                                 | Status |
+| ---------- | ------------------------------------------------------------------------------------- | ------ |
+| Facebook   | Facebook Login + Pages API (`pages_manage_posts`, `pages_read_engagement`).           | ✅ Connect implemented |
+| Instagram  | Instagram Graph API via Facebook Login (Business/Creator linked to a Page).           | ✅ Connect implemented |
+| TikTok     | TikTok for Developers (Login Kit + Content Posting API). Scopes for video publish.    | ⬜ Pending (`501`) |
+
+> **Facebook + Instagram share ONE Meta app.** Both use Facebook Login; they differ only in
+> requested scopes, redirect URI, and the post-auth profile lookup (IG resolves the
+> Instagram Business account linked to a Page). Env: `META_APP_ID`, `META_APP_SECRET`,
+> `FACEBOOK_OAUTH_REDIRECT_URI`, `INSTAGRAM_OAUTH_REDIRECT_URI`. Meta issues no refresh token —
+> short-lived tokens are upgraded to long-lived (~60 day) tokens and re-extended as needed.
 
 ## 8. Security checklist
 

@@ -1,15 +1,27 @@
-# Frontend Guide — Connecting Social Accounts (YouTube OAuth)
+# Frontend Guide — Connecting Social Accounts (YouTube, Facebook, Instagram)
 
 > Audience: frontend team
 > Pairs with: `backend-social-accounts.md` (backend contract), `frontend-integration.md` (projects/auth)
 > Affected files: `src/pages/SocialAccountsPage.jsx`, `src/utils/projects.js`, `src/utils/api.js`
 > Base URL: `VITE_API_URL` (default `http://localhost:8000`)
 
+## 0. Platform status
+
+The flow is **identical for every platform** — only the `platform` key changes.
+
+| Platform | Key | Status | Notes |
+| -------- | --- | ------ | ----- |
+| YouTube   | `youtube`   | ✅ Live | — |
+| Facebook  | `facebook`  | ✅ Live | Connects to the user's Facebook Page |
+| Instagram | `instagram` | ✅ Live | Requires an IG **Professional** account linked to a Facebook Page |
+| TikTok    | `tiktok`    | ⛔ Not yet | Connect call returns `501` — keep its button disabled |
+
 ## 1. How the connect flow works
 
 Connecting is a **redirect-based OAuth handshake** — you can't just POST a boolean, the user
-has to approve on Google. The backend does all the token work; the frontend only (1) asks for
-an authorize URL, (2) sends the browser there, and (3) refreshes the list when the user returns.
+has to approve on the provider (Google for YouTube, Meta for Facebook/Instagram). The backend
+does all the token work; the frontend only (1) asks for an authorize URL, (2) sends the browser
+there, and (3) refreshes the list when the user returns.
 
 ```mermaid
 sequenceDiagram
@@ -112,9 +124,9 @@ import { useActiveProject } from "../hooks/useActiveProject"; // however you exp
 
 const PLATFORMS = [
   { key: "youtube", label: "YouTube", available: true },
-  { key: "tiktok", label: "TikTok", available: false },
-  { key: "instagram", label: "Instagram", available: false },
-  { key: "facebook", label: "Facebook", available: false },
+  { key: "facebook", label: "Facebook", available: true },
+  { key: "instagram", label: "Instagram", available: true },
+  { key: "tiktok", label: "TikTok", available: false }, // 501 until built
 ];
 
 export default function SocialAccountsPage() {
@@ -177,22 +189,29 @@ export default function SocialAccountsPage() {
 
 ## 5. Handling "not available yet" platforms
 
-Until TikTok/Instagram/Facebook are implemented, their connect-url call returns **`501`**. Two
-options (the example above uses option A):
+Only **TikTok** is unimplemented today — its connect-url call returns **`501`**. Two options
+(the example above uses option A):
 
 - **A. Static flag (simplest):** mark `available: false` in your platform list and disable the
-  button. Update when the backend ships each platform.
+  button. Update when the backend ships the platform.
 - **B. React to `501`:** attempt the call and, on a `501` response, disable the button and show
   the `message` from the body. More dynamic, no frontend change when a platform ships.
 
 ## 6. Gotchas / expectations
 
-- **Use a full-page redirect** (`window.location.href = authUrl`), not `fetch`. Google's
+- **Use a full-page redirect** (`window.location.href = authUrl`), not `fetch`. The provider
   consent screen cannot be loaded via AJAX/iframe.
-- **Test users only:** while the Google app is in "Testing", only accounts added as test users
-  in GCP can complete the flow; others see "Access blocked".
-- **Uploaded videos will be private** until the YouTube API audit passes — this is a backend/Google
-  constraint, not a frontend issue. Don't surface it as an error.
+- **Test/dev accounts only (for now):** while the apps are in Testing/Development mode, only
+  accounts whitelisted in the provider dashboard (Google test users / Meta app roles) can
+  complete the flow; others see "Access blocked". This lifts after provider review/audit.
+- **Instagram needs a Professional account linked to a Facebook Page.** If it's a personal IG
+  account or isn't linked to a Page, the connect *succeeds* but the account comes back with an
+  empty name/handle — surface a hint like "Connect a Professional Instagram account linked to a
+  Facebook Page," not a hard error.
+- **Facebook publishes to a Page**, not a personal profile — the connected account represents the
+  user's Page.
+- **Uploaded videos may be private** until the provider review/audit passes (YouTube audit, Meta
+  App Review) — a backend/provider constraint, not a frontend issue. Don't surface it as an error.
 - **Active project required:** if `activeProjectId` is null (user has no project), route them to
   onboarding first — there's nothing to attach the connection to.
 - **No popup needed:** the redirect round-trip returns the user straight to `/social`. If you

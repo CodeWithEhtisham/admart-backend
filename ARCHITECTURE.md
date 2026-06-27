@@ -8,7 +8,7 @@
 
 Admart is an **agentic social-media platform**. A user can:
 
-1. **Create** short-form videos (AI generation via the DGX/Flux pipeline).
+1. **Create** short-form videos (AI generation via a third-party video/image generation API).
 2. **Publish** them to their connected social accounts (YouTube first; TikTok, Instagram, Facebook later).
 3. **Track analytics** for what they posted (views, likes, watch time, …).
 4. Have an **agent** automate the loop (generate → post → react to performance) over time.
@@ -59,7 +59,7 @@ flowchart LR
 | ------- | -------------- | ---------- | ------ |
 | **Identity & Workspace** | Users, auth, projects, brand kit, active project | — | ✅ |
 | **Connections** | Social OAuth, encrypted token storage, refresh | Identity | 🔨 |
-| **Content / Generation** | Create videos via DGX/Flux, async job lifecycle, credit spend | Identity | ⬜ |
+| **Content / Generation** | Create videos via an external generation API, async job lifecycle, credit spend | Identity | ⬜ |
 | **Publishing** | Upload/schedule a video to a SocialAccount | Connections, Content | ⬜ |
 | **Analytics** | Pull & aggregate per-publication metrics from providers | Publishing | ⬜ |
 | **Agent / Orchestration** | Automated generate→post→learn workflows | all above | ⬜ |
@@ -88,7 +88,9 @@ projects/    # Project + SocialAccount + OAuth (Workspace + Connections)
 - **Secrets at rest:** social `accessToken`/`refreshToken` are **encrypted** (Fernet) and never
   returned by any serializer. OAuth `state` is signed and time-limited (CSRF).
 - **Async/long-running work:** video generation and (later) analytics sync are background jobs
-  (poll/queue), not request-blocking. DGX pipeline settings live in env (`DGX_*`).
+  (poll/queue), not request-blocking. Generation is delegated to a **third-party generation API**
+  (provider config in env); the backend submits a job, polls for completion, and stores the
+  resulting video asset.
 - **Observability:** structured logging with correlation per request; provider/API failures are
   logged and surfaced as `502` to the client.
 - **API style:** REST, JSON, camelCase payloads, ISO-8601 timestamps, OpenAPI via
@@ -102,9 +104,11 @@ projects/    # Project + SocialAccount + OAuth (Workspace + Connections)
   - ⚠️ **App audit:** until the Google project passes the YouTube API Services audit, API
     uploads are **force-locked to private** — a launch blocker, not a dev blocker.
   - ⚠️ **Quota:** ~10,000 units/day, ~1,600 per upload (~6/day) until a quota increase is granted.
-- **TikTok / Instagram / Facebook:** same endpoints + `SocialAccount` model; only provider OAuth
-  config and profile mapping differ. Unimplemented platforms return `501` so the UI can disable
-  them.
+- **Facebook + Instagram (Meta):** a **single Meta app** powers both via Facebook Login —
+  connect flow implemented (`MetaProvider`/`InstagramProvider`). They share `META_APP_ID`/
+  `META_APP_SECRET`, differing only in scopes, redirect URI, and profile lookup (IG resolves the
+  Business account linked to a Page). Publishing scopes need Meta App Review for production.
+- **TikTok:** not yet implemented; its connect call returns `501` so the UI can disable it.
 
 ## 7. Current API surface (implemented)
 
