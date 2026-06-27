@@ -22,7 +22,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
-from projects.views import ProjectListCreateView
+from projects.views import ProjectListCreateView, SocialCallbackView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -30,6 +30,8 @@ urlpatterns = [
     # List/create at "/api/projects" (no trailing slash); sub-routes under "/api/projects/".
     path("api/projects", ProjectListCreateView.as_view(), name="project_list_create"),
     path("api/projects/", include("projects.urls")),
+    # OAuth provider callback (browser redirect from provider; secured by signed state).
+    path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),
     # OpenAPI schema endpoints
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

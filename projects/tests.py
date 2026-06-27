@@ -1,9 +1,15 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.core import signing
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from projects.crypto import decrypt
 from projects.models import Project, SocialAccount
+from projects.views import OAUTH_STATE_SALT
 
 User = get_user_model()
 
@@ -199,3 +205,131 @@ class ProjectSocialTests(APITestCase):
         # Should not conflict with the unique_together(project, platform).
         SocialAccount.objects.create(project=project_b, platform="tiktok")
         self.assertEqual(SocialAccount.objects.filter(platform="tiktok").count(), 2)
+
+
+@override_settings(
+    GOOGLE_OAUTH_CLIENT_ID="test-client-id",
+    GOOGLE_OAUTH_CLIENT_SECRET="test-secret",
+    YOUTUBE_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/youtube",
+    FRONTEND_URL="http://localhost:5173",
+)
+class YouTubeOAuthConnectionTests(APITestCase):
+    """Test suite for the real OAuth connect-url + provider callback flow."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="creator@example.com", password="Password123!", first_name="Cara", last_name="Creator"
+        )
+        self.other = User.objects.create_user(
+            email="stranger@example.com", password="Password123!", first_name="Stu", last_name="Stranger"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand A")
+
+    def _connect_url(self, platform: str) -> str:
+        return reverse(
+            "project_social_connect_url",
+            kwargs={"project_id": self.project.id, "platform": platform},
+        )
+
+    def test_connect_url_returns_authurl_and_state(self) -> None:
+        response = self.client.get(self._connect_url("youtube"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("authUrl", response.data)
+        self.assertIn("state", response.data)
+        self.assertIn("accounts.google.com", response.data["authUrl"])
+        self.assertIn("client_id=test-client-id", response.data["authUrl"])
+        self.assertIn("youtube.upload", response.data["authUrl"])
+
+        payload = signing.loads(response.data["state"], salt=OAUTH_STATE_SALT, max_age=600)
+        self.assertEqual(payload["projectId"], str(self.project.id))
+        self.assertEqual(payload["userId"], str(self.user.id))
+        self.assertEqual(payload["platform"], "youtube")
+
+    def test_connect_url_unimplemented_platform_returns_501(self) -> None:
+        response = self.client.get(self._connect_url("tiktok"))
+        self.assertEqual(response.status_code, status.HTTP_501_NOT_IMPLEMENTED)
+        self.assertEqual(response.data["platform"], "tiktok")
+
+    def test_connect_url_unknown_platform_returns_400(self) -> None:
+        response = self.client.get(self._connect_url("myspace"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_connect_url_foreign_project_returns_404(self) -> None:
+        foreign = Project.objects.create(owner=self.other, name="Not Mine")
+        url = reverse(
+            "project_social_connect_url",
+            kwargs={"project_id": foreign.id, "platform": "youtube"},
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def _valid_state(self) -> str:
+        return signing.dumps(
+            {
+                "projectId": str(self.project.id),
+                "platform": "youtube",
+                "userId": str(self.user.id),
+                "nonce": "abc",
+            },
+            salt=OAUTH_STATE_SALT,
+        )
+
+    @patch("projects.oauth.YouTubeProvider.fetch_profile")
+    @patch("projects.oauth.YouTubeProvider.exchange_code")
+    def test_callback_success_creates_connected_account(self, mock_exchange, mock_profile) -> None:
+        mock_exchange.return_value = {
+            "access_token": "ya29.access",
+            "refresh_token": "1//refresh",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/youtube.upload",
+        }
+        mock_profile.return_value = {
+            "externalId": "UC_channel_123",
+            "displayName": "Cara's Channel",
+            "handle": "@cara",
+            "avatarUrl": "https://yt3.example/avatar.jpg",
+        }
+
+        # Callback is reached unauthenticated (browser redirect).
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "youtube"})
+        response = self.client.get(url, {"code": "auth-code", "state": self._valid_state()})
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=youtube")
+
+        account = SocialAccount.objects.get(project=self.project, platform="youtube")
+        self.assertTrue(account.connected)
+        self.assertEqual(account.external_id, "UC_channel_123")
+        self.assertEqual(account.display_name, "Cara's Channel")
+        self.assertEqual(account.handle, "@cara")
+        # Tokens are encrypted at rest but decrypt back to the originals.
+        self.assertNotEqual(account.access_token, "ya29.access")
+        self.assertEqual(decrypt(account.access_token), "ya29.access")
+        self.assertEqual(account.get_refresh_token(), "1//refresh")
+        self.assertIsNotNone(account.token_expires_at)
+
+    def test_callback_bad_state_redirects_with_error(self) -> None:
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "youtube"})
+        response = self.client.get(url, {"code": "auth-code", "state": "tampered"})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?error=youtube")
+        self.assertFalse(SocialAccount.objects.filter(project=self.project).exists())
+
+    def test_callback_provider_error_param_redirects_with_error(self) -> None:
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "youtube"})
+        response = self.client.get(url, {"error": "access_denied", "state": self._valid_state()})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn("error=youtube", response["Location"])
+
+    @patch("projects.oauth.YouTubeProvider.exchange_code", side_effect=Exception("boom"))
+    def test_callback_exchange_failure_redirects_with_error(self, _mock_exchange) -> None:
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "youtube"})
+        response = self.client.get(url, {"code": "auth-code", "state": self._valid_state()})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn("error=youtube", response["Location"])
+        self.assertFalse(SocialAccount.objects.filter(project=self.project).exists())

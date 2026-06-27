@@ -1,17 +1,29 @@
+import logging
+import secrets
 from typing import Any
 
+from django.conf import settings
+from django.core import signing
+from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from projects import oauth
 from projects.models import Project, SocialAccount
 from projects.serializers import ProjectSerializer, SocialAccountSerializer
 
+logger = logging.getLogger(__name__)
+
 VALID_PLATFORMS = [choice[0] for choice in SocialAccount.PLATFORM_CHOICES]
+
+# Salt for signing the OAuth `state` value (CSRF protection + carries context).
+OAUTH_STATE_SALT = "social-oauth-state"
+OAUTH_STATE_MAX_AGE = 600  # seconds
 
 
 def resolve_active_project_id(user) -> str | None:
@@ -196,3 +208,110 @@ class ProjectSocialDisconnectView(ProjectScopedSocialMixin, APIView):
         account.connected = False
         account.save(update_fields=["connected"])
         return Response({"message": f"{platform} disconnected successfully."}, status=status.HTTP_200_OK)
+
+
+class SocialConnectUrlView(ProjectScopedSocialMixin, APIView):
+    """Begin an OAuth connection: return the provider authorize URL + signed state.
+
+    The frontend redirects the browser to ``authUrl``; the provider then calls our
+    callback (see SocialCallbackView).
+    """
+
+    @extend_schema(
+        summary="Get the OAuth authorize URL for connecting a platform",
+        request=None,
+        responses={200: OpenApiResponse(description='{ "authUrl": "...", "state": "..." }')},
+    )
+    def get(self, request: Request, project_id: str, platform: str, *args: Any, **kwargs: Any) -> Response:
+        project = self.get_project(request, project_id)
+
+        if platform not in VALID_PLATFORMS:
+            return Response({"message": "Unsupported platform"}, status=status.HTTP_400_BAD_REQUEST)
+
+        provider = oauth.PROVIDERS.get(platform)
+        if provider is None:
+            return Response(
+                {"message": f"{platform} connection is not available yet.", "platform": platform},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+
+        state = signing.dumps(
+            {
+                "projectId": str(project.id),
+                "platform": platform,
+                "userId": str(request.user.id),
+                "nonce": secrets.token_urlsafe(8),
+            },
+            salt=OAUTH_STATE_SALT,
+        )
+        return Response(
+            {"authUrl": provider.build_auth_url(state), "state": state},
+            status=status.HTTP_200_OK,
+        )
+
+
+class SocialCallbackView(APIView):
+    """OAuth provider redirect target.
+
+    Reached via browser redirect from the provider (no bearer token); secured by the
+    signed ``state``. Exchanges the code, stores encrypted tokens, then 302-redirects
+    back to the frontend ``/social`` page with a status flag.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def _redirect(self, platform: str, *, ok: bool) -> HttpResponseRedirect:
+        base = settings.FRONTEND_URL.rstrip("/")
+        flag = f"connected={platform}" if ok else f"error={platform}"
+        return HttpResponseRedirect(f"{base}/social?{flag}")
+
+    @extend_schema(summary="OAuth provider callback", responses={302: None})
+    def get(self, request: Request, platform: str, *args: Any, **kwargs: Any) -> HttpResponseRedirect:
+        code = request.query_params.get("code", "")
+        state = request.query_params.get("state", "")
+        if request.query_params.get("error") or not code or not state:
+            return self._redirect(platform, ok=False)
+
+        try:
+            payload = signing.loads(state, salt=OAUTH_STATE_SALT, max_age=OAUTH_STATE_MAX_AGE)
+        except signing.BadSignature:
+            logger.warning("OAuth callback with bad/expired state for %s", platform)
+            return self._redirect(platform, ok=False)
+
+        if payload.get("platform") != platform:
+            return self._redirect(platform, ok=False)
+
+        provider = oauth.PROVIDERS.get(platform)
+        if provider is None:
+            return self._redirect(platform, ok=False)
+
+        project = Project.objects.filter(
+            id=payload.get("projectId"), owner_id=payload.get("userId")
+        ).first()
+        if project is None:
+            return self._redirect(platform, ok=False)
+
+        try:
+            tokens = provider.exchange_code(code)
+            profile = provider.fetch_profile(tokens["access_token"])
+        except Exception:  # noqa: BLE001 — provider/network failures map to an error redirect
+            logger.exception("OAuth token exchange/profile fetch failed for %s", platform)
+            return self._redirect(platform, ok=False)
+
+        account, _ = SocialAccount.objects.get_or_create(project=project, platform=platform)
+        account.connected = True
+        account.external_id = profile.get("externalId", "") or account.external_id
+        account.display_name = profile.get("displayName", "") or account.display_name
+        account.handle = profile.get("handle", "") or account.handle
+        if profile.get("avatarUrl"):
+            account.avatar_url = profile["avatarUrl"]
+        account.store_tokens(
+            access_token=tokens.get("access_token"),
+            refresh_token=tokens.get("refresh_token"),
+            expires_in=tokens.get("expires_in"),
+            scope=tokens.get("scope", ""),
+        )
+        account.save()
+
+        return self._redirect(platform, ok=True)

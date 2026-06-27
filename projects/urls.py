@@ -6,6 +6,7 @@ from projects.views import (
     ProjectSocialConnectView,
     ProjectSocialDisconnectView,
     ProjectSocialListView,
+    SocialConnectUrlView,
 )
 
 # Sub-routes mounted under the "api/projects/" prefix. The bare list/create
@@ -18,6 +19,11 @@ urlpatterns = [
         "<uuid:project_id>/social/accounts",
         ProjectSocialListView.as_view(),
         name="project_social_list",
+    ),
+    path(
+        "<uuid:project_id>/social/connect/<str:platform>/url",
+        SocialConnectUrlView.as_view(),
+        name="project_social_connect_url",
     ),
     path(
         "<uuid:project_id>/social/connect/<str:platform>",

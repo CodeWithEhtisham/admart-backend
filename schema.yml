@@ -523,6 +523,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/SocialAccount'
           description: ''
+  /api/projects/{project_id}/social/connect/{platform}/url:
+    get:
+      operationId: projects_social_connect_url_retrieve
+      description: |-
+        Begin an OAuth connection: return the provider authorize URL + signed state.
+
+        The frontend redirects the browser to ``authUrl``; the provider then calls our
+        callback (see SocialCallbackView).
+      summary: Get the OAuth authorize URL for connecting a platform
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: '{ "authUrl": "...", "state": "..." }'
   /api/projects/{project_id}/social/disconnect/{platform}:
     delete:
       operationId: projects_social_disconnect_destroy
@@ -546,6 +574,29 @@ paths:
       - jwtAuth: []
       responses:
         '200':
+          description: No response body
+  /api/social/callback/{platform}:
+    get:
+      operationId: social_callback_retrieve
+      description: |-
+        OAuth provider redirect target.
+
+        Reached via browser redirect from the provider (no bearer token); secured by the
+        signed ``state``. Exchanges the code, stores encrypted tokens, then 302-redirects
+        back to the frontend ``/social`` page with a status flag.
+      summary: OAuth provider callback
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      tags:
+      - social
+      security:
+      - {}
+      responses:
+        '302':
           description: No response body
 components:
   schemas:

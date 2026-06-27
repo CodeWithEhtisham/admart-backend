@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
@@ -85,12 +86,16 @@ class SocialAccount(models.Model):
     platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES)
     handle = models.CharField(max_length=255, blank=True, default="")
     display_name = models.CharField(max_length=255, blank=True, default="")
+    external_id = models.CharField(max_length=255, blank=True, default="")
+    # OAuth secrets — stored encrypted (Fernet); never exposed by serializers.
     access_token = models.TextField(blank=True, default="")
     refresh_token = models.TextField(blank=True, default="")
+    scope = models.TextField(blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
     connected = models.BooleanField(default=True)
     avatar_url = models.URLField(max_length=1000, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["platform"]
@@ -98,3 +103,37 @@ class SocialAccount(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project_id} — {self.platform}"
+
+    def store_tokens(
+        self,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        expires_in: int | None = None,
+        scope: str | None = None,
+    ) -> None:
+        """Encrypt and set OAuth tokens. Does not save; caller persists.
+
+        A refresh token is only updated when provided (Google omits it on refresh).
+        """
+        from projects.crypto import encrypt
+
+        if access_token is not None:
+            self.access_token = encrypt(access_token)
+        if refresh_token:
+            self.refresh_token = encrypt(refresh_token)
+        if expires_in:
+            self.token_expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+        if scope is not None:
+            self.scope = scope
+
+    def get_access_token(self) -> str:
+        """Return the decrypted access token (empty string if unset)."""
+        from projects.crypto import decrypt
+
+        return decrypt(self.access_token)
+
+    def get_refresh_token(self) -> str:
+        """Return the decrypted refresh token (empty string if unset)."""
+        from projects.crypto import decrypt
+
+        return decrypt(self.refresh_token)

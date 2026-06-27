@@ -183,3 +183,17 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
+# Frontend base URL (where OAuth callbacks redirect back to).
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Google / YouTube OAuth (social account connections — separate from Google login).
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+YOUTUBE_OAUTH_REDIRECT_URI = os.getenv(
+    "YOUTUBE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/youtube"
+)
+
+# Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
+# derived from SECRET_KEY (fine for dev; set an explicit key in production).
+SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
+
