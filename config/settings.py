@@ -203,6 +203,20 @@ INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
     "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
 )
 
+# Gate Meta page/IG publishing scopes behind App Review. Keep False until the
+# permissions are added + approved in the Meta dashboard, otherwise Meta rejects the
+# entire consent screen with "Invalid Scopes".
+FACEBOOK_PUBLISH_ENABLED = os.getenv("FACEBOOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+INSTAGRAM_PUBLISH_ENABLED = os.getenv("INSTAGRAM_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")

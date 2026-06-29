@@ -376,12 +376,28 @@ class MetaOAuthConnectionTests(APITestCase):
         self.assertIn("client_id=test-meta-app", response.data["authUrl"])
         # Login works with a default scope; publishing scopes are gated behind App Review.
         self.assertIn("public_profile", response.data["authUrl"])
+        self.assertNotIn("pages_show_list", response.data["authUrl"])
+
+    @override_settings(FACEBOOK_PUBLISH_ENABLED=True)
+    def test_facebook_connect_url_includes_publish_scopes_when_enabled(self) -> None:
+        response = self.client.get(self._connect_url("facebook"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("pages_show_list", response.data["authUrl"])
+        self.assertIn("pages_manage_posts", response.data["authUrl"])
 
     def test_instagram_connect_url(self) -> None:
         response = self.client.get(self._connect_url("instagram"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("facebook.com", response.data["authUrl"])
         self.assertIn("public_profile", response.data["authUrl"])
+        self.assertNotIn("instagram_content_publish", response.data["authUrl"])
+
+    @override_settings(INSTAGRAM_PUBLISH_ENABLED=True)
+    def test_instagram_connect_url_includes_publish_scopes_when_enabled(self) -> None:
+        response = self.client.get(self._connect_url("instagram"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("instagram_basic", response.data["authUrl"])
+        self.assertIn("instagram_content_publish", response.data["authUrl"])
 
     @patch("projects.oauth.MetaProvider.fetch_profile")
     @patch("projects.oauth.MetaProvider.exchange_code")
