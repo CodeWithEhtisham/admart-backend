@@ -82,15 +82,16 @@ existing tokens become undecryptable. Rotating it requires re-connecting all acc
 
 Requesting a scope your Meta app hasn't enabled makes Meta reject the **entire** consent screen
 with `Invalid Scopes`. So Meta connect requests only `public_profile` by default; the publishing
-scopes are gated behind flags in `projects/oauth.py`:
+scopes are gated behind per-platform env vars (read at request time, default `False`):
 
-```python
-FACEBOOK_PUBLISH_ENABLED = False   # pages_show_list, pages_read_engagement, pages_manage_posts
-INSTAGRAM_PUBLISH_ENABLED = False  # instagram_basic, instagram_content_publish, pages_*, business_management
+```bash
+FACEBOOK_PUBLISH_ENABLED=False   # pages_show_list, pages_read_engagement, pages_manage_posts
+INSTAGRAM_PUBLISH_ENABLED=False  # instagram_basic, instagram_content_publish, pages_*, business_management
 ```
 
-Flip a flag to `True` **only after** those permissions are (a) added to the Meta app via the
-relevant product/use case and (b) approved through **App Review** (+ Business Verification).
+Set a flag to `true` in your environment (`.env`) **only after** those permissions are (a) added
+to the Meta app via the relevant product/use case and (b) approved through **App Review**
+(+ Business Verification). No code change or redeploy of the image is needed — just the env var.
 Until then, leave them `False` so users can still connect.
 
 ### Prerequisites for Instagram testing
