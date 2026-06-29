@@ -107,14 +107,33 @@ class MetaProvider:
     DIALOG_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
     GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 
-    def __init__(self, platform: str, redirect_setting: str, scopes: list[str]):
+    def __init__(
+        self,
+        platform: str,
+        redirect_setting: str,
+        base_scopes: list[str],
+        publish_scopes: list[str],
+        publish_setting: str,
+    ):
         self.platform = platform
         self._redirect_setting = redirect_setting
-        self.scopes = scopes
+        self.base_scopes = base_scopes
+        self.publish_scopes = publish_scopes
+        self._publish_setting = publish_setting
 
     @property
     def redirect_uri(self) -> str:
         return getattr(settings, self._redirect_setting)
+
+    @property
+    def scopes(self) -> list[str]:
+        """Base (connect) scopes, plus publish scopes only when enabled via settings.
+
+        Requesting a scope the Meta app hasn't enabled makes Meta reject the entire
+        consent screen, so publish scopes are gated behind a per-platform setting.
+        """
+        enabled = getattr(settings, self._publish_setting, False)
+        return self.base_scopes + (self.publish_scopes if enabled else [])
 
     def build_auth_url(self, state: str) -> str:
         params = {
@@ -224,11 +243,12 @@ class InstagramProvider(MetaProvider):
 #     pages_show_list, instagram_content_publish, …) are "Invalid Scopes" until they're
 #     enabled on the Meta app AND approved via App Review. Requesting an un-enabled scope
 #     makes Meta reject the ENTIRE consent screen — so we only request them once they're
-#     enabled. Flip FACEBOOK_PUBLISH_ENABLED / INSTAGRAM_PUBLISH_ENABLED to True after the
-#     permissions are added + approved in the Meta dashboard.
-FACEBOOK_PUBLISH_ENABLED = False
-INSTAGRAM_PUBLISH_ENABLED = False
-
+#     enabled.
+#
+# These are gated behind the per-platform settings FACEBOOK_PUBLISH_ENABLED /
+# INSTAGRAM_PUBLISH_ENABLED (sourced from env, default False). Set the matching env var
+# to "true" once the permissions are added + approved in the Meta dashboard — no code
+# change needed. The flag is read at request time, so it can differ per environment.
 FACEBOOK_PUBLISH_SCOPES = [
     "pages_show_list",
     "pages_read_engagement",
@@ -242,15 +262,24 @@ INSTAGRAM_PUBLISH_SCOPES = [
     "business_management",
 ]
 
-FACEBOOK_SCOPES = ["public_profile"] + (FACEBOOK_PUBLISH_SCOPES if FACEBOOK_PUBLISH_ENABLED else [])
-INSTAGRAM_SCOPES = ["public_profile"] + (INSTAGRAM_PUBLISH_SCOPES if INSTAGRAM_PUBLISH_ENABLED else [])
-
 # Registry of implemented providers. Unknown platform => 400; known platform
 # (in SocialAccount.PLATFORM_CHOICES) but absent here => 501 "not available yet".
 PROVIDERS = {
     "youtube": YouTubeProvider(),
-    "facebook": MetaProvider("facebook", "FACEBOOK_OAUTH_REDIRECT_URI", FACEBOOK_SCOPES),
-    "instagram": InstagramProvider("instagram", "INSTAGRAM_OAUTH_REDIRECT_URI", INSTAGRAM_SCOPES),
+    "facebook": MetaProvider(
+        "facebook",
+        "FACEBOOK_OAUTH_REDIRECT_URI",
+        base_scopes=["public_profile"],
+        publish_scopes=FACEBOOK_PUBLISH_SCOPES,
+        publish_setting="FACEBOOK_PUBLISH_ENABLED",
+    ),
+    "instagram": InstagramProvider(
+        "instagram",
+        "INSTAGRAM_OAUTH_REDIRECT_URI",
+        base_scopes=["public_profile"],
+        publish_scopes=INSTAGRAM_PUBLISH_SCOPES,
+        publish_setting="INSTAGRAM_PUBLISH_ENABLED",
+    ),
 }
 
 
