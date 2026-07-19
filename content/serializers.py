@@ -1,9 +1,9 @@
 from rest_framework import serializers
 
 from content.catalog import CAPABILITIES, resolve_model
-from content.models import ImageJob, LibraryAsset
+from content.models import ImageJob, LibraryAsset, VideoJob
+from content.video_catalog import VIDEO_CAPABILITIES, get_model_entry, resolve_video_model
 
-MAX_PROMPT_LEN = 2000
 ALLOWED_ASPECT = {
     "auto",
     "1:1",
@@ -22,8 +22,8 @@ ALLOWED_ASPECT = {
 class ImageJobCreateSerializer(serializers.Serializer):
     capability = serializers.ChoiceField(choices=CAPABILITIES)
     model = serializers.CharField(required=False, allow_blank=True, max_length=200)
-    prompt = serializers.CharField(required=False, allow_blank=True, max_length=MAX_PROMPT_LEN)
-    negativePrompt = serializers.CharField(required=False, allow_blank=True, max_length=MAX_PROMPT_LEN)
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    negativePrompt = serializers.CharField(required=False, allow_blank=True)
     imageUrls = serializers.ListField(
         child=serializers.URLField(max_length=2000),
         required=False,
@@ -151,6 +151,123 @@ class ImageJobSerializer(serializers.ModelSerializer):
         ]
 
 
+class VideoJobCreateSerializer(serializers.Serializer):
+    capability = serializers.ChoiceField(choices=VIDEO_CAPABILITIES)
+    model = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    negativePrompt = serializers.CharField(required=False, allow_blank=True)
+    startImageUrl = serializers.URLField(required=False, allow_blank=True, max_length=2000)
+    endImageUrl = serializers.URLField(required=False, allow_blank=True, max_length=2000)
+    imageUrls = serializers.ListField(
+        child=serializers.URLField(max_length=2000),
+        required=False,
+        allow_empty=True,
+    )
+    aspectRatio = serializers.CharField(required=False, allow_blank=True)
+    duration = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    resolution = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    generateAudio = serializers.BooleanField(required=False)
+    seed = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        capability = attrs["capability"]
+        prompt = (attrs.get("prompt") or "").strip()
+        if not prompt:
+            raise serializers.ValidationError({"prompt": "prompt is required"})
+        attrs["prompt"] = prompt
+
+        try:
+            attrs["model"] = resolve_video_model(capability, attrs.get("model"))
+        except ValueError as exc:
+            raise serializers.ValidationError({"model": str(exc)}) from exc
+
+        entry = get_model_entry(capability, attrs["model"]) or {}
+        inputs = entry.get("inputs") or "text"
+        urls = list(attrs.get("imageUrls") or [])
+        start = (attrs.get("startImageUrl") or "").strip()
+        end = (attrs.get("endImageUrl") or "").strip()
+        if not start and urls:
+            start = urls[0]
+        if not end and len(urls) > 1:
+            end = urls[1]
+
+        for label, url in (("startImageUrl", start), ("endImageUrl", end)):
+            if url and not str(url).startswith(("https://", "http://")):
+                raise serializers.ValidationError({label: "must be an http(s) URL"})
+
+        if inputs == "image":
+            if not start:
+                raise serializers.ValidationError(
+                    {"startImageUrl": "This model requires a start image"}
+                )
+        elif inputs == "firstLast":
+            if not start:
+                raise serializers.ValidationError(
+                    {"startImageUrl": "This model requires a start frame"}
+                )
+            if not end:
+                raise serializers.ValidationError(
+                    {"endImageUrl": "This model requires an end frame"}
+                )
+
+        attrs["startImageUrl"] = start or None
+        attrs["endImageUrl"] = end or None
+        attrs["imageUrls"] = [u for u in [start, end] if u]
+
+        # Soft-check duration/aspect against catalog options when provided
+        fields = entry.get("fields") or {}
+        if attrs.get("duration") and "duration" in fields:
+            allowed = fields["duration"]
+            if attrs["duration"] not in allowed:
+                raise serializers.ValidationError(
+                    {"duration": f"Must be one of: {', '.join(allowed)}"}
+                )
+        if attrs.get("aspectRatio") and "aspectRatio" in fields:
+            allowed = fields["aspectRatio"]
+            if attrs["aspectRatio"] not in allowed:
+                raise serializers.ValidationError(
+                    {"aspectRatio": f"Must be one of: {', '.join(allowed)}"}
+                )
+        if attrs.get("resolution") and "resolution" in fields:
+            allowed = fields["resolution"]
+            if attrs["resolution"] not in allowed:
+                raise serializers.ValidationError(
+                    {"resolution": f"Must be one of: {', '.join(allowed)}"}
+                )
+
+        return attrs
+
+
+class VideoJobSerializer(serializers.ModelSerializer):
+    projectId = serializers.UUIDField(source="project_id", read_only=True)
+    creditsUsed = serializers.DecimalField(
+        source="credits_used", max_digits=8, decimal_places=2, read_only=True, allow_null=True
+    )
+    durationSeconds = serializers.IntegerField(
+        source="duration_seconds", read_only=True, allow_null=True
+    )
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = VideoJob
+        fields = [
+            "id",
+            "projectId",
+            "capability",
+            "model",
+            "status",
+            "prompt",
+            "video",
+            "error",
+            "creditsUsed",
+            "seed",
+            "durationSeconds",
+            "createdAt",
+            "updatedAt",
+        ]
+
+
 class LibraryAssetSerializer(serializers.ModelSerializer):
     projectId = serializers.UUIDField(source="project_id", read_only=True)
     mediaType = serializers.CharField(source="media_type", read_only=True)
@@ -185,4 +302,8 @@ class LibraryAssetSerializer(serializers.ModelSerializer):
         ]
 
     def get_jobId(self, obj) -> str | None:
-        return str(obj.image_job_id) if obj.image_job_id else None
+        if obj.video_job_id:
+            return str(obj.video_job_id)
+        if obj.image_job_id:
+            return str(obj.image_job_id)
+        return None

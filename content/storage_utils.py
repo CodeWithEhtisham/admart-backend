@@ -79,3 +79,45 @@ def normalize_fal_images(payload: dict) -> tuple[list[dict], dict | None, int | 
         mask = payload["mask_image"]
 
     return images, mask, seed
+
+
+def persist_remote_video(
+    source_url: str,
+    *,
+    project_id: str,
+    job_id: str,
+    request=None,
+) -> dict:
+    """Download a fal video URL into MEDIA and return a video asset dict."""
+    resp = requests.get(source_url, timeout=300)
+    resp.raise_for_status()
+    content_type = resp.headers.get("Content-Type", "video/mp4").split(";")[0].strip()
+    ext = mimetypes.guess_extension(content_type) or Path(urlparse(source_url).path).suffix or ".mp4"
+    if ext not in (".mp4", ".webm", ".mov", ".gif"):
+        ext = ".mp4"
+
+    rel_dir = Path("projects") / str(project_id) / "videos" / str(job_id)
+    abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    file_name = f"out{ext}"
+    abs_path = abs_dir / file_name
+    abs_path.write_bytes(resp.content)
+
+    rel = str(rel_dir / file_name).replace("\\", "/")
+    return {
+        "url": absolute_media_url(rel, request=request),
+        "providerUrl": source_url,
+        "contentType": content_type,
+        "fileName": file_name,
+    }
+
+
+def normalize_fal_video(payload: dict) -> tuple[dict | None, int | None]:
+    """Extract video file dict and seed from a fal result payload."""
+    seed = payload.get("seed")
+    video = None
+    if isinstance(payload.get("video"), dict) and payload["video"].get("url"):
+        video = payload["video"]
+    elif isinstance(payload.get("video_url"), str) and payload["video_url"]:
+        video = {"url": payload["video_url"]}
+    return video, seed

@@ -6,7 +6,8 @@ from decimal import ROUND_CEILING, Decimal
 
 from django.db import transaction
 
-from content.catalog import credit_cost
+from content.catalog import credit_cost as image_credit_cost
+from content.video_catalog import VIDEO_CREDIT_COSTS, video_credit_cost
 
 
 class InsufficientCredits(Exception):
@@ -15,7 +16,10 @@ class InsufficientCredits(Exception):
 
 def cost_for(capability: str, num_images: int = 1) -> int:
     """Whole-credit cost (ceil of Decimal table for integer User fields)."""
-    value = credit_cost(capability, num_images)
+    if capability in VIDEO_CREDIT_COSTS:
+        value = video_credit_cost(capability)
+    else:
+        value = image_credit_cost(capability, num_images)
     return int(value.to_integral_value(rounding=ROUND_CEILING))
 
 

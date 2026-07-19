@@ -1,6 +1,6 @@
 # Admart
 
-AI social-media platform: create images (and later videos), manage a per-project library, connect social accounts, and publish.
+AI social-media platform: create images and videos via fal.ai, manage a per-project library, connect social accounts, and publish.
 
 This README is the **single project doc** for both repos. The same file lives in:
 
@@ -36,22 +36,22 @@ Django apps: `config`, `users`, `projects`, `content`.
 | Projects CRUD + activate + active project | ✅ | ✅ Project dropdown |
 | Credits balance / costs / history | ✅ | ✅ Billing + sidebar |
 | Image jobs (fal.ai): create, poll, cancel, upload, model catalog | ✅ | ✅ `/image-gen` |
-| Library list/detail + soft-delete | ✅ | ✅ `/library` |
+| Video jobs (fal.ai): create, poll, cancel, frame upload, model catalog | ✅ | ✅ `/video-gen` (also `/create`) |
+| Library list/detail + soft-delete + user upload | ✅ | ✅ `/library` (images + videos) |
 | Social accounts list / OAuth connect URL / disconnect / callback | ✅ YouTube (+ Meta stubs) | ✅ `/social` |
 
 ### Frontend pages that are mostly mock / not backed by API yet
 
 | Route | Notes |
 |---|---|
-| `/create` (Wizard) | Still calls **removed** endpoints `/api/images/text-to-image` — **broken**. Use `/image-gen` instead. |
-| `/progress`, `/result`, `/publish` | Video pipeline UI; no VideoAsset/Publication APIs yet |
+| `/progress`, `/result`, `/publish` | Publish/result chrome; no Publication APIs yet |
 | `/templates`, `/calendar`, `/analytics`, `/notifications` | Local/mock data |
 | `/brand-kit`, `/settings` | Mostly local UI; brand fields exist on User/Project but pages are not fully API-driven |
 | `/dashboard` | Shell UI; not a full analytics backend |
 
-### Planned (models/API not present)
+### Planned
 
-`VideoAsset`, `Publication`, analytics sync, TikTok OAuth, agent/automation loop.
+Publication / analytics sync, TikTok OAuth, agent/automation loop. Expand video catalog beyond curated set as needed.
 
 ---
 
@@ -61,16 +61,18 @@ Django apps: `config`, `users`, `projects`, `content`.
 User ──owns──► Project ──► SocialAccount (youtube|tiktok|instagram|facebook)
                 │
                 ├──► ImageJob / ImageUpload
-                └──► LibraryAsset (image|video metadata; soft-delete via deleted_at)
+                ├──► VideoJob
+                └──► LibraryAsset (image|video; soft-delete via deleted_at)
 ```
 
 - **User**: email login, plan, `credits_total` / `credits_used` / `credits_remaining`, `onboarding_completed`, `active_project`, brand kit fields.
 - **Project**: workspace + per-project brand kit; parent for social + content.
 - **SocialAccount**: one row per `(project, platform)`; tokens Fernet-encrypted; never returned by serializers.
 - **ImageJob**: fal queue job (`textToImage`, `edit`, `multiEdit`, `upscale`, `removeBackground`).
-- **LibraryAsset**: browsable assets; succeeded image jobs sync into the library.
+- **VideoJob**: fal queue job (`textToVideo`, `imageToVideo`, `firstLastFrame`) with per-model field profiles in `content/video_catalog.py`.
+- **LibraryAsset**: browsable assets; succeeded image/video jobs sync into the library.
 
-Credits are integers on `User` (reserved/refunded around image jobs). History is derived from recent `ImageJob` rows — there is no separate ledger table.
+Credits are integers on `User` (reserved/refunded around jobs). History merges recent `ImageJob` + `VideoJob` rows.
 
 ---
 
@@ -122,9 +124,26 @@ Images & library (project-scoped):
 | POST | `/api/projects/{id}/images/jobs/{jobId}/cancel` |
 | POST | `/api/projects/{id}/images/uploads` | multipart |
 | GET | `/api/projects/{id}/library` |
+| POST | `/api/projects/{id}/library/uploads` | User image (jpeg/png/webp ≤15MB) or video (mp4/mov/webm ≤200MB) |
 | GET/DELETE | `/api/projects/{id}/library/{assetId}` | DELETE → soft-delete |
 
 Default image models (from `content/catalog.py`): Flux Dev (textToImage), Nano Banana 2 Edit, ESRGAN, BiRefNet, etc.
+
+Videos (project-scoped):
+
+| Method | Path |
+|---|---|
+| GET | `/api/videos/models` | Curated catalog + field profiles |
+| GET | `/api/projects/{id}/videos/models` |
+| GET/POST | `/api/projects/{id}/videos/jobs` |
+| GET | `/api/projects/{id}/videos/jobs/{jobId}` | Poll-on-read |
+| POST | `/api/projects/{id}/videos/jobs/{jobId}/cancel` |
+| POST | `/api/projects/{id}/videos/uploads` | Frame images (same rules as image upload) |
+
+**Video capabilities:** `textToVideo` (prompt only) · `imageToVideo` (prompt + start image) · `firstLastFrame` (prompt + start + end).  
+Each catalog entry declares `inputs` and `fields` (duration, aspect, resolution, audio, …) and `falImageKeys` so the API maps to the correct fal args (`image_url`, `first_frame_url`/`last_frame_url`, `end_image_url`, `tail_image_url`, …).
+
+Curated models include Veo 3.1, Seedance 2.0, Kling, Hailuo, Wan, PixVerse, LTX (see `content/video_catalog.py`).
 
 ---
 
@@ -136,13 +155,14 @@ src/
   utils/api.js            # Axios + JWT refresh (VITE_API_URL)
   utils/projects.js       # projects + social helpers
   utils/imageGeneration.js
+  utils/videoGeneration.js
   utils/library.js
   utils/credits.js
   pages/                  # route screens
   components/             # AppLayout, AdmartSidebar, Topbar, …
 ```
 
-Key wired screens: Auth*, Onboarding, ImageGen, Library, Social, Billing, Project switcher.
+Key wired screens: Auth*, Onboarding, ImageGen, VideoGen, Library, Social, Billing, Project switcher.
 
 Env:
 
@@ -189,9 +209,8 @@ npm run dev
 
 ## Known gaps (do not document as done)
 
-1. **Wizard `/create`** still hits deleted `/api/images/text-to-image*` — use **`/image-gen`**.
-2. No video generation / publish / analytics APIs yet.
+1. No publish / analytics APIs yet (`/publish`, `/analytics` UI is mock).
+2. Video catalog is curated (not all ~141 fal endpoints); some partner models may 502 if the account lacks access — swap ids in `video_catalog.py`.
 3. `requirements.txt` has no pinned versions; fal is called via `requests` (no fal SDK package).
 
 For live request/response shapes, prefer **`/api/docs/`** over this README.
-```

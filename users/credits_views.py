@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from itertools import chain
+
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content.catalog import CAPABILITIES, CREDIT_COSTS, credit_cost
-from content.models import ImageJob
+from content.models import ImageJob, VideoJob
+from content.video_catalog import VIDEO_CAPABILITIES, VIDEO_CREDIT_COSTS, video_credit_cost
 
 
 class CreditsBalanceView(APIView):
@@ -25,14 +28,13 @@ class CreditsBalanceView(APIView):
                 "creditsUsed": user.credits_used,
                 "creditsRemaining": user.credits_remaining,
                 "creditsResetAt": user.credits_reset_at,
-                # Convenience for FE badges / disable Generate
                 "canGenerate": user.credits_remaining > 0,
             }
         )
 
 
 class CreditsCostsView(APIView):
-    """GET /api/credits/costs — credit price per image capability."""
+    """GET /api/credits/costs — credit price per image/video capability."""
 
     permission_classes = [IsAuthenticated]
 
@@ -44,7 +46,6 @@ class CreditsCostsView(APIView):
                 {
                     "capability": capability,
                     "credits": cost,
-                    # textToImage scales with numImages; others are flat for now
                     "perImage": capability == "textToImage",
                     "notes": (
                         "Cost × numImages"
@@ -53,18 +54,29 @@ class CreditsCostsView(APIView):
                     ),
                 }
             )
+        for capability in VIDEO_CAPABILITIES:
+            cost = int(video_credit_cost(capability))
+            items.append(
+                {
+                    "capability": capability,
+                    "credits": cost,
+                    "perImage": False,
+                    "notes": "Flat cost per video job",
+                }
+            )
+        by_capability = {c: int(CREDIT_COSTS[c]) for c in CAPABILITIES}
+        by_capability.update({c: int(VIDEO_CREDIT_COSTS[c]) for c in VIDEO_CAPABILITIES})
         return Response(
             {
                 "currency": "credits",
                 "items": items,
-                # Raw map for quick lookups: { textToImage: 1, edit: 1, ... }
-                "byCapability": {c: int(CREDIT_COSTS[c]) for c in CAPABILITIES},
+                "byCapability": by_capability,
             }
         )
 
 
 class CreditsHistoryView(APIView):
-    """GET /api/credits/history — recent credit spends from image jobs."""
+    """GET /api/credits/history — recent credit spends from image + video jobs."""
 
     permission_classes = [IsAuthenticated]
 
@@ -74,13 +86,20 @@ class CreditsHistoryView(APIView):
         except (TypeError, ValueError):
             limit = 20
 
-        jobs = (
-            ImageJob.objects.filter(user=request.user)
-            .order_by("-created_at")[:limit]
+        image_jobs = list(
+            ImageJob.objects.filter(user=request.user).order_by("-created_at")[:limit]
         )
+        video_jobs = list(
+            VideoJob.objects.filter(user=request.user).order_by("-created_at")[:limit]
+        )
+        combined = sorted(
+            chain(image_jobs, video_jobs),
+            key=lambda j: j.created_at,
+            reverse=True,
+        )[:limit]
+
         items = []
-        for job in jobs:
-            # Show reserved amount for open jobs; finalized amount when set
+        for job in combined:
             amount = job.credits_used if job.credits_used is not None else job.credits_reserved
             items.append(
                 {

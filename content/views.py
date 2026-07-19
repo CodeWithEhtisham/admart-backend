@@ -1,6 +1,10 @@
 import logging
+import mimetypes
+import uuid
+from pathlib import Path
 
 from django.conf import settings
+from django.core.files.storage import default_storage
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -29,6 +33,15 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+
+ALLOWED_LIBRARY_IMAGE_TYPES = ALLOWED_UPLOAD_TYPES
+ALLOWED_LIBRARY_VIDEO_TYPES = {
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+    "video/x-m4v",
+}
+MAX_LIBRARY_VIDEO_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 def _owned_project(user, project_id) -> Project:
@@ -272,6 +285,93 @@ class LibraryDetailView(APIView):
         asset.deleted_at = timezone.now()
         asset.save(update_fields=["deleted_at", "updated_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LibraryUploadView(APIView):
+    """POST /api/projects/:id/library/uploads — user image or video into library."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, project_id):
+        project = _owned_project(request.user, project_id)
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response(
+                {"message": "file is required", "field": "file"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = (upload.content_type or "").split(";")[0].strip().lower()
+        if not content_type or content_type == "application/octet-stream":
+            guessed, _ = mimetypes.guess_type(upload.name or "")
+            content_type = (guessed or "").lower()
+
+        if content_type in ALLOWED_LIBRARY_IMAGE_TYPES:
+            media_type = "image"
+            max_bytes = MAX_UPLOAD_BYTES
+        elif content_type in ALLOWED_LIBRARY_VIDEO_TYPES:
+            media_type = "video"
+            max_bytes = MAX_LIBRARY_VIDEO_BYTES
+        else:
+            return Response(
+                {
+                    "message": "Only jpeg, png, webp images or mp4/mov/webm videos are allowed",
+                    "field": "file",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if upload.size > max_bytes:
+            return Response(
+                {"message": "File too large"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+        # Never trust the client filename extension — map from verified MIME only.
+        ext_by_type = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "video/mp4": ".mp4",
+            "video/quicktime": ".mov",
+            "video/webm": ".webm",
+            "video/x-m4v": ".m4v",
+        }
+        ext = ext_by_type.get(content_type) or (
+            ".mp4" if media_type == "video" else ".png"
+        )
+
+        rel = f"projects/{project.id}/library/{uuid.uuid4().hex}{ext}"
+        saved = default_storage.save(rel, upload)
+        url = absolute_media_url(saved, request=request)
+        raw_name = Path(upload.name or "").stem
+        # Strip path junk / control chars from display title only.
+        title = "".join(c for c in raw_name if c.isprintable() and c not in "/\\")[:255]
+        if not title:
+            title = f"Uploaded {media_type}"
+
+        asset = LibraryAsset.objects.create(
+            project=project,
+            user=request.user,
+            media_type=media_type,
+            title=title,
+            status="ready",
+            thumbnail_url=url,
+            source_url=url,
+            capability="upload",
+            model="upload",
+        )
+        data = LibraryAssetSerializer(asset).data
+        for key in ("sourceUrl", "thumbnailUrl"):
+            u = data.get(key) or ""
+            if u.startswith("/"):
+                rel_url = u
+                if settings.MEDIA_URL and rel_url.startswith(settings.MEDIA_URL):
+                    rel_url = rel_url[len(settings.MEDIA_URL) :]
+                data[key] = absolute_media_url(rel_url.lstrip("/"), request=request)
+
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 def _absolutize_job_urls(job: ImageJob, request) -> ImageJob:

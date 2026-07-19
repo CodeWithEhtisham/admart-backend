@@ -88,6 +88,61 @@ class ImageUpload(models.Model):
         return f"upload {self.id}"
 
 
+class VideoJob(models.Model):
+    """One fal video generation request scoped to a project."""
+
+    CAPABILITY_CHOICES = [
+        ("textToVideo", "Text to video"),
+        ("imageToVideo", "Image to video"),
+        ("firstLastFrame", "First to last frame"),
+    ]
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="video_jobs",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="video_jobs",
+    )
+    capability = models.CharField(max_length=32, choices=CAPABILITY_CHOICES)
+    model = models.CharField(max_length=200)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
+    prompt = models.TextField(null=True, blank=True)
+    request = models.JSONField(default=dict, blank=True)
+    # Single output video asset dict: { url, contentType, fileName, providerUrl, … }
+    video = models.JSONField(null=True, blank=True)
+    error = models.TextField(null=True, blank=True)
+    credits_used = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    credits_reserved = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    seed = models.BigIntegerField(null=True, blank=True)
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    fal_request_id = models.CharField(max_length=128, null=True, blank=True)
+    fal_status_url = models.URLField(max_length=1000, null=True, blank=True)
+    fal_response_url = models.URLField(max_length=1000, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["project", "-created_at"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.capability} {self.status} ({self.id})"
+
+
 class LibraryAsset(models.Model):
     """Browsable library item (image or video) for a project."""
 
@@ -133,6 +188,13 @@ class LibraryAsset(models.Model):
         blank=True,
         related_name="library_assets",
     )
+    video_job = models.ForeignKey(
+        "content.VideoJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="library_assets",
+    )
     source_index = models.PositiveSmallIntegerField(default=0)
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
@@ -149,6 +211,10 @@ class LibraryAsset(models.Model):
             models.UniqueConstraint(
                 fields=["image_job", "source_index"],
                 name="uniq_library_asset_job_index",
+            ),
+            models.UniqueConstraint(
+                fields=["video_job", "source_index"],
+                name="uniq_library_asset_video_job_index",
             ),
         ]
 

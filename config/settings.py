@@ -135,6 +135,9 @@ STATIC_URL = "static/"
 # Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+# Allow library video uploads up to ~200 MB (view enforces per-type limits).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # Absolute base for public media URLs when no request is available (e.g. workers).
 # In local dev, leave blank and build URLs from the request; fal needs a publicly
 # reachable URL for uploads — use ngrok / a tunnel or set MEDIA_BASE_URL.
