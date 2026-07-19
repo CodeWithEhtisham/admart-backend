@@ -151,8 +151,6 @@ Env:
 VITE_API_URL=http://localhost:8000
 ```
 
-Legacy localStorage keys `vidify_*` are migrated automatically to `admart_*`.
-
 ---
 
 ## Local setup

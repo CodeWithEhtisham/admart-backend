@@ -1,16 +1,16 @@
-# Graph Report - admart-backend  (2026-06-21)
+# Graph Report - admart-backend  (2026-07-19)
 
 ## Corpus Check
-- 31 files · ~23,778 words
+- 72 files · ~215,244 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 753 nodes · 926 edges · 95 communities (52 shown, 43 thin omitted)
-- Extraction: 82% EXTRACTED · 18% INFERRED · 0% AMBIGUOUS · INFERRED: 169 edges (avg confidence: 0.56)
+- 1143 nodes · 1624 edges · 133 communities (76 shown, 57 thin omitted)
+- Extraction: 74% EXTRACTED · 26% INFERRED · 0% AMBIGUOUS · INFERRED: 416 edges (avg confidence: 0.57)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7745fb73`
+- Built from commit: `ab523a4e`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -106,18 +106,47 @@
 - [[_COMMUNITY_Community 92|Community 92]]
 - [[_COMMUNITY_Community 93|Community 93]]
 - [[_COMMUNITY_Community 94|Community 94]]
+- [[_COMMUNITY_Community 95|Community 95]]
+- [[_COMMUNITY_Community 96|Community 96]]
+- [[_COMMUNITY_Community 97|Community 97]]
+- [[_COMMUNITY_Community 98|Community 98]]
+- [[_COMMUNITY_Community 99|Community 99]]
+- [[_COMMUNITY_Community 100|Community 100]]
+- [[_COMMUNITY_Community 101|Community 101]]
+- [[_COMMUNITY_Community 102|Community 102]]
+- [[_COMMUNITY_Community 103|Community 103]]
+- [[_COMMUNITY_Community 104|Community 104]]
+- [[_COMMUNITY_Community 105|Community 105]]
+- [[_COMMUNITY_Community 106|Community 106]]
+- [[_COMMUNITY_Community 107|Community 107]]
+- [[_COMMUNITY_Community 108|Community 108]]
+- [[_COMMUNITY_Community 109|Community 109]]
+- [[_COMMUNITY_Community 110|Community 110]]
+- [[_COMMUNITY_Community 111|Community 111]]
+- [[_COMMUNITY_Community 112|Community 112]]
+- [[_COMMUNITY_Community 113|Community 113]]
+- [[_COMMUNITY_Community 114|Community 114]]
+- [[_COMMUNITY_Community 115|Community 115]]
+- [[_COMMUNITY_Community 116|Community 116]]
+- [[_COMMUNITY_Community 117|Community 117]]
+- [[_COMMUNITY_Community 125|Community 125]]
+- [[_COMMUNITY_Community 126|Community 126]]
+- [[_COMMUNITY_Community 128|Community 128]]
+- [[_COMMUNITY_Community 129|Community 129]]
+- [[_COMMUNITY_Community 130|Community 130]]
+- [[_COMMUNITY_Community 132|Community 132]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `SocialAccount` - 29 edges
-2. `2.2 Route Map & Page Details` - 20 edges
-3. `Admart (Vidify) — Complete Backend Agent Specification` - 19 edges
-4. `RegisterSerializer` - 18 edges
-5. `Capabilities` - 18 edges
-6. `UserAuthTests` - 17 edges
-7. `UserSerializer` - 17 edges
-8. `CustomTokenObtainPairSerializer` - 17 edges
-9. `ResetPasswordSerializer` - 17 edges
-10. `RegisterView` - 16 edges
+1. `Project` - 46 edges
+2. `SocialAccount` - 37 edges
+3. `SocialAccount` - 29 edges
+4. `ImageJob` - 28 edges
+5. `LibraryAsset` - 21 edges
+6. `UserAuthTests` - 20 edges
+7. `2.2 Route Map & Page Details` - 20 edges
+8. `UserSerializer` - 19 edges
+9. `RegisterSerializer` - 19 edges
+10. `Admart (Vidify) — Complete Backend Agent Specification` - 19 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `normalize_style()` --semantically_similar_to--> `AD_STYLES`  [INFERRED] [semantically similar]
@@ -137,19 +166,19 @@
 - **API Design and Implementation Template Flow** — api_design_principles_skill, resources_implementation_playbook, assets_rest_api_template [INFERRED 0.85]
 - **Full Stack Orchestration Subagent Collaboration** — full_stack_orchestration_full_stack_feature_skill, backend_architect_skill, security_auditor_skill [EXTRACTED 1.00]
 
-## Communities (95 total, 43 thin omitted)
+## Communities (133 total, 57 thin omitted)
 
 ### Community 0 - "Flux Client & Proxy Services"
-Cohesion: 0.11
-Nodes (30): Flux AI Image Generation Integration, Settings, _split_csv(), FastAPI App Instance, health(), text_to_image(), text_to_image_alias(), text_to_image_file() (+22 more)
+Cohesion: 0.06
+Nodes (35): Flux AI Image Generation Integration, Settings, _split_csv(), FastAPI App Instance, health(), text_to_image(), text_to_image_alias(), text_to_image_file() (+27 more)
 
 ### Community 1 - "REST API Template Endpoint"
 Cohesion: 0.17
 Nodes (20): create_user(), delete_user(), ErrorDetail, ErrorResponse, get_user(), http_exception_handler(), list_users(), PaginatedResponse (+12 more)
 
 ### Community 2 - "Flux Image Generation Engine"
-Cohesion: 0.18
-Nodes (16): _build_prompt(), _clear_cuda_cache(), generate(), _generation_attempt_sizes(), get_t2i_pipe(), _gpu_max_memory(), _is_cuda_oom(), Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has (+8 more)
+Cohesion: 0.2
+Nodes (14): _build_prompt(), _clear_cuda_cache(), generate(), _generation_attempt_sizes(), get_t2i_pipe(), _gpu_max_memory(), _is_cuda_oom(), Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has (+6 more)
 
 ### Community 3 - "FastAPI App & Schemas"
 Cohesion: 0.13
@@ -284,16 +313,20 @@ Cohesion: 0.5
 Nodes (4): code:json ({), Consistent Structure, Error Response Format, Status Code Guidelines
 
 ### Community 57 - "Community 57"
-Cohesion: 0.07
-Nodes (75): APIView, TokenObtainPairSerializer, TokenObtainPairView, Connected social media account for a user.      Tracks OAuth connections to TikT, SocialAccount, AuthResponseSerializer, CustomTokenObtainPairSerializer, ForgotPasswordSerializer (+67 more)
+Cohesion: 0.05
+Nodes (87): TokenObtainPairSerializer, TokenObtainPairView, Returns the onboarding brand kit as a dictionary., SocialAccount, AuthResponseSerializer, CustomTokenObtainPairSerializer, ForgotPasswordSerializer, GoogleAuthSerializer (+79 more)
 
 ### Community 58 - "Community 58"
-Cohesion: 0.04
-Nodes (26): APITestCase, OnboardingAndSocialTests, Test forgot password request responds with success regardless of user existence., Test resetting password with an invalid token fails., Test suite for User Authentication and registration endpoints., Test mock Google OAuth exchange creates user and returns JWT tokens., Test logout returns standard success message., Test suite for Onboarding and Social Account endpoints. (+18 more)
+Cohesion: 0.09
+Nodes (12): Test forgot password request responds with success regardless of user existence., Test resetting password with a valid signed token., Test resetting password with an invalid token fails., Test suite for User Authentication and registration endpoints., Test logout returns standard success message., Test successful registration returns user profile and JWT tokens., Test successful login with email/password returns tokens., Test login fails with incorrect password. (+4 more)
 
 ### Community 59 - "Community 59"
-Cohesion: 0.11
-Nodes (15): AbstractBaseUser, BaseUserAdmin, BaseUserManager, PermissionsMixin, Admin for connected social media accounts., Custom UserAdmin class to support our custom User model in Django Admin., SocialAccountAdmin, UserAdmin (+7 more)
+Cohesion: 0.24
+Nodes (9): AbstractBaseUser, BaseUserAdmin, PermissionsMixin, Admin for connected social media accounts., Custom UserAdmin class to support our custom User model in Django Admin., SocialAccountAdmin, UserAdmin, Custom User model matching the Admart specification. (+1 more)
+
+### Community 62 - "Community 62"
+Cohesion: 0.29
+Nodes (4): AppConfig, ContentConfig, ProjectsConfig, UsersConfig
 
 ### Community 63 - "Community 63"
 Cohesion: 0.29
@@ -320,8 +353,8 @@ Cohesion: 0.67
 Nodes (3): 16. Recommended Tech Stack, Option A — Node.js (Express/Fastify), Option B — Python (FastAPI)
 
 ### Community 79 - "Community 79"
-Cohesion: 0.33
-Nodes (4): Validate the new password strength., Validate the new password strength., Validate that the password is strong enough according to standard rules., Validate that the password is strong enough according to standard rules.
+Cohesion: 0.05
+Nodes (63): APIView, BaseCommand, Command, ImageJobAdmin, ImageUploadAdmin, LibraryAssetAdmin, credit_cost(), Model allow-lists, defaults, and credit costs for image capabilities. (+55 more)
 
 ### Community 80 - "Community 80"
 Cohesion: 0.67
@@ -331,25 +364,81 @@ Nodes (3): Batch Endpoints, Bulk Operations, code:python (POST /api/users/batch)
 Cohesion: 0.67
 Nodes (3): code:block22 (POST /api/orders), Idempotency, Idempotency Keys
 
+### Community 95 - "Community 95"
+Cohesion: 0.06
+Nodes (52): ProjectAdmin, Admin for connected social media accounts., Inline editor for a project's connected social accounts., SocialAccountAdmin, SocialAccountInline, decrypt(), encrypt(), _fernet() (+44 more)
+
+### Community 96 - "Community 96"
+Cohesion: 0.07
+Nodes (16): ensure_fresh_access_token(), InstagramProvider, MetaProvider, Provider-specific OAuth logic for social account connections.  Each provider kno, Exchange the auth code for a short-lived token, then upgrade to long-lived., Google OAuth 2.0 for the YouTube Data API (read profile + upload videos)., Re-extend a still-valid long-lived token (Meta has no refresh token)., Facebook profile (the connected user/account name). (+8 more)
+
+### Community 97 - "Community 97"
+Cohesion: 0.12
+Nodes (10): MetaOAuthConnectionTests, Test suite for the real OAuth connect-url + provider callback flow., Test suite for the shared Meta (Facebook + Instagram) OAuth flow., test_callback_exchange_failure_redirects_with_error(), test_callback_success_creates_connected_account(), test_facebook_callback_success(), test_facebook_connect_url_includes_publish_scopes_when_enabled(), test_instagram_callback_success() (+2 more)
+
+### Community 98 - "Community 98"
+Cohesion: 0.1
+Nodes (19): Admart, API map (authoritative), Backend, code:block1 (User ──owns──► Project ──► SocialAccount (youtube|tiktok|ins), code:block2 (src/), code:bash (# Admart-frontend/.env  (name must match code)), code:bash (cd admart-backend), code:bash (cd Admart-frontend) (+11 more)
+
+### Community 99 - "Community 99"
+Cohesion: 0.1
+Nodes (10): OnboardingAndSocialTests, Test completing onboarding saves brand kit and connected platforms., Test completing onboarding with no data (user skipped all steps)., Test PATCH /api/auth/me with snake_case brand fields (as sent by frontend onboar, Test connecting a social platform., Test connecting an invalid platform returns 400., Test disconnecting a social platform., Test disconnecting a platform that was never connected returns 404. (+2 more)
+
+### Community 100 - "Community 100"
+Cohesion: 0.2
+Nodes (15): _auth_headers(), _error_message(), FalError, _queue_base_for_model(), Thin fal.ai queue client over HTTPS (uses existing `requests`)., Return completed fal result payload., Raised when fal submit/status/result fails., Best-effort fallback when status_url was not stored.      fal apps with a subpat (+7 more)
+
+### Community 101 - "Community 101"
+Cohesion: 0.15
+Nodes (3): FalSubmission, LibraryApiTests, _submission()
+
+### Community 102 - "Community 102"
+Cohesion: 0.23
+Nodes (3): ProjectSocialTests, Test suite for project-scoped social account endpoints., Two projects can each connect the same platform independently.
+
+### Community 103 - "Community 103"
+Cohesion: 0.2
+Nodes (6): APITestCase, OnboardingTests, Test suite for the onboarding endpoint (now creates the first project)., Onboarding creates a project that owns the brand kit and platforms., With no project/brand name, a default project is still created., Test PATCH /api/auth/me with snake_case brand fields.
+
+### Community 104 - "Community 104"
+Cohesion: 0.22
+Nodes (6): BaseUserManager, Meta, Create and save a regular User with the given email and password., Create and save a SuperUser with the given email and password., Custom manager for the custom User model where email is the unique identifier., UserManager
+
+### Community 105 - "Community 105"
+Cohesion: 0.29
+Nodes (5): build_fal_input(), _maybe(), Map camelCase FE payloads to fal snake_case inputs., Build fal `arguments` dict from a validated create-job payload., MappingTests
+
+### Community 107 - "Community 107"
+Cohesion: 0.32
+Nodes (5): UrlResolveTests, Make image URLs reachable by fal (localhost media → data URI)., Rewrite local / private media URLs into data URIs fal can consume., resolve_url_for_fal(), resolve_urls_for_fal()
+
+### Community 109 - "Community 109"
+Cohesion: 0.29
+Nodes (5): 1. Think Before Coding, 2. Simplicity First, 3. Surgical Changes, 4. Goal-Driven Execution, code:block1 (1. [Step] → verify: [check])
+
+### Community 110 - "Community 110"
+Cohesion: 0.29
+Nodes (6): 1. Think Before Coding, 2. Simplicity First, 3. Surgical Changes, 4. Goal-Driven Execution, code:block1 (1. [Step] → verify: [check]), Karpathy Guidelines
+
 ## Knowledge Gaps
-- **404 isolated node(s):** `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.`, `URL configuration for config project.  The `urlpatterns` list routes URLs to vie` (+399 more)
+- **519 isolated node(s):** `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.`, `Provider-specific OAuth logic for social account connections.  Each provider kno` (+514 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **43 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **57 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `SocialAccount` connect `Community 57` to `Community 58`, `Community 59`?**
-  _High betweenness centrality (0.040) - this node is a cross-community bridge._
-- **Why does `post()` connect `Community 57` to `Flux Image Generation Engine`?**
-  _High betweenness centrality (0.034) - this node is a cross-community bridge._
-- **Why does `UserAuthTests` connect `Community 58` to `Community 57`, `Flux Image Generation Engine`?**
-  _High betweenness centrality (0.024) - this node is a cross-community bridge._
+- **Why does `Project` connect `Community 95` to `Flux Client & Proxy Services`, `Community 97`, `Community 101`, `Community 102`, `Community 103`, `Community 105`, `Community 106`, `Community 107`, `Community 108`, `Community 79`, `Community 57`, `Community 58`?**
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `SocialAccount` connect `Community 57` to `Community 104`, `Community 59`, `Community 58`, `Community 99`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **Why does `ImageJob` connect `Community 79` to `Community 101`, `Community 103`, `Community 105`, `Community 106`, `Community 107`, `Community 108`, `Community 58`?**
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Are the 42 inferred relationships involving `Project` (e.g. with `ProjectCRUDTests` and `ProjectSocialTests`) actually correct?**
+  _`Project` has 42 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 31 inferred relationships involving `SocialAccount` (e.g. with `ProjectCRUDTests` and `ProjectSocialTests`) actually correct?**
+  _`SocialAccount` has 31 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 32 inferred relationships involving `str` (e.g. with `.test_create_project_becomes_active()` and `.test_list_ordered_by_recency()`) actually correct?**
+  _`str` has 32 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 26 inferred relationships involving `SocialAccount` (e.g. with `UserAuthTests` and `OnboardingAndSocialTests`) actually correct?**
   _`SocialAccount` has 26 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 13 inferred relationships involving `RegisterSerializer` (e.g. with `RegisterView` and `CustomTokenObtainPairView`) actually correct?**
-  _`RegisterSerializer` has 13 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.` to the rest of the system?**
-  _404 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Flux Client & Proxy Services` be split into smaller, more focused modules?**
-  _Cohesion score 0.11 - nodes in this community are weakly interconnected._
