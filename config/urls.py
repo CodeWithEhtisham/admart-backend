@@ -26,10 +26,14 @@ from drf_spectacular.views import (
 
 from content.views import ImageModelCatalogView
 from projects.views import ProjectListCreateView, SocialCallbackView
+from users.credits_views import CreditsBalanceView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("users.urls")),
+    # Credits: balance at /api/credits; costs/history under /api/credits/
+    path("api/credits", CreditsBalanceView.as_view(), name="credits_balance"),
+    path("api/credits/", include("users.credits_urls")),
     # List/create at "/api/projects" (no trailing slash); sub-routes under "/api/projects/".
     path("api/projects", ProjectListCreateView.as_view(), name="project_list_create"),
     path("api/projects/", include("projects.urls")),

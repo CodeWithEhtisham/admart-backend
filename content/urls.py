@@ -6,6 +6,8 @@ from content.views import (
     ImageJobListCreateView,
     ImageModelCatalogView,
     ImageUploadView,
+    LibraryDetailView,
+    LibraryListView,
 )
 
 urlpatterns = [
@@ -33,5 +35,15 @@ urlpatterns = [
         "<uuid:project_id>/images/models",
         ImageModelCatalogView.as_view(),
         name="image_models_project",
+    ),
+    path(
+        "<uuid:project_id>/library",
+        LibraryListView.as_view(),
+        name="library_list",
+    ),
+    path(
+        "<uuid:project_id>/library/<uuid:asset_id>",
+        LibraryDetailView.as_view(),
+        name="library_detail",
     ),
 ]

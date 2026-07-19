@@ -2,6 +2,7 @@ import logging
 
 from django.conf import settings
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -12,9 +13,14 @@ from content import fal_client
 from content.catalog import MODEL_CATALOG
 from content.credits import InsufficientCredits, cost_for, refund_credits, reserve_credits
 from content.jobs import refresh_job
+from content.library import mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
-from content.models import ImageJob, ImageUpload
-from content.serializers import ImageJobCreateSerializer, ImageJobSerializer
+from content.models import ImageJob, ImageUpload, LibraryAsset
+from content.serializers import (
+    ImageJobCreateSerializer,
+    ImageJobSerializer,
+    LibraryAssetSerializer,
+)
 from content.storage_utils import absolute_media_url
 from content.url_resolve import resolve_urls_for_fal
 from projects.models import Project
@@ -127,6 +133,7 @@ class ImageJobListCreateView(APIView):
                 "updated_at",
             ]
         )
+        mark_library_generating(job)
         request.user.refresh_from_db()
         payload = ImageJobSerializer(job).data
         payload["creditsRemaining"] = request.user.credits_remaining
@@ -160,6 +167,7 @@ class ImageJobCancelView(APIView):
             refund_credits(request.user, int(job.credits_reserved))
             job.credits_reserved = 0
             job.save(update_fields=["credits_reserved", "updated_at"])
+        sync_library_from_image_job(job)
         return Response(ImageJobSerializer(job).data)
 
 
@@ -209,6 +217,61 @@ class ImageModelCatalogView(APIView):
         if project_id is not None:
             _owned_project(request.user, project_id)
         return Response(MODEL_CATALOG)
+
+
+class LibraryListView(APIView):
+    """GET /api/projects/:id/library — images + videos, newest first."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, project_id):
+        project = _owned_project(request.user, project_id)
+        media_type = (request.query_params.get("mediaType") or "all").lower()
+        try:
+            limit = min(int(request.query_params.get("limit", 50)), 100)
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            offset = max(int(request.query_params.get("cursor") or 0), 0)
+        except (TypeError, ValueError):
+            offset = 0
+
+        qs = LibraryAsset.objects.filter(project=project, deleted_at__isnull=True)
+        if media_type in ("image", "video"):
+            qs = qs.filter(media_type=media_type)
+
+        page = list(qs[offset : offset + limit + 1])
+        has_more = len(page) > limit
+        items = page[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+
+        # Absolutize relative media URLs for the client
+        data = LibraryAssetSerializer(items, many=True).data
+        for item in data:
+            for key in ("sourceUrl", "thumbnailUrl"):
+                url = item.get(key) or ""
+                if url.startswith("/"):
+                    rel = url
+                    if settings.MEDIA_URL and rel.startswith(settings.MEDIA_URL):
+                        rel = rel[len(settings.MEDIA_URL) :]
+                    item[key] = absolute_media_url(rel.lstrip("/"), request=request)
+
+        return Response({"items": data, "nextCursor": next_cursor})
+
+
+class LibraryDetailView(APIView):
+    """DELETE /api/projects/:id/library/:assetId — soft delete."""
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, project_id, asset_id):
+        project = _owned_project(request.user, project_id)
+        asset = get_object_or_404(
+            LibraryAsset, id=asset_id, project=project, deleted_at__isnull=True
+        )
+        asset.deleted_at = timezone.now()
+        asset.save(update_fields=["deleted_at", "updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def _absolutize_job_urls(job: ImageJob, request) -> ImageJob:

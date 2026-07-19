@@ -86,3 +86,71 @@ class ImageUpload(models.Model):
 
     def __str__(self) -> str:
         return f"upload {self.id}"
+
+
+class LibraryAsset(models.Model):
+    """Browsable library item (image or video) for a project."""
+
+    MEDIA_TYPE_CHOICES = [
+        ("image", "Image"),
+        ("video", "Video"),
+    ]
+    STATUS_CHOICES = [
+        ("ready", "Ready"),
+        ("generating", "Generating"),
+        ("published", "Published"),
+        ("scheduled", "Scheduled"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="library_assets",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="library_assets",
+    )
+    media_type = models.CharField(max_length=16, choices=MEDIA_TYPE_CHOICES)
+    title = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="ready")
+    # CharField: local MEDIA URLs may be relative (/media/...) until absolutized in the API.
+    thumbnail_url = models.CharField(max_length=2000, null=True, blank=True)
+    source_url = models.CharField(max_length=2000, blank=True, default="")
+    prompt = models.TextField(null=True, blank=True)
+    model = models.CharField(max_length=200, null=True, blank=True)
+    capability = models.CharField(max_length=32, null=True, blank=True)
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    width = models.PositiveIntegerField(null=True, blank=True)
+    height = models.PositiveIntegerField(null=True, blank=True)
+    image_job = models.ForeignKey(
+        ImageJob,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="library_assets",
+    )
+    source_index = models.PositiveSmallIntegerField(default=0)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["project", "-created_at"]),
+            models.Index(fields=["project", "media_type", "-created_at"]),
+            models.Index(fields=["project", "deleted_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["image_job", "source_index"],
+                name="uniq_library_asset_job_index",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.media_type} {self.status} ({self.id})"

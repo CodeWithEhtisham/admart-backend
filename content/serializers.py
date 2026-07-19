@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from content.catalog import CAPABILITIES, resolve_model
-from content.models import ImageJob
+from content.models import ImageJob, LibraryAsset
 
 MAX_PROMPT_LEN = 2000
 ALLOWED_ASPECT = {
@@ -149,3 +149,40 @@ class ImageJobSerializer(serializers.ModelSerializer):
             "createdAt",
             "updatedAt",
         ]
+
+
+class LibraryAssetSerializer(serializers.ModelSerializer):
+    projectId = serializers.UUIDField(source="project_id", read_only=True)
+    mediaType = serializers.CharField(source="media_type", read_only=True)
+    thumbnailUrl = serializers.CharField(source="thumbnail_url", read_only=True, allow_null=True)
+    sourceUrl = serializers.CharField(source="source_url", read_only=True)
+    durationSeconds = serializers.IntegerField(
+        source="duration_seconds", read_only=True, allow_null=True
+    )
+    jobId = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = LibraryAsset
+        fields = [
+            "id",
+            "projectId",
+            "mediaType",
+            "title",
+            "status",
+            "thumbnailUrl",
+            "sourceUrl",
+            "prompt",
+            "model",
+            "capability",
+            "durationSeconds",
+            "width",
+            "height",
+            "jobId",
+            "createdAt",
+            "updatedAt",
+        ]
+
+    def get_jobId(self, obj) -> str | None:
+        return str(obj.image_job_id) if obj.image_job_id else None

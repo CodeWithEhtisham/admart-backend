@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 
 from content.fal_client import FalSubmission
 from content.mapping import build_fal_input
-from content.models import ImageJob
+from content.models import ImageJob, LibraryAsset
 from projects.models import Project
 from users.models import User
 
@@ -126,6 +126,9 @@ class ImageJobApiTests(APITestCase):
         self.assertEqual(args[1]["prompt"], "Product shot on marble")
         self.user.refresh_from_db()
         self.assertEqual(self.user.credits_remaining, 99)
+        asset = LibraryAsset.objects.get(image_job=job)
+        self.assertEqual(asset.status, "generating")
+        self.assertEqual(asset.media_type, "image")
 
     def test_create_rejects_empty_prompt(self):
         response = self.client.post(
@@ -226,6 +229,9 @@ class ImageJobApiTests(APITestCase):
         self.assertEqual(response.data["status"], "succeeded")
         self.assertEqual(len(response.data["images"]), 1)
         self.assertEqual(response.data["seed"], 42)
+        asset = LibraryAsset.objects.get(image_job=job, source_index=0)
+        self.assertEqual(asset.status, "ready")
+        self.assertEqual(asset.source_url, "http://testserver/media/projects/x/out-0.png")
 
     def test_upload_image(self):
         url = f"/api/projects/{self.project.id}/images/uploads"
@@ -267,4 +273,82 @@ class ImageJobApiTests(APITestCase):
             {"capability": "textToImage", "prompt": "nope"},
             format="json",
         )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+@override_settings(FAL_KEY="test-fal-key", MEDIA_ROOT="/tmp/admart-test-media")
+class LibraryApiTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="lib@example.com",
+            password="pass12345",
+            credits_total=100,
+            credits_remaining=100,
+            credits_used=0,
+        )
+        self.project = Project.objects.create(owner=self.user, name="Lib")
+        self.client.force_authenticate(user=self.user)
+        self.library_url = f"/api/projects/{self.project.id}/library"
+
+    def test_empty_library(self):
+        response = self.client.get(self.library_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["items"], [])
+        self.assertIsNone(response.data["nextCursor"])
+
+    def test_list_filters_media_type_and_sorts_newest_first(self):
+        older = LibraryAsset.objects.create(
+            project=self.project,
+            user=self.user,
+            media_type="image",
+            title="old",
+            status="ready",
+            source_url="https://cdn.example.com/old.png",
+            thumbnail_url="https://cdn.example.com/old.png",
+        )
+        newer = LibraryAsset.objects.create(
+            project=self.project,
+            user=self.user,
+            media_type="video",
+            title="new",
+            status="ready",
+            source_url="https://cdn.example.com/new.mp4",
+            thumbnail_url="https://cdn.example.com/new.jpg",
+            duration_seconds=12,
+        )
+        LibraryAsset.objects.filter(id=older.id).update(created_at=older.created_at.replace(year=2020))
+
+        response = self.client.get(self.library_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(newer.id), str(older.id)])
+
+        images = self.client.get(f"{self.library_url}?mediaType=image")
+        self.assertEqual(len(images.data["items"]), 1)
+        self.assertEqual(images.data["items"][0]["mediaType"], "image")
+
+        videos = self.client.get(f"{self.library_url}?mediaType=video")
+        self.assertEqual(len(videos.data["items"]), 1)
+        self.assertEqual(videos.data["items"][0]["durationSeconds"], 12)
+
+    def test_soft_delete(self):
+        asset = LibraryAsset.objects.create(
+            project=self.project,
+            user=self.user,
+            media_type="image",
+            title="bye",
+            status="ready",
+            source_url="https://cdn.example.com/bye.png",
+        )
+        response = self.client.delete(f"{self.library_url}/{asset.id}")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        asset.refresh_from_db()
+        self.assertIsNotNone(asset.deleted_at)
+        listed = self.client.get(self.library_url)
+        self.assertEqual(listed.data["items"], [])
+
+    def test_other_users_library_404(self):
+        other = User.objects.create_user(email="lib-other@example.com", password="pass12345")
+        other_project = Project.objects.create(owner=other, name="Other")
+        response = self.client.get(f"/api/projects/{other_project.id}/library")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -216,3 +216,58 @@ class OnboardingTests(APITestCase):
         self.assertEqual(response.data["brandKit"]["industry"], "E-commerce")
         self.assertEqual(response.data["brandKit"]["brandColorHex"], "#ef4444")
 
+
+class CreditsApiTests(APITestCase):
+    """Credits balance / costs / history endpoints."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="credits@example.com",
+            password="Password123!",
+            credits_total=50,
+            credits_remaining=40,
+            credits_used=10,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_balance(self) -> None:
+        response = self.client.get("/api/credits")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["creditsRemaining"], 40)
+        self.assertEqual(response.data["creditsTotal"], 50)
+        self.assertEqual(response.data["creditsUsed"], 10)
+        self.assertTrue(response.data["canGenerate"])
+
+    def test_costs(self) -> None:
+        response = self.client.get("/api/credits/costs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("byCapability", response.data)
+        self.assertEqual(response.data["byCapability"]["textToImage"], 1)
+        self.assertEqual(response.data["byCapability"]["multiEdit"], 2)
+        self.assertTrue(any(i["capability"] == "edit" for i in response.data["items"]))
+
+    def test_history(self) -> None:
+        from content.models import ImageJob
+        from projects.models import Project
+
+        project = Project.objects.create(owner=self.user, name="P")
+        ImageJob.objects.create(
+            project=project,
+            user=self.user,
+            capability="textToImage",
+            model="fal-ai/flux/dev",
+            status="succeeded",
+            prompt="a cat",
+            credits_reserved=1,
+            credits_used=1,
+        )
+        response = self.client.get("/api/credits/history")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["items"]), 1)
+        self.assertEqual(response.data["items"][0]["credits"], 1.0)
+        self.assertEqual(response.data["items"][0]["capability"], "textToImage")
+
+    def test_unauthenticated(self) -> None:
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get("/api/credits").status_code, status.HTTP_401_UNAUTHORIZED)
+

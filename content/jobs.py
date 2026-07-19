@@ -8,6 +8,7 @@ from django.db import transaction
 
 from content import fal_client
 from content.credits import refund_credits
+from content.library import sync_library_from_image_job
 from content.models import ImageJob
 from content.storage_utils import normalize_fal_images, persist_remote_image
 
@@ -125,6 +126,7 @@ def refresh_job(job: ImageJob, *, request=None) -> ImageJob:
                 "updated_at",
             ]
         )
+        sync_library_from_image_job(job)
     return job
 
 
@@ -137,3 +139,4 @@ def _fail_job(job: ImageJob, message: str) -> None:
             refund_credits(job.user, int(job.credits_reserved))
             job.credits_reserved = 0
             job.save(update_fields=["credits_reserved", "updated_at"])
+        sync_library_from_image_job(job)
