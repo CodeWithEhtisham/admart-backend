@@ -38,6 +38,7 @@ flowchart LR
 | **Project** | User (`owner`) | Workspace + brand kit + per-project settings; parent of everything below | ✅ Implemented |
 | **SocialAccount** | Project | OAuth connection to one platform; encrypted tokens; profile | 🔨 In progress (YouTube) |
 | **VideoAsset** | Project | A generated short video: prompt, generation job status, output file/URL, duration | ⬜ Planned |
+| **ImageJob** | Project | fal image generate/edit/upscale/rembg job + durable result URLs | ✅ Implemented |
 | **Publication** | VideoAsset + SocialAccount | One video posted to one account: platform `videoId`, privacy, schedule, state | ⬜ Planned |
 | **Analytics** | Publication | Per-publication metrics synced from the provider | ⬜ Planned |
 | **Automation/Agent** | Project | Scheduled / rule-based "generate + post" workflows | ⬜ Later |
@@ -59,7 +60,7 @@ flowchart LR
 | ------- | -------------- | ---------- | ------ |
 | **Identity & Workspace** | Users, auth, projects, brand kit, active project | — | ✅ |
 | **Connections** | Social OAuth, encrypted token storage, refresh | Identity | 🔨 |
-| **Content / Generation** | Create videos via an external generation API, async job lifecycle, credit spend | Identity | ⬜ |
+| **Content / Generation** | Create images via fal.ai (jobs + uploads); videos later | Identity | 🔨 images ✅ |
 | **Publishing** | Upload/schedule a video to a SocialAccount | Connections, Content | ⬜ |
 | **Analytics** | Pull & aggregate per-publication metrics from providers | Publishing | ⬜ |
 | **Agent / Orchestration** | Automated generate→post→learn workflows | all above | ⬜ |

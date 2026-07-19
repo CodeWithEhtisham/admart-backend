@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     # Local apps
     "users.apps.UsersConfig",
     "projects.apps.ProjectsConfig",
+    "content.apps.ContentConfig",
 ]
 
 MIDDLEWARE = [
@@ -130,6 +131,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+# Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+# Absolute base for public media URLs when no request is available (e.g. workers).
+# In local dev, leave blank and build URLs from the request; fal needs a publicly
+# reachable URL for uploads — use ngrok / a tunnel or set MEDIA_BASE_URL.
+MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "")
 
 # Custom User Model
 AUTH_USER_MODEL = "users.User"
@@ -220,4 +229,9 @@ INSTAGRAM_PUBLISH_ENABLED = os.getenv("INSTAGRAM_PUBLISH_ENABLED", "False").lowe
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
+
+# fal.ai image generation
+FAL_KEY = os.getenv("FAL_KEY", "")
+FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
+FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
 

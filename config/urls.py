@@ -14,6 +14,8 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import (
@@ -22,6 +24,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from content.views import ImageModelCatalogView
 from projects.views import ProjectListCreateView, SocialCallbackView
 
 urlpatterns = [
@@ -30,6 +33,8 @@ urlpatterns = [
     # List/create at "/api/projects" (no trailing slash); sub-routes under "/api/projects/".
     path("api/projects", ProjectListCreateView.as_view(), name="project_list_create"),
     path("api/projects/", include("projects.urls")),
+    path("api/projects/", include("content.urls")),
+    path("api/images/models", ImageModelCatalogView.as_view(), name="image_models"),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),
     # OpenAPI schema endpoints
@@ -37,4 +42,7 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
