@@ -1,4 +1,4 @@
-# Admart (Vidify) — Complete Backend Agent Specification
+# Admart — Complete Backend Agent Specification
 
 > **Purpose**: This document is the single source of truth for the backend agent. Read every section before writing a single line of code. The frontend is a fully-built React (Vite + Tailwind v4) SPA. Your job is to build the server that powers it.
 
@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**App name**: Vidify (marketed as Admart)  
+**App name**: Admart  
 **Type**: AI-powered video creation & social media publishing SaaS  
 **Frontend stack**: React 19, React Router v7, Tailwind CSS v4, Vite 8  
 **Backend to build**: REST API server (Node.js / Python / any — your choice)  
@@ -18,7 +18,7 @@
 
 ### 2.1 Application Shell
 
-The app is a client-side SPA with **19 routes** plus a 404. All authenticated routes use a **collapsible sidebar** (`VidifySidebar`) fixed on the left (260px wide, collapses to 72px on dashboard). The sidebar is dark-themed with:
+The app is a client-side SPA with **19 routes** plus a 404. All authenticated routes use a **collapsible sidebar** (`AdmartSidebar`) fixed on the left (260px wide, collapses to 72px on dashboard). The sidebar is dark-themed with:
 
 - **Brand logo**: "V" gradient icon + "idify" wordmark
 - **4 navigation groups**: Main, Publish, Analyze, Settings
@@ -121,7 +121,7 @@ All authenticated pages share the same topbar: breadcrumb left, search bar cente
 
 **Visual**: Dark panel sidebar (collapsible) + main content area. Has light/dark theme toggle (CSS class swap).
 
-**Sidebar (inline duplicate of VidifySidebar)**:
+**Sidebar (inline duplicate of AdmartSidebar)**:
 - Collapse toggle → sidebar narrows from 260px to 72px (icons only), content `ml` animates
 - Credits widget adapts: expanded = horizontal bar + "42/200", collapsed = vertical bar + "42" monospace
 
@@ -302,7 +302,7 @@ Done stages = green ✓, active = blue, future = gray.
 - **Tags**: removable chips + "+ Add" button
 - **Platform preview** (mini phone mockup, max-w-220px):
   - Platform tabs: TikTok/YouTube/Instagram/Facebook
-  - Phone frame with avatar "@vidify_brand", "Follow" button
+  - Phone frame with avatar "@admart_brand", "Follow" button
   - 9:14 aspect video area with gradient + caption overlay
   - Engagement stats: ❤️ 2.4K · 💬 142 · ↗ 890
 
@@ -369,7 +369,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/library` — LibraryPage
 
-**Visual**: Uses VidifySidebar. Full video library with search, filter, sort, grid/list view toggle.
+**Visual**: Uses AdmartSidebar. Full video library with search, filter, sort, grid/list view toggle.
 
 **Backend needs**:
 - `GET /videos?q=&status=&platform=&page=&limit=&sort=` — full filterable library
@@ -380,7 +380,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/templates` — TemplatesPage
 
-**Visual**: Uses VidifySidebar. Browse template library by category.
+**Visual**: Uses AdmartSidebar. Browse template library by category.
 
 **Backend needs**:
 - `GET /templates?category=&sort=` — list templates
@@ -391,7 +391,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/social` — SocialAccountsPage
 
-**Visual**: Uses VidifySidebar. Shows all connected/disconnected social accounts.
+**Visual**: Uses AdmartSidebar. Shows all connected/disconnected social accounts.
 
 **Backend needs**:
 - `GET /social/accounts`
@@ -403,7 +403,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/calendar` — CalendarPage
 
-**Visual**: Uses VidifySidebar. Monthly calendar view with scheduled posts.
+**Visual**: Uses AdmartSidebar. Monthly calendar view with scheduled posts.
 
 **Backend needs**:
 - `GET /schedule?month=&year=` — returns scheduled posts per day
@@ -414,7 +414,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/analytics` — AnalyticsPage
 
-**Visual**: Uses VidifySidebar. Comprehensive analytics dashboard.
+**Visual**: Uses AdmartSidebar. Comprehensive analytics dashboard.
 
 **Header controls**:
 - Date range pills: 7d · 30d · 90d · All time
@@ -443,7 +443,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/image-gen` — ImageGenPage ⭐ PRIMARY AI FEATURE
 
-**Visual**: Uses VidifySidebar. Two-panel layout (left=controls 400px, right=results flex-1).
+**Visual**: Uses AdmartSidebar. Two-panel layout (left=controls 400px, right=results flex-1).
 
 **Topbar**: "AI Image Generator" h1 + "✦ AI Powered" violet badge + user avatar
 
@@ -493,7 +493,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/billing` — BillingPage
 
-**Visual**: Uses VidifySidebar. Subscription management.
+**Visual**: Uses AdmartSidebar. Subscription management.
 
 **Backend needs**:
 - `GET /billing/subscription` — current plan, credits, renewal date
@@ -505,7 +505,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/settings` — SettingsPage
 
-**Visual**: Uses VidifySidebar. Multi-section settings with sidebar sub-navigation.
+**Visual**: Uses AdmartSidebar. Multi-section settings with sidebar sub-navigation.
 
 **Backend needs**:
 - `GET /users/me` — profile data
@@ -517,7 +517,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/brand-kit` — BrandKitPage
 
-**Visual**: Uses VidifySidebar. Brand identity management.
+**Visual**: Uses AdmartSidebar. Brand identity management.
 
 **Backend needs**:
 - `GET /brand-kit` — logo URL, colors, fonts, templates
@@ -528,7 +528,7 @@ Done stages = green ✓, active = blue, future = gray.
 
 #### `/notifications` — NotificationsPage
 
-**Visual**: Uses VidifySidebar. 6 unread notifications (red badge on sidebar).
+**Visual**: Uses AdmartSidebar. 6 unread notifications (red badge on sidebar).
 
 **Backend needs**:
 - `GET /notifications?unread=` — notification list
@@ -660,8 +660,8 @@ These three pages form the end-to-end video generation and publishing flow:
   "id": "uuid",
   "userId": "uuid",
   "platform": "tiktok | youtube | instagram | facebook",
-  "handle": "@vidify_brand",
-  "displayName": "Vidify Brand",
+  "handle": "@admart_brand",
+  "displayName": "Admart Brand",
   "accessToken": "encrypted",
   "refreshToken": "encrypted",
   "tokenExpiresAt": "ISO8601",
@@ -1165,10 +1165,10 @@ All media (videos, images, thumbnails, logos) must be stored on cloud storage:
 
 **URL pattern**:
 ```
-https://storage.vidify.app/users/{userId}/videos/{videoId}.mp4
-https://storage.vidify.app/users/{userId}/images/{imageId}.webp
-https://storage.vidify.app/users/{userId}/thumbnails/{videoId}.jpg
-https://storage.vidify.app/brand-kits/{userId}/logo.png
+https://storage.admart.app/users/{userId}/videos/{videoId}.mp4
+https://storage.admart.app/users/{userId}/images/{imageId}.webp
+https://storage.admart.app/users/{userId}/thumbnails/{videoId}.jpg
+https://storage.admart.app/brand-kits/{userId}/logo.png
 ```
 
 **Signed URLs**: Download endpoints return time-limited signed URLs (expire in 1 hour).
@@ -1183,7 +1183,7 @@ PORT=3000
 NODE_ENV=development
 
 # Database
-DATABASE_URL=postgresql://user:pass@host:5432/vidify
+DATABASE_URL=postgresql://user:pass@host:5432/admart
 
 # JWT
 JWT_SECRET=your-secret-key
@@ -1208,7 +1208,7 @@ REPLICATE_API_TOKEN=r8_xxxxxxxxxxxx   # (same token, different models)
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=us-east-1
-S3_BUCKET=vidify-media
+S3_BUCKET=admart-media
 
 # Social OAuth
 TIKTOK_CLIENT_ID=
@@ -1227,7 +1227,7 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 # Email
 SMTP_HOST=smtp.resend.com
 SMTP_API_KEY=re_...
-FROM_EMAIL=noreply@vidify.app
+FROM_EMAIL=noreply@admart.app
 
 # Frontend URL (for CORS + OAuth callbacks)
 FRONTEND_URL=http://localhost:5173
@@ -1241,7 +1241,7 @@ FRONTEND_URL=http://localhost:5173
 // Allow these origins:
 const allowedOrigins = [
   'http://localhost:5173',   // Vite dev server (frontend)
-  'https://vidify.app',       // production frontend
+  'https://admart.app',       // production frontend
 ]
 
 // Expose headers for SSE:
@@ -1512,4 +1512,4 @@ CREATE TABLE scheduled_posts (
 
 ---
 
-*This document covers every pixel of the Admart/Vidify frontend and every API call the backend needs to support. Build in the order above, starting with Flux image generation as the first real AI feature.*
+*This document covers every pixel of the Admart frontend and every API call the backend needs to support. Build in the order above, starting with Flux image generation as the first real AI feature.*

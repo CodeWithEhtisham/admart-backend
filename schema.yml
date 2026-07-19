@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: Vidify API
+  title: Admart API
   version: 1.0.0
-  description: Vidify Authentication & Video Publishing Platform Backend API
+  description: Admart Authentication & Video Publishing Platform Backend API
 paths:
   /api/auth/forgot-password:
     post:

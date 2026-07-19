@@ -36,7 +36,7 @@ One row per connected (or previously connected) platform per project.
 | `projectId`      | string (uuid)       | FK → project. Connection is scoped to this project              |
 | `platform`       | enum                | `youtube` \| `tiktok` \| `instagram` \| `facebook`              |
 | `connected`      | boolean             | `true` while the OAuth link is active                            |
-| `handle`         | string \| null      | e.g. `@vidify` / channel handle                                  |
+| `handle`         | string \| null      | e.g. `@admart` / channel handle                                  |
 | `displayName`    | string \| null      | Channel / account display name                                  |
 | `avatarUrl`      | string \| null      | Profile image URL                                               |
 | `externalId`     | string \| null      | Provider account/channel id                                     |
@@ -59,8 +59,8 @@ The frontend already expects exactly this public shape (see `SocialAccountsPage.
   "id": "…",
   "projectId": "5f1c0c2e-…",
   "platform": "youtube",
-  "handle": "@vidify",
-  "displayName": "Vidify Official",
+  "handle": "@admart",
+  "displayName": "Admart Official",
   "connected": true,
   "avatarUrl": "https://…",
   "tokenExpiresAt": "2026-09-01T00:00:00Z",

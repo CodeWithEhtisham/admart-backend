@@ -41,7 +41,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """Custom User model matching the Vidify specification."""
+    """Custom User model matching the Admart specification."""
 
     PLAN_CHOICES = [
         ("free", "Free"),

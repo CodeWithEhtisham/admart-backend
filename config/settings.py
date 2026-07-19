@@ -178,8 +178,8 @@ SIMPLE_JWT = {
 
 # Spectacular Schema settings
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Vidify API",
-    "DESCRIPTION": "Vidify Authentication & Video Publishing Platform Backend API",
+    "TITLE": "Admart API",
+    "DESCRIPTION": "Admart Authentication & Video Publishing Platform Backend API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
