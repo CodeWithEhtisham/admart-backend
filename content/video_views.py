@@ -12,16 +12,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content import fal_client
-from content.credits import InsufficientCredits, cost_for, refund_credits, reserve_credits
+from content.credits import InsufficientCredits, refund_credits, reserve_credits
+from content.fal_models import catalog_discovery_payload
 from content.library import mark_library_generating_video, sync_library_from_video_job
 from content.models import VideoJob
+from content.pricing import attach_video_pricing, quote_response, quote_video_job
 from content.serializers import VideoJobCreateSerializer, VideoJobSerializer
 from content.storage_utils import absolute_media_url
 from content.url_resolve import resolve_urls_for_fal
 from content.video_catalog import VIDEO_MODEL_CATALOG
 from content.video_jobs import refresh_video_job
 from content.video_mapping import build_video_fal_input
-from content.views import ImageUploadView, _owned_project
+from content.views import ImageUploadView, _owned_project, _truthy
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,8 @@ class VideoJobListCreateView(APIView):
         data = ser.validated_data
         capability = data["capability"]
         model = data["model"]
-        amount = cost_for(capability)
+        quote = quote_video_job(capability, model, data)
+        amount = quote["credits_decimal"]
 
         try:
             reserve_credits(request.user, amount)
@@ -71,6 +74,7 @@ class VideoJobListCreateView(APIView):
                     "code": "INSUFFICIENT_CREDITS",
                     "creditsRemaining": request.user.credits_remaining,
                     "creditsTotal": request.user.credits_total,
+                    "creditsRequired": quote_response(quote)["credits"],
                 },
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
@@ -132,6 +136,7 @@ class VideoJobListCreateView(APIView):
         request.user.refresh_from_db()
         payload = VideoJobSerializer(job).data
         payload["creditsRemaining"] = request.user.credits_remaining
+        payload["creditsRequired"] = quote_response(quote)["credits"]
         return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
@@ -158,7 +163,7 @@ class VideoJobCancelView(APIView):
         job.error = "Cancelled"
         job.save(update_fields=["status", "error", "updated_at"])
         if job.credits_reserved and job.credits_used is None:
-            refund_credits(request.user, int(job.credits_reserved))
+            refund_credits(request.user, job.credits_reserved)
             job.credits_reserved = 0
             job.save(update_fields=["credits_reserved", "updated_at"])
         sync_library_from_video_job(job)
@@ -171,7 +176,10 @@ class VideoModelCatalogView(APIView):
     def get(self, request, project_id=None):
         if project_id is not None:
             _owned_project(request.user, project_id)
-        return Response(VIDEO_MODEL_CATALOG)
+        payload = attach_video_pricing(VIDEO_MODEL_CATALOG)
+        if _truthy(request.query_params.get("discover")):
+            payload["_fal"] = catalog_discovery_payload("video")
+        return Response(payload)
 
 
 # Reuse image upload endpoint for frame images (same mime/size rules).

@@ -1,4 +1,4 @@
-"""Credits API for the frontend (balance, costs, recent spend)."""
+"""Credits API for balance, live quotes, costs, and recent spend."""
 
 from __future__ import annotations
 
@@ -8,13 +8,19 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from content.catalog import CAPABILITIES, CREDIT_COSTS, credit_cost
+from content.catalog import CAPABILITIES, DEFAULT_MODELS, resolve_model
 from content.models import ImageJob, VideoJob
-from content.video_catalog import VIDEO_CAPABILITIES, VIDEO_CREDIT_COSTS, video_credit_cost
+from content.pricing import base_model_costs, quote_image_job, quote_response, quote_video_job
+from content.video_catalog import (
+    DEFAULT_VIDEO_MODELS,
+    VIDEO_CAPABILITIES,
+    VIDEO_MODEL_CATALOG,
+    resolve_video_model,
+)
 
 
 class CreditsBalanceView(APIView):
-    """GET /api/credits — current balance for the authenticated user."""
+    """GET /api/credits - current decimal fal-style balance."""
 
     permission_classes = [IsAuthenticated]
 
@@ -29,54 +35,102 @@ class CreditsBalanceView(APIView):
                 "creditsRemaining": user.credits_remaining,
                 "creditsResetAt": user.credits_reset_at,
                 "canGenerate": user.credits_remaining > 0,
+                "currency": "fal credits",
             }
         )
 
 
 class CreditsCostsView(APIView):
-    """GET /api/credits/costs — credit price per image/video capability."""
+    """GET /api/credits/costs - default/base model costs."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         items = []
         for capability in CAPABILITIES:
-            cost = int(credit_cost(capability, 1))
+            default_model = DEFAULT_MODELS[capability]
+            quote = quote_image_job(capability, default_model, {"numImages": 1})
             items.append(
                 {
                     "capability": capability,
-                    "credits": cost,
+                    "model": default_model,
+                    "credits": quote_response(quote)["credits"],
                     "perImage": capability == "textToImage",
                     "notes": (
-                        "Cost × numImages"
+                        "Estimated cost x numImages"
                         if capability == "textToImage"
-                        else "Flat cost per job"
+                        else "Estimated cost per job"
                     ),
                 }
             )
+
         for capability in VIDEO_CAPABILITIES:
-            cost = int(video_credit_cost(capability))
+            default_model = DEFAULT_VIDEO_MODELS[capability]
+            entry = next(
+                (m for m in VIDEO_MODEL_CATALOG[capability] if m["id"] == default_model),
+                {},
+            )
+            settings_for_quote = {}
+            fields = entry.get("fields") or {}
+            if fields.get("duration"):
+                settings_for_quote["duration"] = fields["duration"][0]
+            quote = quote_video_job(capability, default_model, settings_for_quote)
             items.append(
                 {
                     "capability": capability,
-                    "credits": cost,
+                    "model": default_model,
+                    "credits": quote_response(quote)["credits"],
                     "perImage": False,
-                    "notes": "Flat cost per video job",
+                    "notes": "Estimated cost per video job",
                 }
             )
-        by_capability = {c: int(CREDIT_COSTS[c]) for c in CAPABILITIES}
-        by_capability.update({c: int(VIDEO_CREDIT_COSTS[c]) for c in VIDEO_CAPABILITIES})
+
         return Response(
             {
-                "currency": "credits",
+                "currency": "fal credits",
                 "items": items,
-                "byCapability": by_capability,
+                "byCapability": {item["capability"]: item["credits"] for item in items},
+                "byModel": base_model_costs(),
             }
         )
 
 
+class CreditsQuoteView(APIView):
+    """POST /api/credits/quote - estimate decimal credits before submit."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        data = request.data or {}
+        kind = (data.get("kind") or data.get("type") or "").strip()
+        capability = (data.get("capability") or "").strip()
+        model = (data.get("model") or "").strip()
+        settings = data.get("settings") or {}
+        if not isinstance(settings, dict):
+            settings = {}
+
+        try:
+            if kind == "video" or capability in VIDEO_CAPABILITIES:
+                if capability not in VIDEO_CAPABILITIES:
+                    return Response({"message": "Invalid video capability"}, status=400)
+                model = resolve_video_model(capability, model)
+                quote = quote_video_job(capability, model, settings)
+            else:
+                if capability not in CAPABILITIES:
+                    return Response({"message": "Invalid image capability"}, status=400)
+                model = resolve_model(capability, model)
+                quote = quote_image_job(capability, model, settings)
+        except ValueError as exc:
+            return Response({"message": str(exc)}, status=400)
+
+        request.user.refresh_from_db()
+        return Response(
+            quote_response(quote, credits_remaining=request.user.credits_remaining)
+        )
+
+
 class CreditsHistoryView(APIView):
-    """GET /api/credits/history — recent credit spends from image + video jobs."""
+    """GET /api/credits/history - recent image and video credit spends."""
 
     permission_classes = [IsAuthenticated]
 
@@ -109,6 +163,7 @@ class CreditsHistoryView(APIView):
                     "model": job.model,
                     "status": job.status,
                     "credits": float(amount) if amount is not None else 0,
+                    "currency": "fal credits",
                     "prompt": (job.prompt or "")[:120] or None,
                     "createdAt": job.created_at,
                 }

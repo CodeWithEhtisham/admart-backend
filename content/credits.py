@@ -1,30 +1,46 @@
-"""Credit helpers for image jobs (uses User.credits_* integers)."""
+"""Credit helpers for image/video jobs using decimal fal-style credits."""
 
 from __future__ import annotations
 
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 
 from django.db import transaction
 
-from content.catalog import credit_cost as image_credit_cost
-from content.video_catalog import VIDEO_CREDIT_COSTS, video_credit_cost
+from content.catalog import DEFAULT_MODELS
+from content.pricing import quote_image_job, quote_video_job, quantize_credits
+from content.video_catalog import DEFAULT_VIDEO_MODELS
 
 
 class InsufficientCredits(Exception):
     pass
 
 
-def cost_for(capability: str, num_images: int = 1) -> int:
-    """Whole-credit cost (ceil of Decimal table for integer User fields)."""
-    if capability in VIDEO_CREDIT_COSTS:
-        value = video_credit_cost(capability)
-    else:
-        value = image_credit_cost(capability, num_images)
-    return int(value.to_integral_value(rounding=ROUND_CEILING))
+def cost_for(
+    capability: str,
+    num_images: int = 1,
+    *,
+    model: str | None = None,
+    settings: dict | None = None,
+) -> Decimal:
+    """Return the current decimal credit estimate for a request.
+
+    Kept for older callers/tests; new job creation should pass model/settings so
+    model-specific fal pricing is reflected.
+    """
+    data = dict(settings or {})
+    data.setdefault("numImages", num_images)
+    if capability in DEFAULT_VIDEO_MODELS:
+        return quote_video_job(capability, model or DEFAULT_VIDEO_MODELS[capability], data)[
+            "credits_decimal"
+        ]
+    return quote_image_job(capability, model or DEFAULT_MODELS[capability], data)[
+        "credits_decimal"
+    ]
 
 
 @transaction.atomic
-def reserve_credits(user, amount: int) -> None:
+def reserve_credits(user, amount: Decimal | int | float | str) -> None:
+    amount = quantize_credits(amount)
     user = type(user).objects.select_for_update().get(pk=user.pk)
     if user.credits_remaining < amount:
         raise InsufficientCredits()
@@ -35,10 +51,11 @@ def reserve_credits(user, amount: int) -> None:
 
 
 @transaction.atomic
-def refund_credits(user, amount: int) -> None:
+def refund_credits(user, amount: Decimal | int | float | str) -> None:
+    amount = quantize_credits(amount)
     if amount <= 0:
         return
     user = type(user).objects.select_for_update().get(pk=user.pk)
     user.credits_remaining += amount
-    user.credits_used = max(0, user.credits_used - amount)
+    user.credits_used = max(Decimal("0"), user.credits_used - amount)
     user.save(update_fields=["credits_remaining", "credits_used"])

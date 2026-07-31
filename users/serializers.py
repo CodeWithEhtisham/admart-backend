@@ -19,9 +19,15 @@ class UserSerializer(serializers.ModelSerializer):
     lastName = serializers.CharField(source="last_name", required=False, allow_blank=True)
     avatarUrl = serializers.URLField(source="avatar_url", required=False, allow_null=True)
     googleId = serializers.CharField(source="google_id", required=False, allow_null=True)
-    creditsTotal = serializers.IntegerField(source="credits_total", read_only=True)
-    creditsUsed = serializers.IntegerField(source="credits_used", read_only=True)
-    creditsRemaining = serializers.IntegerField(source="credits_remaining", read_only=True)
+    creditsTotal = serializers.DecimalField(
+        source="credits_total", max_digits=10, decimal_places=4, read_only=True, coerce_to_string=False
+    )
+    creditsUsed = serializers.DecimalField(
+        source="credits_used", max_digits=10, decimal_places=4, read_only=True, coerce_to_string=False
+    )
+    creditsRemaining = serializers.DecimalField(
+        source="credits_remaining", max_digits=10, decimal_places=4, read_only=True, coerce_to_string=False
+    )
     creditsResetAt = serializers.DateTimeField(source="credits_reset_at", read_only=True, allow_null=True)
     onboardingCompleted = serializers.BooleanField(source="onboarding_completed", default=False)
     brandKit = serializers.SerializerMethodField(read_only=True)

@@ -1,4 +1,5 @@
-from unittest.mock import patch
+from decimal import Decimal
+from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -8,6 +9,8 @@ from rest_framework.test import APITestCase
 from content.fal_client import FalSubmission
 from content.mapping import build_fal_input
 from content.models import ImageJob, LibraryAsset
+from content.video_catalog import VIDEO_ALLOW_LISTS
+from content.video_mapping import build_video_fal_input
 from projects.models import Project
 from users.models import User
 
@@ -18,6 +21,179 @@ def _submission(request_id: str = "fal-req-1") -> FalSubmission:
         status_url=f"https://queue.fal.run/fal-ai/flux/requests/{request_id}/status",
         response_url=f"https://queue.fal.run/fal-ai/flux/requests/{request_id}",
     )
+
+
+def _json_response(payload: dict, status_code: int = 200) -> Mock:
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = payload
+    response.raise_for_status.return_value = None
+    return response
+
+
+class PromptEnhancerApiTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="prompt@example.com",
+            password="pass12345",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.url = "/api/prompts/enhance"
+
+    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
+    @patch("content.prompt_enhancer.requests.post")
+    def test_enhance_prompt_uses_gemini_json(self, mock_post):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    '{"enhancedPrompt":"Professional fast-food ad with a '
+                                    'hero burger, crispy fries, chilled drink, studio lighting, '
+                                    'clean composition, readable offer space, high detail.",'
+                                    '"negativePrompt":"blurry, low quality, unreadable text"}'
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        response = self.client.post(
+            self.url,
+            {
+                "kind": "image",
+                "prompt": "burger fries cold drink deal 999",
+                "context": {"aspectRatio": "1:1", "unknown": "ignored"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("hero burger", response.data["enhancedPrompt"])
+        self.assertEqual(response.data["negativePrompt"], "blurry, low quality, unreadable text")
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["generationConfig"]["responseMimeType"], "application/json")
+        self.assertNotIn("unknown", payload["contents"][0]["parts"][0]["text"])
+
+    @override_settings(GEMINI_API_KEY="")
+    def test_enhance_prompt_falls_back_without_key(self):
+        response = self.client.post(
+            self.url,
+            {"kind": "video", "prompt": "burger fries cold drink deal 999"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("Professional social media video", response.data["enhancedPrompt"])
+        self.assertIn("motion", response.data["negativePrompt"])
+
+    def test_enhance_prompt_rejects_empty_prompt(self):
+        response = self.client.post(self.url, {"kind": "image", "prompt": ""}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["field"], "prompt")
+
+
+class FalModelSearchApiTests(APITestCase):
+    def setUp(self) -> None:
+        from content import fal_models, pricing
+
+        fal_models._CACHE.clear()
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+        self.user = User.objects.create_user(
+            email="falmodels@example.com",
+            password="pass12345",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.url = "/api/fal/models"
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_search_fal_models_normalizes_supported_and_new_models(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/flux/dev",
+                        "metadata": {
+                            "display_name": "FLUX.1 Dev",
+                            "category": "text-to-image",
+                            "status": "active",
+                        },
+                    },
+                    {
+                        "endpoint_id": "fal-ai/new-image-model",
+                        "metadata": {
+                            "display_name": "New Image Model",
+                            "category": "text-to-image",
+                            "status": "active",
+                        },
+                    },
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {
+            "fal-ai/flux/dev": {
+                "unit_price": "0.025",
+                "unit": "megapixels",
+                "currency": "USD",
+            },
+            "fal-ai/new-image-model": {
+                "unit_price": "0.03",
+                "unit": "images",
+                "currency": "USD",
+            },
+        }
+
+        response = self.client.get(self.url, {"capability": "textToImage", "limit": 10})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["items"]), 2)
+        enabled = response.data["items"][0]
+        discovered = response.data["items"][1]
+        self.assertTrue(enabled["enabled"])
+        self.assertIn("textToImage", enabled["supportedCapabilities"])
+        self.assertFalse(discovered["enabled"])
+        self.assertEqual(discovered["pricing"]["unitPrice"], "0.03")
+        self.assertEqual(mock_models.call_args.kwargs["params"]["category"], "text-to-image")
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_image_catalog_can_include_discovery_report(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/new-image-model",
+                        "metadata": {
+                            "display_name": "New Image Model",
+                            "category": "text-to-image",
+                            "status": "active",
+                        },
+                    }
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {}
+
+        response = self.client.get("/api/images/models", {"discover": "1"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("_fal", response.data)
+        self.assertIn("textToImage", response.data["_fal"]["discoverable"])
 
 
 class UrlResolveTests(APITestCase):
@@ -87,6 +263,54 @@ class MappingTests(APITestCase):
         self.assertEqual(out["image_size"], "auto")
         self.assertEqual(out["quality"], "high")
 
+    def test_wan_image_edit_mapping(self):
+        out = build_fal_input(
+            "multiEdit",
+            "wan/v2.6/image-to-image",
+            {
+                "prompt": "combine the product and background",
+                "imageUrls": [
+                    "https://cdn.example.com/product.png",
+                    "https://cdn.example.com/bg.png",
+                ],
+                "aspectRatio": "16:9",
+                "numImages": 2,
+                "negativePrompt": "blur",
+                "expandPrompt": False,
+            },
+        )
+        self.assertEqual(out["prompt"], "combine the product and background")
+        self.assertEqual(
+            out["image_urls"],
+            ["https://cdn.example.com/product.png", "https://cdn.example.com/bg.png"],
+        )
+        self.assertEqual(out["image_size"], "landscape_16_9")
+        self.assertEqual(out["num_images"], 2)
+        self.assertEqual(out["negative_prompt"], "blur")
+        self.assertFalse(out["enable_prompt_expansion"])
+
+    def test_wan_video_catalog_uses_callable_ids(self):
+        self.assertIn("wan/v2.6/text-to-video", VIDEO_ALLOW_LISTS["textToVideo"])
+        self.assertIn("wan/v2.6/image-to-video", VIDEO_ALLOW_LISTS["imageToVideo"])
+        self.assertNotIn("fal-ai/wan/v2.6/text-to-video", VIDEO_ALLOW_LISTS["textToVideo"])
+        self.assertNotIn("fal-ai/wan/v2.6/image-to-video", VIDEO_ALLOW_LISTS["imageToVideo"])
+
+        out = build_video_fal_input(
+            "imageToVideo",
+            "wan/v2.6/image-to-video",
+            {
+                "prompt": "animate the burger",
+                "startImageUrl": "https://cdn.example.com/burger.png",
+                "duration": "15",
+                "resolution": "1080p",
+                "negativePrompt": "flicker",
+            },
+        )
+        self.assertEqual(out["image_url"], "https://cdn.example.com/burger.png")
+        self.assertEqual(out["duration"], "15")
+        self.assertEqual(out["resolution"], "1080p")
+        self.assertEqual(out["negative_prompt"], "flicker")
+
 
 @override_settings(FAL_KEY="test-fal-key", MEDIA_ROOT="/tmp/admart-test-media")
 class ImageJobApiTests(APITestCase):
@@ -125,7 +349,7 @@ class ImageJobApiTests(APITestCase):
         self.assertEqual(args[0], "fal-ai/flux/dev")
         self.assertEqual(args[1]["prompt"], "Product shot on marble")
         self.user.refresh_from_db()
-        self.assertEqual(self.user.credits_remaining, 99)
+        self.assertEqual(self.user.credits_remaining, Decimal("99.9750"))
         asset = LibraryAsset.objects.get(image_job=job)
         self.assertEqual(asset.status, "generating")
         self.assertEqual(asset.media_type, "image")
@@ -174,7 +398,7 @@ class ImageJobApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertEqual(response.data["creditsRemaining"], 9)
+        self.assertEqual(response.data["creditsRemaining"], Decimal("9.9750"))
 
     @patch("content.views.fal_client.submit", return_value=_submission("fal-req-2"))
     def test_edit_requires_image(self, _mock):

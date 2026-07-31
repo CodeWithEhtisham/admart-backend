@@ -41,8 +41,8 @@ class ImageJob(models.Model):
     images = models.JSONField(default=list, blank=True)
     mask_image = models.JSONField(null=True, blank=True)
     error = models.TextField(null=True, blank=True)
-    credits_used = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
-    credits_reserved = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     seed = models.BigIntegerField(null=True, blank=True)
     fal_request_id = models.CharField(max_length=128, null=True, blank=True)
     # Canonical fal queue URLs from submit (required for models with subpaths like flux/dev).
@@ -122,8 +122,8 @@ class VideoJob(models.Model):
     # Single output video asset dict: { url, contentType, fileName, providerUrl, … }
     video = models.JSONField(null=True, blank=True)
     error = models.TextField(null=True, blank=True)
-    credits_used = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
-    credits_reserved = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     seed = models.BigIntegerField(null=True, blank=True)
     duration_seconds = models.PositiveIntegerField(null=True, blank=True)
     fal_request_id = models.CharField(max_length=128, null=True, blank=True)

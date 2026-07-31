@@ -8,6 +8,7 @@ from content.catalog import (
     NANO_MODELS,
     OPENAI_MODELS,
     REMBG_MODEL_MAP,
+    WAN_IMAGE_MODELS,
 )
 
 
@@ -31,7 +32,12 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
         out["image_url"] = image_urls[0]
 
     # Size controls
-    if model in FLUX_MODELS or model.startswith("fal-ai/ideogram") or model in OPENAI_MODELS:
+    if (
+        model in FLUX_MODELS
+        or model.startswith("fal-ai/ideogram")
+        or model in OPENAI_MODELS
+        or model in WAN_IMAGE_MODELS
+    ):
         if data.get("imageSize") is not None:
             out["image_size"] = data["imageSize"]
         else:
@@ -56,7 +62,10 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
     _maybe(out, "system_prompt", data.get("systemPrompt"))
     _maybe(out, "enable_web_search", data.get("enableWebSearch"))
     _maybe(out, "thinking_level", data.get("thinkingLevel"))
-    _maybe(out, "expand_prompt", data.get("expandPrompt"))
+    if model in WAN_IMAGE_MODELS:
+        _maybe(out, "enable_prompt_expansion", data.get("expandPrompt"))
+    else:
+        _maybe(out, "expand_prompt", data.get("expandPrompt"))
     _maybe(out, "rendering_speed", data.get("renderingSpeed"))
     _maybe(out, "style", data.get("style"))
     _maybe(out, "style_preset", data.get("stylePreset"))
@@ -76,7 +85,7 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
         if data.get("upscaleModel"):
             out["model"] = data["upscaleModel"]
 
-    if capability == "removeBackground" and model == "fal-ai/birefnet":
+    if capability == "removeBackground" and model in {"fal-ai/birefnet", "fal-ai/birefnet/v2"}:
         rembg = data.get("rembgModel")
         if rembg in REMBG_MODEL_MAP:
             out["model"] = REMBG_MODEL_MAP[rembg]

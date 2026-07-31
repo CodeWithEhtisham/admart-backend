@@ -15,7 +15,7 @@ DEFAULT_MODELS = {
     "edit": "fal-ai/nano-banana-2/edit",
     "multiEdit": "fal-ai/nano-banana-pro/edit",
     "upscale": "fal-ai/esrgan",
-    "removeBackground": "fal-ai/birefnet",
+    "removeBackground": "fal-ai/birefnet/v2",
 }
 
 MODEL_CATALOG = {
@@ -57,6 +57,12 @@ MODEL_CATALOG = {
             "family": "openai",
             "default": False,
         },
+        {
+            "id": "wan/v2.6/image-to-image",
+            "label": "Wan 2.6 Edit",
+            "family": "wan",
+            "default": False,
+        },
     ],
     "multiEdit": [
         {
@@ -75,6 +81,12 @@ MODEL_CATALOG = {
             "id": "openai/gpt-image-2/edit",
             "label": "GPT Image 2 Edit",
             "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "wan/v2.6/image-to-image",
+            "label": "Wan 2.6 Edit",
+            "family": "wan",
             "default": False,
         },
     ],
@@ -106,7 +118,8 @@ MODEL_CATALOG = {
         },
     ],
     "removeBackground": [
-        {"id": "fal-ai/birefnet", "label": "BiRefNet", "family": "rembg", "default": True},
+        {"id": "fal-ai/birefnet/v2", "label": "BiRefNet v2", "family": "rembg", "default": True},
+        {"id": "fal-ai/birefnet", "label": "BiRefNet", "family": "rembg", "default": False},
         {
             "id": "fal-ai/bria/background/remove",
             "label": "Bria RMBG 2.0",
@@ -154,6 +167,10 @@ NANO_MODELS = {
 }
 
 # Partner OpenAI models on fal (ids are `openai/…`, not `fal-ai/openai/…`).
+WAN_IMAGE_MODELS = {
+    "wan/v2.6/image-to-image",
+}
+
 OPENAI_MODELS = {
     "openai/gpt-image-2",
     "openai/gpt-image-2/edit",
@@ -165,6 +182,7 @@ SINGULAR_IMAGE_URL_MODELS = {
     "fal-ai/topaz/upscale/image",
     "fal-ai/recraft/upscale/crisp",
     "fal-ai/ideogram/upscale",
+    "fal-ai/birefnet/v2",
     "fal-ai/birefnet",
     "fal-ai/bria/background/remove",
     "fal-ai/flux-pro/kontext",

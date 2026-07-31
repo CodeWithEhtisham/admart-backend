@@ -25,7 +25,7 @@ from drf_spectacular.views import (
 )
 
 from content.video_views import VideoModelCatalogView
-from content.views import ImageModelCatalogView
+from content.views import FalModelSearchView, ImageModelCatalogView, PromptEnhanceView
 from projects.views import ProjectListCreateView, SocialCallbackView
 from users.credits_views import CreditsBalanceView
 
@@ -41,6 +41,8 @@ urlpatterns = [
     path("api/projects/", include("content.urls")),
     path("api/images/models", ImageModelCatalogView.as_view(), name="image_models"),
     path("api/videos/models", VideoModelCatalogView.as_view(), name="video_models"),
+    path("api/fal/models", FalModelSearchView.as_view(), name="fal_models"),
+    path("api/prompts/enhance", PromptEnhanceView.as_view(), name="prompt_enhance"),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),
     # OpenAPI schema endpoints

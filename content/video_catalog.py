@@ -109,13 +109,14 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             strength="Social short clips",
         ),
         _m(
-            id="fal-ai/wan/v2.6/text-to-video",
+            id="wan/v2.6/text-to-video",
             label="Wan 2.6",
             family="wan",
             inputs="text",
             duration=["5", "10"],
             aspect_ratio=["16:9", "9:16", "1:1"],
             resolution=["720p", "1080p"],
+            negative_prompt=True,
             strength="Coherent scenes",
         ),
         _m(
@@ -190,13 +191,14 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             strength="Product / social",
         ),
         _m(
-            id="fal-ai/wan/v2.6/image-to-video",
+            id="wan/v2.6/image-to-video",
             label="Wan 2.6",
             family="wan",
             inputs="image",
             fal_image_keys={"start": "image_url"},
-            duration=["5", "10"],
+            duration=["5", "10", "15"],
             resolution=["720p", "1080p"],
+            negative_prompt=True,
             strength="Coherent I2V",
         ),
         _m(

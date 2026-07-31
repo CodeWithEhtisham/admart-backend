@@ -64,9 +64,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
-    credits_total = models.IntegerField(default=5)
-    credits_used = models.IntegerField(default=0)
-    credits_remaining = models.IntegerField(default=5)
+    credits_total = models.DecimalField(max_digits=10, decimal_places=4, default=5)
+    credits_used = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    credits_remaining = models.DecimalField(max_digits=10, decimal_places=4, default=5)
     credits_reset_at = models.DateTimeField(null=True, blank=True)
     onboarding_completed = models.BooleanField(default=False)
 

@@ -112,6 +112,11 @@ class ImageJobCreateSerializer(serializers.Serializer):
         except ValueError as exc:
             raise serializers.ValidationError({"model": str(exc)}) from exc
 
+        if attrs["model"] == "wan/v2.6/image-to-image" and len(urls) > 3:
+            raise serializers.ValidationError(
+                {"imageUrls": "Wan 2.6 Image Edit allows at most 3 imageUrls"}
+            )
+
         for url in urls:
             if not str(url).startswith(("https://", "http://")):
                 raise serializers.ValidationError(
@@ -123,11 +128,36 @@ class ImageJobCreateSerializer(serializers.Serializer):
         return attrs
 
 
+class PromptEnhanceSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["image", "video"], required=False, default="image")
+    prompt = serializers.CharField(required=True, allow_blank=False, max_length=2000)
+    negativePrompt = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    context = serializers.JSONField(required=False)
+
+    def validate_context(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("context must be an object")
+        return value
+
+    def validate_prompt(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError("prompt is required")
+        return text
+
+
 class ImageJobSerializer(serializers.ModelSerializer):
     projectId = serializers.UUIDField(source="project_id", read_only=True)
     maskImage = serializers.JSONField(source="mask_image", read_only=True)
     creditsUsed = serializers.DecimalField(
-        source="credits_used", max_digits=8, decimal_places=2, read_only=True, allow_null=True
+        source="credits_used",
+        max_digits=10,
+        decimal_places=4,
+        read_only=True,
+        allow_null=True,
+        coerce_to_string=False,
     )
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
@@ -241,7 +271,12 @@ class VideoJobCreateSerializer(serializers.Serializer):
 class VideoJobSerializer(serializers.ModelSerializer):
     projectId = serializers.UUIDField(source="project_id", read_only=True)
     creditsUsed = serializers.DecimalField(
-        source="credits_used", max_digits=8, decimal_places=2, read_only=True, allow_null=True
+        source="credits_used",
+        max_digits=10,
+        decimal_places=4,
+        read_only=True,
+        allow_null=True,
+        coerce_to_string=False,
     )
     durationSeconds = serializers.IntegerField(
         source="duration_seconds", read_only=True, allow_null=True

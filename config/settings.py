@@ -238,3 +238,8 @@ FAL_KEY = os.getenv("FAL_KEY", "")
 FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
 FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
 
+# Prompt enhancer (server-side only)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
+PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
+

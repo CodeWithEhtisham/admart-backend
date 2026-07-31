@@ -242,9 +242,26 @@ class CreditsApiTests(APITestCase):
         response = self.client.get("/api/credits/costs")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("byCapability", response.data)
-        self.assertEqual(response.data["byCapability"]["textToImage"], 1)
-        self.assertEqual(response.data["byCapability"]["multiEdit"], 2)
+        self.assertEqual(response.data["byCapability"]["textToImage"], "0.025")
+        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.15")
         self.assertTrue(any(i["capability"] == "edit" for i in response.data["items"]))
+
+    def test_quote(self) -> None:
+        response = self.client.post(
+            "/api/credits/quote",
+            {
+                "kind": "image",
+                "capability": "textToImage",
+                "model": "fal-ai/flux/dev",
+                "settings": {"numImages": 2},
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["credits"], "0.05")
+        self.assertEqual(response.data["creditsRemaining"], "40")
+        self.assertEqual(response.data["creditsAfter"], "39.95")
+        self.assertTrue(response.data["canAfford"])
 
     def test_history(self) -> None:
         from content.models import ImageJob

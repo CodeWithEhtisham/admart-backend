@@ -15,15 +15,23 @@ from rest_framework.views import APIView
 
 from content import fal_client
 from content.catalog import MODEL_CATALOG
-from content.credits import InsufficientCredits, cost_for, refund_credits, reserve_credits
+from content.credits import InsufficientCredits, refund_credits, reserve_credits
+from content.fal_models import (
+    FalModelSearchError,
+    catalog_discovery_payload,
+    search_fal_models,
+)
 from content.jobs import refresh_job
 from content.library import mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
 from content.models import ImageJob, ImageUpload, LibraryAsset
+from content.pricing import attach_image_pricing, quote_image_job, quote_response
+from content.prompt_enhancer import enhance_prompt
 from content.serializers import (
     ImageJobCreateSerializer,
     ImageJobSerializer,
     LibraryAssetSerializer,
+    PromptEnhanceSerializer,
 )
 from content.storage_utils import absolute_media_url
 from content.url_resolve import resolve_urls_for_fal
@@ -84,7 +92,8 @@ class ImageJobListCreateView(APIView):
         data = ser.validated_data
         capability = data["capability"]
         model = data["model"]
-        amount = cost_for(capability, data.get("numImages") or 1)
+        quote = quote_image_job(capability, model, data)
+        amount = quote["credits_decimal"]
 
         try:
             reserve_credits(request.user, amount)
@@ -97,6 +106,7 @@ class ImageJobListCreateView(APIView):
                     # Gate on remaining — not creditsTotal (plan allotment).
                     "creditsRemaining": request.user.credits_remaining,
                     "creditsTotal": request.user.credits_total,
+                    "creditsRequired": quote_response(quote)["credits"],
                 },
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
@@ -150,6 +160,7 @@ class ImageJobListCreateView(APIView):
         request.user.refresh_from_db()
         payload = ImageJobSerializer(job).data
         payload["creditsRemaining"] = request.user.credits_remaining
+        payload["creditsRequired"] = quote_response(quote)["credits"]
         return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
@@ -177,7 +188,7 @@ class ImageJobCancelView(APIView):
         job.error = "Cancelled"
         job.save(update_fields=["status", "error", "updated_at"])
         if job.credits_reserved and job.credits_used is None:
-            refund_credits(request.user, int(job.credits_reserved))
+            refund_credits(request.user, job.credits_reserved)
             job.credits_reserved = 0
             job.save(update_fields=["credits_reserved", "updated_at"])
         sync_library_from_image_job(job)
@@ -229,7 +240,60 @@ class ImageModelCatalogView(APIView):
     def get(self, request, project_id=None):
         if project_id is not None:
             _owned_project(request.user, project_id)
-        return Response(MODEL_CATALOG)
+        payload = attach_image_pricing(MODEL_CATALOG)
+        if _truthy(request.query_params.get("discover")):
+            payload["_fal"] = catalog_discovery_payload("image")
+        return Response(payload)
+
+
+class PromptEnhanceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = PromptEnhanceSerializer(data=request.data)
+        if not ser.is_valid():
+            err = ser.errors
+            if isinstance(err, dict):
+                for key, val in err.items():
+                    msg = val[0] if isinstance(val, list) else val
+                    return Response(
+                        {"message": str(msg), "field": key},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            return Response({"message": "Invalid request"}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = ser.validated_data
+        result = enhance_prompt(
+            prompt=data["prompt"],
+            kind=data.get("kind") or "image",
+            negative_prompt=data.get("negativePrompt") or "",
+            context=data.get("context") or {},
+        )
+        return Response(result)
+
+
+class FalModelSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            limit = min(int(request.query_params.get("limit", 50)), 100)
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            payload = search_fal_models(
+                q=(request.query_params.get("q") or "").strip(),
+                category=(request.query_params.get("category") or "").strip(),
+                capability=(request.query_params.get("capability") or "").strip(),
+                status=(request.query_params.get("status") or "active").strip(),
+                limit=limit,
+                cursor=(request.query_params.get("cursor") or "").strip(),
+                expand=(request.query_params.get("expand") or "").strip(),
+                include_pricing=not _falsey(request.query_params.get("pricing")),
+            )
+        except FalModelSearchError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(payload)
 
 
 class LibraryListView(APIView):
@@ -389,3 +453,11 @@ def _absolutize_job_urls(job: ImageJob, request) -> ImageJob:
     if changed:
         job.images = images
     return job
+
+
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _falsey(value) -> bool:
+    return str(value or "").strip().lower() in {"0", "false", "no", "off"}

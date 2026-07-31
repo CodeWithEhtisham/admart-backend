@@ -136,7 +136,7 @@ def _fail_job(job: ImageJob, message: str) -> None:
         job.error = message
         job.save(update_fields=["status", "error", "updated_at"])
         if job.credits_reserved and job.credits_used is None:
-            refund_credits(job.user, int(job.credits_reserved))
+            refund_credits(job.user, job.credits_reserved)
             job.credits_reserved = 0
             job.save(update_fields=["credits_reserved", "updated_at"])
         sync_library_from_image_job(job)
