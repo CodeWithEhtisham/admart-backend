@@ -45,7 +45,19 @@ class UserAuthTests(APITestCase):
         self.assertIn("user", response.data)
         self.assertEqual(response.data["user"]["email"], self.user_data["email"])
         self.assertEqual(response.data["user"]["firstName"], self.user_data["firstName"])
-        self.assertEqual(response.data["user"]["creditsRemaining"], 5)
+        self.assertEqual(response.data["user"]["plan"], "free")
+        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
+
+    def test_user_registration_allows_blank_names(self) -> None:
+        """Registration does not require first/last name fields."""
+        data = {
+            "email": "blanknames@example.com",
+            "password": "Password123!",
+        }
+        response = self.client.post(self.register_url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["firstName"], "")
+        self.assertEqual(response.data["user"]["lastName"], "")
 
     def test_user_registration_duplicate_email(self) -> None:
         """Test registration fails with a duplicate email."""
@@ -139,6 +151,9 @@ class UserAuthTests(APITestCase):
         self.assertIn("user", response.data)
         self.assertTrue(response.data["user"]["email"].startswith("google_user_mock-a"))
         self.assertEqual(response.data["user"]["googleId"], "google-oauth-mock-auth-co")
+        self.assertEqual(response.data["user"]["firstName"], "")
+        self.assertEqual(response.data["user"]["lastName"], "")
+        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
 
     def test_logout_success(self) -> None:
         """Test logout returns standard success message."""
@@ -237,6 +252,7 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(response.data["creditsTotal"], 50)
         self.assertEqual(response.data["creditsUsed"], 10)
         self.assertTrue(response.data["canGenerate"])
+        self.assertIn("planDetails", response.data)
 
     def test_costs(self) -> None:
         response = self.client.get("/api/credits/costs")
@@ -283,6 +299,26 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(len(response.data["items"]), 1)
         self.assertEqual(response.data["items"][0]["credits"], 1.0)
         self.assertEqual(response.data["items"][0]["capability"], "textToImage")
+
+    def test_plans(self) -> None:
+        response = self.client.get("/api/credits/plans")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertEqual(ids, ["basic", "plus", "pro"])
+        self.assertEqual(response.data["items"][0]["monthlyCredits"], "3")
+        self.assertFalse(response.data["paymentConnected"])
+
+    def test_activate_plan_for_testing(self) -> None:
+        response = self.client.post("/api/credits/plan", {"plan": "plus"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["plan"], "plus")
+        self.assertEqual(response.data["creditsTotal"], 10)
+        self.assertEqual(response.data["creditsRemaining"], 10)
+        self.assertEqual(response.data["creditsUsed"], 0)
+        self.assertEqual(response.data["planDetails"]["priceUsd"], "29")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.plan, "plus")
 
     def test_unauthenticated(self) -> None:
         self.client.force_authenticate(user=None)

@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from users.plans import serialize_plan
 
 User = get_user_model()
 
@@ -33,6 +34,7 @@ class UserSerializer(serializers.ModelSerializer):
     brandKit = serializers.SerializerMethodField(read_only=True)
     projectCount = serializers.SerializerMethodField(read_only=True)
     activeProjectId = serializers.SerializerMethodField(read_only=True)
+    planDetails = serializers.SerializerMethodField(read_only=True)
 
     def get_brandKit(self, obj) -> dict:
         """Return the brand kit dict from the model property."""
@@ -47,6 +49,10 @@ class UserSerializer(serializers.ModelSerializer):
         from projects.views import resolve_active_project_id
 
         return resolve_active_project_id(obj)
+
+    def get_planDetails(self, obj) -> dict:
+        """Return the public business plan details for the user."""
+        return serialize_plan(obj.plan)
 
     class Meta:
         model = User
@@ -63,6 +69,7 @@ class UserSerializer(serializers.ModelSerializer):
             "creditsRemaining",
             "creditsResetAt",
             "onboardingCompleted",
+            "planDetails",
             "brandKit",
             "projectCount",
             "activeProjectId",
@@ -71,7 +78,7 @@ class UserSerializer(serializers.ModelSerializer):
             "brand_industry",
             "brand_color_hex",
         ]
-        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "brandKit", "projectCount", "activeProjectId"]
+        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "planDetails", "brandKit", "projectCount", "activeProjectId"]
         extra_kwargs = {
             "brand_name": {"required": False, "allow_blank": True},
             "brand_industry": {"required": False, "allow_blank": True},
@@ -80,10 +87,10 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    """Serializer for registering a new user with 5 free credits."""
+    """Serializer for registering a new user on the free plan."""
 
-    firstName = serializers.CharField(source="first_name", required=True)
-    lastName = serializers.CharField(source="last_name", required=True)
+    firstName = serializers.CharField(source="first_name", required=False, allow_blank=True)
+    lastName = serializers.CharField(source="last_name", required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=True, style={"input_type": "password"})
 
     class Meta:
@@ -99,15 +106,15 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data: Dict[str, Any]) -> Any:
-        """Create a user with 5 initial free credits."""
+        """Create a free-plan user without a paid generation budget."""
         user = User.objects.create_user(
             email=validated_data["email"],
             password=validated_data["password"],
             first_name=validated_data.get("first_name", ""),
             last_name=validated_data.get("last_name", ""),
             plan="free",
-            credits_total=5,
-            credits_remaining=5,
+            credits_total=0,
+            credits_remaining=0,
         )
         return user
 

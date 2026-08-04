@@ -33,7 +33,7 @@ signer = TimestampSigner()
 class RegisterView(APIView):
     """View to handle user registration.
 
-    On successful registration, creates a user with 5 free credits and returns JWT tokens.
+    On successful registration, creates a free-plan user and returns JWT tokens.
     """
 
     permission_classes = [AllowAny]
@@ -198,7 +198,7 @@ class GoogleAuthView(APIView):
         },
     )
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        """Verify auth code and log in / register Google User."""
+        """Verify auth code and log in / register a Google account."""
         serializer = GoogleAuthSerializer(data=request.data)
         if serializer.is_valid():
             # In a real environment, you would exchange the code with Google's API:
@@ -210,13 +210,13 @@ class GoogleAuthView(APIView):
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
-                    "first_name": "Google",
-                    "last_name": "User",
+                    "first_name": "",
+                    "last_name": "",
                     "google_id": f"google-oauth-{code[:12]}",
-                    "avatar_url": "https://lh3.googleusercontent.com/a/default-avatar",
+                    "avatar_url": "",
                     "plan": "free",
-                    "credits_total": 5,
-                    "credits_remaining": 5,
+                    "credits_total": 0,
+                    "credits_remaining": 0,
                 },
             )
 

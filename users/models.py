@@ -28,7 +28,7 @@ class UserManager(BaseUserManager):
         """Create and save a SuperUser with the given email and password."""
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        extra_fields.setdefault("plan", "agency")
+        extra_fields.setdefault("plan", "pro")
         extra_fields.setdefault("credits_total", 500)
         extra_fields.setdefault("credits_remaining", 500)
 
@@ -45,9 +45,9 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     PLAN_CHOICES = [
         ("free", "Free"),
-        ("starter", "Starter"),
+        ("basic", "Basic"),
+        ("plus", "Plus"),
         ("pro", "Pro"),
-        ("agency", "Agency"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -64,9 +64,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
-    credits_total = models.DecimalField(max_digits=10, decimal_places=4, default=5)
+    credits_total = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, default=0)
-    credits_remaining = models.DecimalField(max_digits=10, decimal_places=4, default=5)
+    credits_remaining = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     credits_reset_at = models.DateTimeField(null=True, blank=True)
     onboarding_completed = models.BooleanField(default=False)
 

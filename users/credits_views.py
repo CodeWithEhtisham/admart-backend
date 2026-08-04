@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from itertools import chain
 
+from django.utils import timezone
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,6 +20,21 @@ from content.video_catalog import (
     VIDEO_MODEL_CATALOG,
     resolve_video_model,
 )
+from users.plans import PUBLIC_PLAN_IDS, get_plan, serialize_plan
+
+
+def balance_payload(user) -> dict:
+    """Return the standard credit balance payload for a user."""
+    return {
+        "plan": user.plan,
+        "planDetails": serialize_plan(user.plan),
+        "creditsTotal": user.credits_total,
+        "creditsUsed": user.credits_used,
+        "creditsRemaining": user.credits_remaining,
+        "creditsResetAt": user.credits_reset_at,
+        "canGenerate": user.credits_remaining > 0,
+        "currency": "fal credits",
+    }
 
 
 class CreditsBalanceView(APIView):
@@ -27,17 +45,58 @@ class CreditsBalanceView(APIView):
     def get(self, request):
         user = request.user
         user.refresh_from_db()
+        return Response(balance_payload(user))
+
+
+class CreditsPlansView(APIView):
+    """GET /api/credits/plans - public Basic/Plus/Pro subscription plans."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
         return Response(
             {
-                "plan": user.plan,
-                "creditsTotal": user.credits_total,
-                "creditsUsed": user.credits_used,
-                "creditsRemaining": user.credits_remaining,
-                "creditsResetAt": user.credits_reset_at,
-                "canGenerate": user.credits_remaining > 0,
-                "currency": "fal credits",
+                "currency": "USD",
+                "localCurrency": "PKR",
+                "items": [serialize_plan(plan_id) for plan_id in PUBLIC_PLAN_IDS],
+                "paymentConnected": False,
             }
         )
+
+
+class CreditsPlanActivateView(APIView):
+    """POST /api/credits/plan - temporary plan activation until payments exist."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        plan_id = str(request.data.get("plan") or request.data.get("planId") or "").lower()
+        plan = get_plan(plan_id)
+        if plan["id"] not in PUBLIC_PLAN_IDS:
+            return Response({"message": "Choose Basic, Plus, or Pro."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        monthly_credits = plan["monthly_credits"]
+        user.plan = plan["id"]
+        user.credits_total = monthly_credits
+        user.credits_used = 0
+        user.credits_remaining = monthly_credits
+        user.credits_reset_at = timezone.now() + timedelta(days=30)
+        user.save(
+            update_fields=[
+                "plan",
+                "credits_total",
+                "credits_used",
+                "credits_remaining",
+                "credits_reset_at",
+                "updated_at",
+            ]
+        )
+
+        payload = balance_payload(user)
+        payload["message"] = f"{plan['name']} plan activated for testing."
+        payload["paymentConnected"] = False
+        return Response(payload)
 
 
 class CreditsCostsView(APIView):
