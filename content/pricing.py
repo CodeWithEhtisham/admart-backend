@@ -1,8 +1,8 @@
-"""Temporary transparent fal-style credit pricing.
+"""Admart credit pricing with fal cost basis.
 
-For testing, one Admart credit is treated as one fal USD credit. The backend
-fetches current fal unit prices where possible, falls back to the last known
-prices for this catalog, and estimates the billable quantity from user settings.
+The backend fetches current fal unit prices where possible, falls back to the
+last known prices for this catalog, estimates the billable quantity from user
+settings, then applies Admart's markup formula to the raw fal cost.
 """
 
 from __future__ import annotations
@@ -21,6 +21,13 @@ from content.video_catalog import DEFAULT_VIDEO_MODELS, VIDEO_MODEL_CATALOG
 PRICING_URL = "https://api.fal.ai/v1/models/pricing"
 PRICING_TTL_SECONDS = 30 * 60
 CREDIT_QUANT = Decimal("0.0001")
+ADMART_CREDIT_CURRENCY = "Admart credits"
+FAL_COST_BASIS_CURRENCY = "fal credits"
+LOW_COST_THRESHOLD = Decimal("0.10")
+HIGH_COST_THRESHOLD = Decimal("1.00")
+LOW_COST_MULTIPLIER = Decimal("2")
+MID_COST_MULTIPLIER = Decimal("1.75")
+HIGH_COST_MULTIPLIER = Decimal("1.5")
 
 # Last known values from fal's /v1/models/pricing endpoint for the current
 # supported catalog. Used only when FAL_KEY/network is unavailable.
@@ -75,6 +82,16 @@ def serialize_decimal(value: Decimal | int | float | str) -> str:
     if "." not in text:
         return text
     return text.rstrip("0").rstrip(".") or "0"
+
+
+def admart_markup_multiplier(fal_cost: Decimal | int | float | str) -> Decimal:
+    """Return the Admart markup multiplier for a raw fal job cost."""
+    cost = quantize_credits(fal_cost)
+    if cost < LOW_COST_THRESHOLD:
+        return LOW_COST_MULTIPLIER
+    if cost <= HIGH_COST_THRESHOLD:
+        return MID_COST_MULTIPLIER
+    return HIGH_COST_MULTIPLIER
 
 
 def all_priced_endpoint_ids() -> list[str]:
@@ -187,11 +204,16 @@ def _attach_pricing(catalog: dict[str, list[dict[str, Any]]]) -> dict[str, list[
         for entry in models:
             row = prices.get(entry["id"])
             if row:
+                raw_unit_price = Decimal(str(row.get("unit_price", "0")))
+                multiplier = admart_markup_multiplier(raw_unit_price)
                 entry["pricing"] = {
-                    "unitPrice": row["unit_price"],
-                    "unit": row["unit"],
-                    "currency": row["currency"],
+                    "unitPrice": serialize_decimal(raw_unit_price),
+                    "unit": row.get("unit", "units"),
+                    "currency": row.get("currency", "USD"),
                     "source": "fal.ai",
+                    "admartUnitPrice": serialize_decimal(raw_unit_price * multiplier),
+                    "admartCurrency": ADMART_CREDIT_CURRENCY,
+                    "markupMultiplier": serialize_decimal(multiplier),
                 }
     return out
 
@@ -204,7 +226,9 @@ def _quote(*, capability: str, model: str, data: dict[str, Any], quantity: Decim
     unit_price = Decimal(str(row.get("unit_price", "0")))
     unit = str(row.get("unit", "units"))
     quantity = _quantity_for_unit(unit, quantity, data)
-    credits = quantize_credits(unit_price * quantity)
+    fal_cost = quantize_credits(unit_price * quantity)
+    multiplier = admart_markup_multiplier(fal_cost)
+    credits = quantize_credits(fal_cost * multiplier)
     return {
         "capability": capability,
         "model": model,
@@ -212,6 +236,8 @@ def _quote(*, capability: str, model: str, data: dict[str, Any], quantity: Decim
         "unit": unit,
         "currency": str(row.get("currency", "USD")),
         "quantity_decimal": quantity,
+        "fal_cost_decimal": fal_cost,
+        "markup_multiplier_decimal": multiplier,
         "credits_decimal": credits,
         "source": "fal.ai",
     }
@@ -222,10 +248,13 @@ def _public_quote(quote: dict[str, Any]) -> dict[str, str]:
         "capability": quote["capability"],
         "model": quote["model"],
         "credits": serialize_decimal(quote["credits_decimal"]),
+        "falCost": serialize_decimal(quote["fal_cost_decimal"]),
+        "markupMultiplier": serialize_decimal(quote["markup_multiplier_decimal"]),
         "unitPrice": serialize_decimal(quote["unit_price_decimal"]),
         "unit": quote["unit"],
         "quantity": serialize_decimal(quote["quantity_decimal"]),
-        "currency": "fal credits",
+        "currency": ADMART_CREDIT_CURRENCY,
+        "costBasisCurrency": FAL_COST_BASIS_CURRENCY,
         "source": quote["source"],
     }
 

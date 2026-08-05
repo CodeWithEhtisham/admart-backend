@@ -258,8 +258,9 @@ class CreditsApiTests(APITestCase):
         response = self.client.get("/api/credits/costs")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("byCapability", response.data)
-        self.assertEqual(response.data["byCapability"]["textToImage"], "0.025")
-        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.15")
+        self.assertEqual(response.data["currency"], "Admart credits")
+        self.assertEqual(response.data["byCapability"]["textToImage"], "0.05")
+        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.2625")
         self.assertTrue(any(i["capability"] == "edit" for i in response.data["items"]))
 
     def test_quote(self) -> None:
@@ -274,9 +275,11 @@ class CreditsApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["credits"], "0.05")
+        self.assertEqual(response.data["credits"], "0.1")
+        self.assertEqual(response.data["falCost"], "0.05")
+        self.assertEqual(response.data["markupMultiplier"], "2")
         self.assertEqual(response.data["creditsRemaining"], "40")
-        self.assertEqual(response.data["creditsAfter"], "39.95")
+        self.assertEqual(response.data["creditsAfter"], "39.9")
         self.assertTrue(response.data["canAfford"])
 
     def test_history(self) -> None:
@@ -305,15 +308,15 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         ids = [item["id"] for item in response.data["items"]]
         self.assertEqual(ids, ["basic", "plus", "pro"])
-        self.assertEqual(response.data["items"][0]["monthlyCredits"], "3")
+        self.assertEqual(response.data["items"][0]["monthlyCredits"], "8")
         self.assertFalse(response.data["paymentConnected"])
 
     def test_activate_plan_for_testing(self) -> None:
         response = self.client.post("/api/credits/plan", {"plan": "plus"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["plan"], "plus")
-        self.assertEqual(response.data["creditsTotal"], 10)
-        self.assertEqual(response.data["creditsRemaining"], 10)
+        self.assertEqual(response.data["creditsTotal"], 35)
+        self.assertEqual(response.data["creditsRemaining"], 35)
         self.assertEqual(response.data["creditsUsed"], 0)
         self.assertEqual(response.data["planDetails"]["priceUsd"], "29")
 

@@ -1,4 +1,4 @@
-"""Model allow-lists, defaults, and credit costs for image capabilities."""
+"""Model allow-lists and defaults for image capabilities."""
 
 from decimal import Decimal
 
@@ -134,7 +134,7 @@ ALLOW_LISTS = {
     for capability, models in MODEL_CATALOG.items()
 }
 
-# Placeholder product pricing — integers on User.credits_remaining.
+# Legacy fallback pricing kept for older imports; live quotes come from content.pricing.
 CREDIT_COSTS = {
     "textToImage": Decimal("1"),
     "edit": Decimal("1"),

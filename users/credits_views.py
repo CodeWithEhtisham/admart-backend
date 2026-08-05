@@ -13,7 +13,19 @@ from rest_framework.views import APIView
 
 from content.catalog import CAPABILITIES, DEFAULT_MODELS, resolve_model
 from content.models import ImageJob, VideoJob
-from content.pricing import base_model_costs, quote_image_job, quote_response, quote_video_job
+from content.pricing import (
+    ADMART_CREDIT_CURRENCY,
+    HIGH_COST_MULTIPLIER,
+    HIGH_COST_THRESHOLD,
+    LOW_COST_MULTIPLIER,
+    LOW_COST_THRESHOLD,
+    MID_COST_MULTIPLIER,
+    base_model_costs,
+    quote_image_job,
+    quote_response,
+    quote_video_job,
+    serialize_decimal,
+)
 from content.video_catalog import (
     DEFAULT_VIDEO_MODELS,
     VIDEO_CAPABILITIES,
@@ -33,12 +45,12 @@ def balance_payload(user) -> dict:
         "creditsRemaining": user.credits_remaining,
         "creditsResetAt": user.credits_reset_at,
         "canGenerate": user.credits_remaining > 0,
-        "currency": "fal credits",
+        "currency": ADMART_CREDIT_CURRENCY,
     }
 
 
 class CreditsBalanceView(APIView):
-    """GET /api/credits - current decimal fal-style balance."""
+    """GET /api/credits - current decimal Admart credit balance."""
 
     permission_classes = [IsAuthenticated]
 
@@ -109,11 +121,12 @@ class CreditsCostsView(APIView):
         for capability in CAPABILITIES:
             default_model = DEFAULT_MODELS[capability]
             quote = quote_image_job(capability, default_model, {"numImages": 1})
+            cost = quote_response(quote)
             items.append(
                 {
+                    **cost,
                     "capability": capability,
                     "model": default_model,
-                    "credits": quote_response(quote)["credits"],
                     "perImage": capability == "textToImage",
                     "notes": (
                         "Estimated cost x numImages"
@@ -134,11 +147,12 @@ class CreditsCostsView(APIView):
             if fields.get("duration"):
                 settings_for_quote["duration"] = fields["duration"][0]
             quote = quote_video_job(capability, default_model, settings_for_quote)
+            cost = quote_response(quote)
             items.append(
                 {
+                    **cost,
                     "capability": capability,
                     "model": default_model,
-                    "credits": quote_response(quote)["credits"],
                     "perImage": False,
                     "notes": "Estimated cost per video job",
                 }
@@ -146,10 +160,27 @@ class CreditsCostsView(APIView):
 
         return Response(
             {
-                "currency": "fal credits",
+                "currency": ADMART_CREDIT_CURRENCY,
                 "items": items,
                 "byCapability": {item["capability"]: item["credits"] for item in items},
                 "byModel": base_model_costs(),
+                "pricingFormula": [
+                    {
+                        "falCost": f"< {serialize_decimal(LOW_COST_THRESHOLD)}",
+                        "markupMultiplier": serialize_decimal(LOW_COST_MULTIPLIER),
+                    },
+                    {
+                        "falCost": (
+                            f"{serialize_decimal(LOW_COST_THRESHOLD)} to "
+                            f"{serialize_decimal(HIGH_COST_THRESHOLD)}"
+                        ),
+                        "markupMultiplier": serialize_decimal(MID_COST_MULTIPLIER),
+                    },
+                    {
+                        "falCost": f"> {serialize_decimal(HIGH_COST_THRESHOLD)}",
+                        "markupMultiplier": serialize_decimal(HIGH_COST_MULTIPLIER),
+                    },
+                ],
             }
         )
 
@@ -222,7 +253,7 @@ class CreditsHistoryView(APIView):
                     "model": job.model,
                     "status": job.status,
                     "credits": float(amount) if amount is not None else 0,
-                    "currency": "fal credits",
+                    "currency": ADMART_CREDIT_CURRENCY,
                     "prompt": (job.prompt or "")[:120] or None,
                     "createdAt": job.created_at,
                 }

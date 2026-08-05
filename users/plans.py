@@ -33,17 +33,19 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
     "basic": {
         "id": "basic",
         "name": "Basic",
-        "description": "For solo creators testing AI content workflows.",
+        "description": "For creators and small pages starting with AI content.",
         "price_usd": Decimal("9"),
         "price_pkr": 2499,
-        "monthly_credits": Decimal("3"),
+        "monthly_credits": Decimal("8"),
         "billing_interval": "month",
         "features": [
-            "3 Admart credits monthly",
-            "Image and video generation",
-            "Manual social publishing",
+            "8 Admart credits monthly",
+            "Image generation and starter video generation",
+            "Prompt enhancement",
+            "1 brand workspace",
             "2 connected social accounts",
-            "Standard support",
+            "Manual publishing",
+            "Basic templates",
         ],
         "sort": 10,
         "public": True,
@@ -54,14 +56,15 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
         "description": "For active brands publishing every week.",
         "price_usd": Decimal("29"),
         "price_pkr": 7999,
-        "monthly_credits": Decimal("10"),
+        "monthly_credits": Decimal("35"),
         "billing_interval": "month",
         "features": [
-            "10 Admart credits monthly",
-            "Image, video, and image-to-video",
-            "Prompt enhancement",
+            "35 Admart credits monthly",
+            "Image, video, and image-to-video generation",
+            "Prompt enhancement and editable templates",
+            "Brand kit and content calendar",
             "5 connected social accounts",
-            "Content calendar",
+            "Scheduled/manual publishing",
             "Email support",
         ],
         "sort": 20,
@@ -70,17 +73,18 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
     "pro": {
         "id": "pro",
         "name": "Pro",
-        "description": "For agencies and teams running higher-volume campaigns.",
+        "description": "For agencies and teams running campaign workflows.",
         "price_usd": Decimal("79"),
         "price_pkr": 21999,
-        "monthly_credits": Decimal("30"),
+        "monthly_credits": Decimal("120"),
         "billing_interval": "month",
         "features": [
-            "30 Admart credits monthly",
+            "120 Admart credits monthly",
             "Priority generation queue",
             "Multi-brand workspaces",
             "Auto-publishing workflows",
-            "Analytics dashboard",
+            "Advanced analytics dashboard",
+            "Team-ready campaign workflow",
             "Priority support",
         ],
         "sort": 30,
@@ -117,7 +121,6 @@ def serialize_plan(plan_id: str | None, *, include_internal: bool = False) -> di
         "features": plan["features"],
     }
     if include_internal:
-        payload["falBudgetUsd"] = serialize_decimal(monthly_credits)
-        payload["estimatedGrossProfitUsd"] = serialize_decimal(price_usd - monthly_credits)
+        payload["includedAdmartCredits"] = serialize_decimal(monthly_credits)
+        payload["pricingNote"] = "Admart credits are user-facing credits with markup over fal cost basis."
     return payload
-

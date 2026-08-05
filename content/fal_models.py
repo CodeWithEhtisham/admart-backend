@@ -8,6 +8,7 @@ curated mapper before an endpoint is enabled for users.
 from __future__ import annotations
 
 import time
+from decimal import Decimal
 from typing import Any
 
 import requests
@@ -15,7 +16,12 @@ from django.conf import settings
 from django.utils import timezone
 
 from content.catalog import ALLOW_LISTS, MODEL_CATALOG
-from content.pricing import get_fal_prices, serialize_decimal
+from content.pricing import (
+    ADMART_CREDIT_CURRENCY,
+    admart_markup_multiplier,
+    get_fal_prices,
+    serialize_decimal,
+)
 from content.video_catalog import VIDEO_ALLOW_LISTS, VIDEO_MODEL_CATALOG
 
 FAL_MODELS_URL = "https://api.fal.ai/v1/models"
@@ -201,11 +207,16 @@ def _normalize_model(model: dict[str, Any], *, prices: dict[str, dict[str, str]]
         "source": "fal.ai",
     }
     if price:
+        unit_price = Decimal(str(price.get("unit_price", "0")))
+        multiplier = admart_markup_multiplier(unit_price)
         payload["pricing"] = {
-            "unitPrice": serialize_decimal(price.get("unit_price", "0")),
+            "unitPrice": serialize_decimal(unit_price),
             "unit": price.get("unit", "units"),
             "currency": price.get("currency", "USD"),
             "source": "fal.ai",
+            "admartUnitPrice": serialize_decimal(unit_price * multiplier),
+            "admartCurrency": ADMART_CREDIT_CURRENCY,
+            "markupMultiplier": serialize_decimal(multiplier),
         }
     return payload
 

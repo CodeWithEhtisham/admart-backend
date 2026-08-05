@@ -349,7 +349,7 @@ class ImageJobApiTests(APITestCase):
         self.assertEqual(args[0], "fal-ai/flux/dev")
         self.assertEqual(args[1]["prompt"], "Product shot on marble")
         self.user.refresh_from_db()
-        self.assertEqual(self.user.credits_remaining, Decimal("99.9750"))
+        self.assertEqual(self.user.credits_remaining, Decimal("99.9500"))
         asset = LibraryAsset.objects.get(image_job=job)
         self.assertEqual(asset.status, "generating")
         self.assertEqual(asset.media_type, "image")
@@ -398,7 +398,7 @@ class ImageJobApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertEqual(response.data["creditsRemaining"], Decimal("9.9750"))
+        self.assertEqual(response.data["creditsRemaining"], Decimal("9.9500"))
 
     @patch("content.views.fal_client.submit", return_value=_submission("fal-req-2"))
     def test_edit_requires_image(self, _mock):

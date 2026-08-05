@@ -1,4 +1,4 @@
-"""Credit helpers for image/video jobs using decimal fal-style credits."""
+"""Credit helpers for image/video jobs using decimal Admart credits."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def cost_for(
     """Return the current decimal credit estimate for a request.
 
     Kept for older callers/tests; new job creation should pass model/settings so
-    model-specific fal pricing is reflected.
+    model-specific Admart pricing is reflected.
     """
     data = dict(settings or {})
     data.setdefault("numImages", num_images)
