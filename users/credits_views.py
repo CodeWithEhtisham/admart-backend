@@ -15,11 +15,9 @@ from content.catalog import CAPABILITIES, DEFAULT_MODELS, resolve_model
 from content.models import ImageJob, VideoJob
 from content.pricing import (
     ADMART_CREDIT_CURRENCY,
-    HIGH_COST_MULTIPLIER,
-    HIGH_COST_THRESHOLD,
-    LOW_COST_MULTIPLIER,
-    LOW_COST_THRESHOLD,
-    MID_COST_MULTIPLIER,
+    MARKUP_CURVE_NUMERATOR,
+    MIN_MARKUP,
+    admart_markup_multiplier,
     base_model_costs,
     quote_image_job,
     quote_response,
@@ -117,6 +115,9 @@ class CreditsCostsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        nano_quote = quote_image_job("textToImage", "fal-ai/nano-banana-2", {"numImages": 1})
+        gpt_quote = quote_image_job("textToImage", "openai/gpt-image-2", {"numImages": 1})
+        veo_quote = quote_video_job("textToVideo", "fal-ai/veo3.1", {"duration": "8s"})
         items = []
         for capability in CAPABILITIES:
             default_model = DEFAULT_MODELS[capability]
@@ -166,19 +167,30 @@ class CreditsCostsView(APIView):
                 "byModel": base_model_costs(),
                 "pricingFormula": [
                     {
-                        "falCost": f"< {serialize_decimal(LOW_COST_THRESHOLD)}",
-                        "markupMultiplier": serialize_decimal(LOW_COST_MULTIPLIER),
+                        "label": "Smooth markup curve",
+                        "falCost": "any",
+                        "markupMultiplier": "dynamic",
+                        "formula": "price = falCost * (1 + max(0.25, 1.2 / (falCost + 1)))",
+                        "minimumMarkup": serialize_decimal(MIN_MARKUP),
+                        "curveNumerator": serialize_decimal(MARKUP_CURVE_NUMERATOR),
                     },
                     {
-                        "falCost": (
-                            f"{serialize_decimal(LOW_COST_THRESHOLD)} to "
-                            f"{serialize_decimal(HIGH_COST_THRESHOLD)}"
-                        ),
-                        "markupMultiplier": serialize_decimal(MID_COST_MULTIPLIER),
+                        "label": "Nano Banana 2 example",
+                        "falCost": quote_response(nano_quote)["falCost"],
+                        "markupMultiplier": serialize_decimal(admart_markup_multiplier("0.08")),
+                        "admartCredits": quote_response(nano_quote)["credits"],
                     },
                     {
-                        "falCost": f"> {serialize_decimal(HIGH_COST_THRESHOLD)}",
-                        "markupMultiplier": serialize_decimal(HIGH_COST_MULTIPLIER),
+                        "label": "GPT Image 2 example",
+                        "falCost": quote_response(gpt_quote)["falCost"],
+                        "markupMultiplier": serialize_decimal(admart_markup_multiplier("1")),
+                        "admartCredits": quote_response(gpt_quote)["credits"],
+                    },
+                    {
+                        "label": "Veo 3.1 8s example",
+                        "falCost": quote_response(veo_quote)["falCost"],
+                        "markupMultiplier": serialize_decimal(admart_markup_multiplier("3.2")),
+                        "admartCredits": quote_response(veo_quote)["credits"],
                     },
                 ],
             }

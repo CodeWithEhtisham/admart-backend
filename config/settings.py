@@ -149,7 +149,7 @@ AUTH_USER_MODEL = "users.User"
 # Django REST Framework Settings
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "users.authentication.CombinedJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -178,6 +178,16 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
+
+# Clerk Authentication Settings
+CLERK_PUBLISHABLE_KEY = os.getenv(
+    "CLERK_PUBLISHABLE_KEY",
+    os.getenv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_Y2FsbS1zZWFsLTgxLmNsZXJrLmFjY291bnRzLmRldiQ"),
+)
+CLERK_SECRET_KEY = os.getenv(
+    "CLERK_SECRET_KEY", "sk_test_5ucViuk9qbITYiQtUvWjjYjY2BLQSsgDyPrX9rEyI6"
+)
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 
 # Spectacular Schema settings
 SPECTACULAR_SETTINGS = {
@@ -243,3 +253,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
 PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
 
+# Optional Runware-powered preview generation for the owned template seed command.
+# The gallery works without this; set these when generating fresh preview_url assets.
+RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")
+RUNWARE_API_URL = os.getenv("RUNWARE_API_URL", "https://api.runware.ai/v1")
+RUNWARE_PREVIEW_MODEL = os.getenv("RUNWARE_PREVIEW_MODEL", "")
+RUNWARE_TIMEOUT = int(os.getenv("RUNWARE_TIMEOUT", "60"))

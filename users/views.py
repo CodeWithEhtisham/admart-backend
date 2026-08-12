@@ -215,8 +215,8 @@ class GoogleAuthView(APIView):
                     "google_id": f"google-oauth-{code[:12]}",
                     "avatar_url": "",
                     "plan": "free",
-                    "credits_total": 0,
-                    "credits_remaining": 0,
+                    "credits_total": 50,
+                    "credits_remaining": 50,
                 },
             )
 

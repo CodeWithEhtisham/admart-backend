@@ -1,6 +1,7 @@
 from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.signing import TimestampSigner
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -46,7 +47,7 @@ class UserAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["email"], self.user_data["email"])
         self.assertEqual(response.data["user"]["firstName"], self.user_data["firstName"])
         self.assertEqual(response.data["user"]["plan"], "free")
-        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
 
     def test_user_registration_allows_blank_names(self) -> None:
         """Registration does not require first/last name fields."""
@@ -153,7 +154,7 @@ class UserAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["googleId"], "google-oauth-mock-auth-co")
         self.assertEqual(response.data["user"]["firstName"], "")
         self.assertEqual(response.data["user"]["lastName"], "")
-        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
 
     def test_logout_success(self) -> None:
         """Test logout returns standard success message."""
@@ -232,10 +233,15 @@ class OnboardingTests(APITestCase):
         self.assertEqual(response.data["brandKit"]["brandColorHex"], "#ef4444")
 
 
+@override_settings(FAL_KEY="")
 class CreditsApiTests(APITestCase):
     """Credits balance / costs / history endpoints."""
 
     def setUp(self) -> None:
+        from content import pricing
+
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
         self.user = User.objects.create_user(
             email="credits@example.com",
             password="Password123!",
@@ -259,8 +265,9 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("byCapability", response.data)
         self.assertEqual(response.data["currency"], "Admart credits")
-        self.assertEqual(response.data["byCapability"]["textToImage"], "0.05")
-        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.2625")
+        self.assertEqual(response.data["byCapability"]["textToImage"], "0.0543")
+        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.3065")
+        self.assertEqual(response.data["pricingFormula"][0]["markupMultiplier"], "dynamic")
         self.assertTrue(any(i["capability"] == "edit" for i in response.data["items"]))
 
     def test_quote(self) -> None:
@@ -275,11 +282,11 @@ class CreditsApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["credits"], "0.1")
+        self.assertEqual(response.data["credits"], "0.1071")
         self.assertEqual(response.data["falCost"], "0.05")
-        self.assertEqual(response.data["markupMultiplier"], "2")
+        self.assertEqual(response.data["markupMultiplier"], "2.1429")
         self.assertEqual(response.data["creditsRemaining"], "40")
-        self.assertEqual(response.data["creditsAfter"], "39.9")
+        self.assertEqual(response.data["creditsAfter"], "39.8929")
         self.assertTrue(response.data["canAfford"])
 
     def test_history(self) -> None:
@@ -327,3 +334,64 @@ class CreditsApiTests(APITestCase):
         self.client.force_authenticate(user=None)
         self.assertEqual(self.client.get("/api/credits").status_code, status.HTTP_401_UNAUTHORIZED)
 
+
+class ClerkAuthenticationTests(APITestCase):
+    """Test suite for Clerk JWT authentication class."""
+
+    def test_clerk_auth_creates_new_user(self) -> None:
+        """Test ClerkJWTAuthentication creates user when valid token is presented."""
+        from unittest.mock import MagicMock, patch
+        from users.authentication import ClerkJWTAuthentication
+
+        auth = ClerkJWTAuthentication()
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer fake.clerk.jwt.token"}
+
+        mock_payload = {
+            "iss": "https://calm-seal-81.clerk.accounts.dev",
+            "sub": "user_2test123456789",
+            "email": "clerk_test@example.com",
+            "first_name": "Clerk",
+            "last_name": "Tester",
+        }
+
+        with patch("jwt.decode", return_value=mock_payload):
+            with patch("users.authentication._get_jwks_client") as mock_jwks:
+                mock_jwks_client = MagicMock()
+                mock_jwks_client.get_signing_key_from_jwt.return_value = MagicMock(key="public_key")
+                mock_jwks.return_value = mock_jwks_client
+
+                user, token = auth.authenticate(mock_request)
+                self.assertIsNotNone(user)
+                self.assertEqual(user.email, "clerk_test@example.com")
+                self.assertEqual(user.google_id, "user_2test123456789")
+                self.assertEqual(user.credits_remaining, 50)
+                self.assertEqual(token, "fake.clerk.jwt.token")
+
+    def test_clerk_auth_returns_existing_user(self) -> None:
+        """Test ClerkJWTAuthentication matches existing user by google_id."""
+        from unittest.mock import MagicMock, patch
+        from users.authentication import ClerkJWTAuthentication
+
+        existing_user = User.objects.create_user(
+            email="existing_clerk@example.com",
+            google_id="user_2existing_id",
+        )
+
+        auth = ClerkJWTAuthentication()
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer fake.clerk.jwt.token"}
+
+        mock_payload = {
+            "iss": "https://calm-seal-81.clerk.accounts.dev",
+            "sub": "user_2existing_id",
+        }
+
+        with patch("jwt.decode", return_value=mock_payload):
+            with patch("users.authentication._get_jwks_client") as mock_jwks:
+                mock_jwks_client = MagicMock()
+                mock_jwks_client.get_signing_key_from_jwt.return_value = MagicMock(key="public_key")
+                mock_jwks.return_value = mock_jwks_client
+
+                user, token = auth.authenticate(mock_request)
+                self.assertEqual(user, existing_user)

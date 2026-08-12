@@ -113,8 +113,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             first_name=validated_data.get("first_name", ""),
             last_name=validated_data.get("last_name", ""),
             plan="free",
-            credits_total=0,
-            credits_remaining=0,
+            credits_total=50,
+            credits_remaining=50,
         )
         return user
 

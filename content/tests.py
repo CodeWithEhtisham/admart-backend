@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 
 from content.fal_client import FalSubmission
 from content.mapping import build_fal_input
-from content.models import ImageJob, LibraryAsset
+from content.models import ImageJob, LibraryAsset, Template, TemplateUseEvent
 from content.video_catalog import VIDEO_ALLOW_LISTS
 from content.video_mapping import build_video_fal_input
 from projects.models import Project
@@ -98,6 +98,108 @@ class PromptEnhancerApiTests(APITestCase):
         response = self.client.post(self.url, {"kind": "image", "prompt": ""}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["field"], "prompt")
+
+
+
+class TemplateApiTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="template-api@example.com",
+            password="pass12345",
+        )
+        self.image_template = Template.objects.create(
+            title="Burger Deal Poster",
+            category="ad",
+            format="1:1 image",
+            is_video=False,
+            preview_url="/template-media/burger-deal.png",
+            uses_count=4,
+            uses_last_7d=2,
+            template_config={
+                "kind": "image",
+                "capability": "textToImage",
+                "model": "fal-ai/nano-banana-2",
+                "prompt": "Create a poster for [RESTAURANT_NAME]",
+                "settings": {"aspectRatio": "1:1", "numImages": 1},
+            },
+        )
+        self.video_template = Template.objects.create(
+            title="Launch Reel",
+            category="reel",
+            format="9:16 video",
+            is_video=True,
+            uses_count=10,
+            uses_last_7d=6,
+            template_config={
+                "kind": "video",
+                "capability": "textToVideo",
+                "model": "bytedance/seedance-2.0/text-to-video",
+                "prompt": "Create a launch reel",
+                "settings": {"duration": "8", "aspectRatio": "9:16"},
+            },
+        )
+
+    def test_template_list_is_public_and_filters_server_side(self):
+        response = self.client.get(
+            "/api/templates",
+            {"category": "ad", "search": "burger", "sort": "trending"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        item = response.data["items"][0]
+        self.assertEqual(item["id"], str(self.image_template.id))
+        self.assertEqual(item["category"], "ad")
+        self.assertEqual(item["isVideo"], False)
+        self.assertIn("estimatedCredits", item)
+
+    def test_template_list_sorts_trending(self):
+        response = self.client.get("/api/templates", {"sort": "trending"})
+
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertEqual(ids[:2], [str(self.video_template.id), str(self.image_template.id)])
+        self.assertTrue(response.data["items"][0]["trending"])
+
+    def test_template_detail_is_public(self):
+        response = self.client.get(f"/api/templates/{self.image_template.id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["title"], "Burger Deal Poster")
+        self.assertEqual(response.data["templateConfig"]["prompt"], "Create a poster for [RESTAURANT_NAME]")
+
+    def test_template_use_requires_auth_and_increments_usage(self):
+        url = f"/api/templates/{self.image_template.id}/use"
+        unauthenticated = self.client.post(url, {}, format="json")
+        self.assertEqual(unauthenticated.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["template"]["usesCount"], 5)
+        self.assertEqual(response.data["template"]["usesLast7d"], 3)
+        self.assertEqual(response.data["templateConfig"]["kind"], "image")
+        self.assertEqual(TemplateUseEvent.objects.filter(template=self.image_template, user=self.user).count(), 1)
+
+
+class PricingFormulaTests(APITestCase):
+    @override_settings(FAL_KEY="")
+    def test_admart_markup_curve_examples(self):
+        from content import pricing
+
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+
+        nano = pricing.quote_image_job("textToImage", "fal-ai/nano-banana-2", {"numImages": 1})
+        gpt = pricing.quote_image_job("textToImage", "openai/gpt-image-2", {"numImages": 1})
+        veo = pricing.quote_video_job("textToVideo", "fal-ai/veo3.1", {"duration": "8s"})
+
+        self.assertEqual(nano["fal_cost_decimal"], Decimal("0.0800"))
+        self.assertEqual(nano["credits_decimal"], Decimal("0.1689"))
+        self.assertEqual(gpt["fal_cost_decimal"], Decimal("1.0000"))
+        self.assertEqual(gpt["credits_decimal"], Decimal("1.6000"))
+        self.assertEqual(veo["fal_cost_decimal"], Decimal("3.2000"))
+        self.assertEqual(veo["credits_decimal"], Decimal("4.1143"))
 
 
 class FalModelSearchApiTests(APITestCase):
@@ -349,7 +451,7 @@ class ImageJobApiTests(APITestCase):
         self.assertEqual(args[0], "fal-ai/flux/dev")
         self.assertEqual(args[1]["prompt"], "Product shot on marble")
         self.user.refresh_from_db()
-        self.assertEqual(self.user.credits_remaining, Decimal("99.9500"))
+        self.assertEqual(self.user.credits_remaining, Decimal("99.9457"))
         asset = LibraryAsset.objects.get(image_job=job)
         self.assertEqual(asset.status, "generating")
         self.assertEqual(asset.media_type, "image")
@@ -398,7 +500,7 @@ class ImageJobApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertEqual(response.data["creditsRemaining"], Decimal("9.9500"))
+        self.assertEqual(response.data["creditsRemaining"], Decimal("9.9457"))
 
     @patch("content.views.fal_client.submit", return_value=_submission("fal-req-2"))
     def test_edit_requires_image(self, _mock):

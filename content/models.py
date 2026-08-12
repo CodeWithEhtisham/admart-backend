@@ -220,3 +220,69 @@ class LibraryAsset(models.Model):
 
     def __str__(self) -> str:
         return f"{self.media_type} {self.status} ({self.id})"
+
+
+class Template(models.Model):
+    """Owned prompt/template catalog item shown on the public template page."""
+
+    CATEGORY_CHOICES = [
+        ("ad", "Ad"),
+        ("reel", "Reel"),
+        ("carousel", "Carousel"),
+        ("story", "Story"),
+        ("product", "Product"),
+        ("announce", "Announcement"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=180)
+    category = models.CharField(max_length=24, choices=CATEGORY_CHOICES)
+    format = models.CharField(max_length=40)
+    is_video = models.BooleanField(default=False)
+    preview_url = models.CharField(max_length=2000, blank=True, default="")
+    template_config = models.JSONField(default=dict, blank=True)
+    uses_count = models.PositiveIntegerField(default=0)
+    uses_last_7d = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-uses_last_7d", "-uses_count", "-created_at"]
+        indexes = [
+            models.Index(fields=["is_active", "category", "-uses_last_7d"]),
+            models.Index(fields=["is_active", "-created_at"]),
+            models.Index(fields=["is_video"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class TemplateUseEvent(models.Model):
+    """Audit row used to calculate rolling template popularity."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    template = models.ForeignKey(
+        Template,
+        on_delete=models.CASCADE,
+        related_name="use_events",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="template_use_events",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["template", "-created_at"]),
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.template_id} used at {self.created_at:%Y-%m-%d %H:%M}"

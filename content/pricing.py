@@ -23,11 +23,8 @@ PRICING_TTL_SECONDS = 30 * 60
 CREDIT_QUANT = Decimal("0.0001")
 ADMART_CREDIT_CURRENCY = "Admart credits"
 FAL_COST_BASIS_CURRENCY = "fal credits"
-LOW_COST_THRESHOLD = Decimal("0.10")
-HIGH_COST_THRESHOLD = Decimal("1.00")
-LOW_COST_MULTIPLIER = Decimal("2")
-MID_COST_MULTIPLIER = Decimal("1.75")
-HIGH_COST_MULTIPLIER = Decimal("1.5")
+MIN_MARKUP = Decimal("0.25")
+MARKUP_CURVE_NUMERATOR = Decimal("1.2")
 
 # Last known values from fal's /v1/models/pricing endpoint for the current
 # supported catalog. Used only when FAL_KEY/network is unavailable.
@@ -85,13 +82,13 @@ def serialize_decimal(value: Decimal | int | float | str) -> str:
 
 
 def admart_markup_multiplier(fal_cost: Decimal | int | float | str) -> Decimal:
-    """Return the Admart markup multiplier for a raw fal job cost."""
+    """Return the Admart price multiplier for a raw fal job cost.
+
+    Formula: price = cost * (1 + max(0.25, 1.2 / (cost + 1))).
+    """
     cost = quantize_credits(fal_cost)
-    if cost < LOW_COST_THRESHOLD:
-        return LOW_COST_MULTIPLIER
-    if cost <= HIGH_COST_THRESHOLD:
-        return MID_COST_MULTIPLIER
-    return HIGH_COST_MULTIPLIER
+    markup = max(MIN_MARKUP, MARKUP_CURVE_NUMERATOR / (cost + Decimal("1")))
+    return Decimal("1") + markup
 
 
 def all_priced_endpoint_ids() -> list[str]:

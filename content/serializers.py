@@ -1,7 +1,8 @@
 from rest_framework import serializers
 
 from content.catalog import CAPABILITIES, resolve_model
-from content.models import ImageJob, LibraryAsset, VideoJob
+from content.models import ImageJob, LibraryAsset, Template, VideoJob
+from content.pricing import quote_image_job, quote_response, quote_video_job
 from content.video_catalog import VIDEO_CAPABILITIES, get_model_entry, resolve_video_model
 
 ALLOWED_ASPECT = {
@@ -342,3 +343,53 @@ class LibraryAssetSerializer(serializers.ModelSerializer):
         if obj.image_job_id:
             return str(obj.image_job_id)
         return None
+
+
+class TemplateSerializer(serializers.ModelSerializer):
+    isVideo = serializers.BooleanField(source="is_video", read_only=True)
+    previewUrl = serializers.CharField(source="preview_url", read_only=True)
+    templateConfig = serializers.JSONField(source="template_config", read_only=True)
+    usesCount = serializers.IntegerField(source="uses_count", read_only=True)
+    usesLast7d = serializers.IntegerField(source="uses_last_7d", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    isActive = serializers.BooleanField(source="is_active", read_only=True)
+    trending = serializers.SerializerMethodField()
+    estimatedCredits = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Template
+        fields = [
+            "id",
+            "title",
+            "category",
+            "format",
+            "isVideo",
+            "previewUrl",
+            "templateConfig",
+            "usesCount",
+            "usesLast7d",
+            "createdAt",
+            "isActive",
+            "trending",
+            "estimatedCredits",
+        ]
+
+    def get_trending(self, obj) -> bool:
+        trending_ids = self.context.get("trending_ids") or set()
+        return obj.id in trending_ids
+
+    def get_estimatedCredits(self, obj) -> str | None:
+        config = obj.template_config or {}
+        capability = str(config.get("capability") or "")
+        model = str(config.get("model") or "")
+        settings = config.get("settings") or {}
+        if not isinstance(settings, dict):
+            settings = {}
+        try:
+            if obj.is_video or config.get("kind") == "video":
+                quote = quote_video_job(capability, model, settings)
+            else:
+                quote = quote_image_job(capability, model, settings)
+        except Exception:
+            return config.get("estimatedCredits")
+        return quote_response(quote)["credits"]

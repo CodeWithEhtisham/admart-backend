@@ -1,15 +1,16 @@
-import logging
 import mimetypes
 import uuid
 from pathlib import Path
 
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db import transaction
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,7 +25,7 @@ from content.fal_models import (
 from content.jobs import refresh_job
 from content.library import mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
-from content.models import ImageJob, ImageUpload, LibraryAsset
+from content.models import ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
 from content.pricing import attach_image_pricing, quote_image_job, quote_response
 from content.prompt_enhancer import enhance_prompt
 from content.serializers import (
@@ -32,12 +33,11 @@ from content.serializers import (
     ImageJobSerializer,
     LibraryAssetSerializer,
     PromptEnhanceSerializer,
+    TemplateSerializer,
 )
 from content.storage_utils import absolute_media_url
 from content.url_resolve import resolve_urls_for_fal
 from projects.models import Project
-
-logger = logging.getLogger(__name__)
 
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
@@ -50,6 +50,7 @@ ALLOWED_LIBRARY_VIDEO_TYPES = {
     "video/x-m4v",
 }
 MAX_LIBRARY_VIDEO_BYTES = 200 * 1024 * 1024  # 200 MB
+TEMPLATE_PAGE_SIZE = 18
 
 
 def _owned_project(user, project_id) -> Project:
@@ -272,6 +273,108 @@ class PromptEnhanceView(APIView):
         return Response(result)
 
 
+class TemplateListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = Template.objects.filter(is_active=True)
+
+        category = (request.query_params.get("category") or "").strip().lower()
+        if category and category != "all":
+            qs = qs.filter(category=category)
+
+        media = (request.query_params.get("media") or "").strip().lower()
+        if media == "image":
+            qs = qs.filter(is_video=False)
+        elif media == "video":
+            qs = qs.filter(is_video=True)
+
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            qs = qs.filter(
+                Q(title__icontains=search)
+                | Q(category__icontains=search)
+                | Q(format__icontains=search)
+            )
+
+        model_name = (request.query_params.get("model") or "").strip()
+        if model_name and model_name != "all":
+            qs = qs.filter(template_config__modelName__iexact=model_name)
+
+        sort = (request.query_params.get("sort") or "trending").strip().lower()
+        if sort in {"new", "newest"}:
+            qs = qs.order_by("-created_at", "title")
+        elif sort in {"uses", "popular"}:
+            qs = qs.order_by("-uses_count", "-uses_last_7d", "-created_at")
+        else:
+            qs = qs.order_by("-uses_last_7d", "-uses_count", "-created_at")
+
+        try:
+            offset = max(int(request.query_params.get("cursor") or 0), 0)
+        except (TypeError, ValueError):
+            offset = 0
+
+        page = list(qs[offset : offset + TEMPLATE_PAGE_SIZE + 1])
+        has_more = len(page) > TEMPLATE_PAGE_SIZE
+        items = page[:TEMPLATE_PAGE_SIZE]
+        next_cursor = str(offset + TEMPLATE_PAGE_SIZE) if has_more else None
+
+        data = TemplateSerializer(
+            items,
+            many=True,
+            context={"trending_ids": _trending_template_ids()},
+        ).data
+        return Response(
+            {
+                "items": data,
+                "nextCursor": next_cursor,
+                "count": qs.count(),
+            }
+        )
+
+
+class TemplateDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, template_id):
+        template = get_object_or_404(Template, id=template_id, is_active=True)
+        return Response(
+            TemplateSerializer(
+                template,
+                context={"trending_ids": _trending_template_ids()},
+            ).data
+        )
+
+
+class TemplateUseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, template_id):
+        with transaction.atomic():
+            template = get_object_or_404(
+                Template.objects.select_for_update(),
+                id=template_id,
+                is_active=True,
+            )
+            TemplateUseEvent.objects.create(template=template, user=request.user)
+            Template.objects.filter(id=template.id).update(
+                uses_count=F("uses_count") + 1,
+                uses_last_7d=F("uses_last_7d") + 1,
+            )
+            template.refresh_from_db()
+
+        serialized = TemplateSerializer(
+            template,
+            context={"trending_ids": _trending_template_ids()},
+        ).data
+        return Response(
+            {
+                "template": serialized,
+                "templateConfig": template.template_config,
+            }
+        )
+
+
 class FalModelSearchView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -461,3 +564,11 @@ def _truthy(value) -> bool:
 
 def _falsey(value) -> bool:
     return str(value or "").strip().lower() in {"0", "false", "no", "off"}
+
+
+def _trending_template_ids() -> set:
+    return set(
+        Template.objects.filter(is_active=True, uses_last_7d__gt=0)
+        .order_by("-uses_last_7d", "-uses_count")
+        .values_list("id", flat=True)[:6]
+    )
