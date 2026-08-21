@@ -24,6 +24,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from admin_panel.dashboard_views import admin_dashboard
 from content.video_views import VideoModelCatalogView
 from content.views import (
     FalModelSearchView,
@@ -37,6 +38,7 @@ from projects.views import ProjectListCreateView, SocialCallbackView
 from users.credits_views import CreditsBalanceView
 
 urlpatterns = [
+    path("admin/dashboard/", admin_dashboard, name="admin_dashboard"),
     path("admin/", admin.site.urls),
     path("api/auth/", include("users.urls")),
     # Credits: balance at /api/credits; costs/history under /api/credits/
@@ -53,6 +55,8 @@ urlpatterns = [
     path("api/templates", TemplateListView.as_view(), name="template_list"),
     path("api/templates/<uuid:template_id>", TemplateDetailView.as_view(), name="template_detail"),
     path("api/templates/<uuid:template_id>/use", TemplateUseView.as_view(), name="template_use"),
+    # Superadmin panel API
+    path("api/admin/", include("admin_panel.urls")),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),
     # OpenAPI schema endpoints

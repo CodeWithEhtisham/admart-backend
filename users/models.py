@@ -62,6 +62,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+    last_active_at = models.DateTimeField(null=True, blank=True)
 
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     credits_total = models.DecimalField(max_digits=10, decimal_places=4, default=50)

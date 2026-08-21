@@ -31,6 +31,9 @@ class UserSerializer(serializers.ModelSerializer):
     )
     creditsResetAt = serializers.DateTimeField(source="credits_reset_at", read_only=True, allow_null=True)
     onboardingCompleted = serializers.BooleanField(source="onboarding_completed", default=False)
+    isStaff = serializers.BooleanField(source="is_staff", read_only=True)
+    isSuperuser = serializers.BooleanField(source="is_superuser", read_only=True)
+    lastActiveAt = serializers.DateTimeField(source="last_active_at", read_only=True, allow_null=True)
     brandKit = serializers.SerializerMethodField(read_only=True)
     projectCount = serializers.SerializerMethodField(read_only=True)
     activeProjectId = serializers.SerializerMethodField(read_only=True)
@@ -73,6 +76,9 @@ class UserSerializer(serializers.ModelSerializer):
             "brandKit",
             "projectCount",
             "activeProjectId",
+            "isStaff",
+            "isSuperuser",
+            "lastActiveAt",
             # Writable brand kit fields (snake_case, as sent by frontend onboarding)
             "brand_name",
             "brand_industry",

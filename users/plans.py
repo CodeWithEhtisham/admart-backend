@@ -1,7 +1,8 @@
 """Business plan definitions for Admart subscriptions.
 
-Payment is not connected yet, so these values are the source of truth for the
-temporary plan activation flow and the billing UI.
+Plans are stored in the PlanDefinition model and managed via the admin panel.
+This module provides helpers that read from the database, falling back to the
+static PLAN_TIERS constant when the DB is not yet migrated or empty.
 """
 
 from __future__ import annotations
@@ -99,10 +100,55 @@ PUBLIC_PLAN_IDS = tuple(
 )
 
 
+def _load_db_plans() -> dict[str, dict[str, Any]] | None:
+    """Try to load plans from the database. Returns None if table doesn't exist yet."""
+    try:
+        from admin_panel.models import PlanDefinition
+    except Exception:
+        return None
+    try:
+        rows = PlanDefinition.objects.all()
+    except Exception:
+        return None
+    plans = {}
+    for row in rows:
+        plans[row.plan_id] = {
+            "id": row.plan_id,
+            "name": row.name,
+            "description": row.description,
+            "price_usd": Decimal(str(row.price_usd)),
+            "price_pkr": row.price_pkr,
+            "monthly_credits": Decimal(str(row.monthly_credits)),
+            "billing_interval": "month",
+            "features": list(row.features) if row.features else [],
+            "sort": row.sort_order,
+            "public": row.is_public,
+        }
+    return plans
+
+
+def _plans_dict() -> dict[str, dict[str, Any]]:
+    """Return DB plans if available, otherwise the static fallback."""
+    db = _load_db_plans()
+    if db:
+        return db
+    return PLAN_TIERS
+
+
 def get_plan(plan_id: str | None) -> dict[str, Any]:
     """Return a copy of a plan definition, falling back to Free."""
     key = (plan_id or "free").lower()
-    return deepcopy(PLAN_TIERS.get(key, PLAN_TIERS["free"]))
+    plans = _plans_dict()
+    return deepcopy(plans.get(key, plans.get("free", PLAN_TIERS["free"])))
+
+
+def get_public_plan_ids() -> tuple[str, ...]:
+    """Return ordered tuple of public plan IDs."""
+    plans = _plans_dict()
+    return tuple(
+        pid for pid, p in sorted(plans.items(), key=lambda x: x[1]["sort"])
+        if p.get("public")
+    )
 
 
 def serialize_plan(plan_id: str | None, *, include_internal: bool = False) -> dict[str, Any]:

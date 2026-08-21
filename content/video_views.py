@@ -104,6 +104,7 @@ class VideoJobListCreateView(APIView):
             prompt=data.get("prompt"),
             request={k: v for k, v in data.items() if k != "prompt" or v},
             credits_reserved=amount,
+            fal_cost_usd=quote.get("fal_cost_decimal", 0),
         )
 
         try:

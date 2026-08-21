@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "users.apps.UsersConfig",
     "projects.apps.ProjectsConfig",
     "content.apps.ContentConfig",
+    "admin_panel.apps.AdminPanelConfig",
 ]
 
 MIDDLEWARE = [
@@ -62,6 +63,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "admin_panel.middleware.UpdateLastActiveMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -224,6 +226,8 @@ FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
 INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
     "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
 )
+
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 # Gate Meta page/IG publishing scopes behind App Review. Keep False until the
 # permissions are added + approved in the Meta dashboard, otherwise Meta rejects the

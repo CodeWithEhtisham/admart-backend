@@ -34,6 +34,22 @@ USER_AGENT = (
 PLACEHOLDER_RE = re.compile(r"\[([^\[\]\n]{1,60})\]")
 MIN_PROMPT_LENGTH = 20
 
+# meigen item ids (as seedKeys) that were reviewed and flagged as vulgar content.
+VULGAR_SEED_KEYS = frozenset({
+    "meigen:2067731526448738460",
+    "meigen:2057687680016908379",
+    "meigen:2033917202567446610",
+})
+
+# Narrow keyword filter for clearly explicit content. Terms like "nude" alone are
+# skipped on purpose: they appear in harmless contexts (nude lips/palette).
+VULGAR_CONTENT_RE = re.compile(
+    r"\b(?:lingerie|boudoir|topless|striptease|stripper|thong|g-?string|"
+    r"sexually suggestive|explicit|erotic|pornographic|nsfw|onlyfans)\b"
+    r"|\b(?:nude|naked|topless)\s+(?:woman|women|girl|model|body|torso|figure)\b",
+    re.IGNORECASE,
+)
+
 # meigen display name -> fal model id used for actual generation
 IMAGE_MODEL_MAP = {
     "GPT Image": "openai/gpt-image-2",
@@ -185,6 +201,11 @@ def build_seed(item: dict) -> dict | None:
     if len(title) < 20:
         # Garbage titles like "{" fall back to the start of the prompt.
         title = prompt[:180]
+
+    if f"meigen:{meigen_id}" in VULGAR_SEED_KEYS or VULGAR_CONTENT_RE.search(
+        f"{title}\n{prompt}"
+    ):
+        return None
     try:
         likes = int(stats.get("likes") or 0)
     except (TypeError, ValueError):

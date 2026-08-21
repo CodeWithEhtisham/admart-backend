@@ -43,6 +43,7 @@ class ImageJob(models.Model):
     error = models.TextField(null=True, blank=True)
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    fal_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     seed = models.BigIntegerField(null=True, blank=True)
     fal_request_id = models.CharField(max_length=128, null=True, blank=True)
     # Canonical fal queue URLs from submit (required for models with subpaths like flux/dev).
@@ -124,6 +125,7 @@ class VideoJob(models.Model):
     error = models.TextField(null=True, blank=True)
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    fal_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     seed = models.BigIntegerField(null=True, blank=True)
     duration_seconds = models.PositiveIntegerField(null=True, blank=True)
     fal_request_id = models.CharField(max_length=128, null=True, blank=True)
