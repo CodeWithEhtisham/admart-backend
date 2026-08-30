@@ -22,6 +22,7 @@ class Migration(migrations.Migration):
                 ('price_pkr', models.PositiveIntegerField(default=0)),
                 ('monthly_credits', models.DecimalField(decimal_places=4, default=0, max_digits=10)),
                 ('features', models.JSONField(blank=True, default=list)),
+                ('limits', models.JSONField(blank=True, default=dict)),
                 ('is_public', models.BooleanField(default=True)),
                 ('sort_order', models.IntegerField(default=0)),
                 ('created_at', models.DateTimeField(default=django.utils.timezone.now)),
