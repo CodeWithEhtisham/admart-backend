@@ -77,6 +77,25 @@ class ProjectListCreateView(OwnedProjectMixin, generics.ListCreateAPIView):
     @extend_schema(summary="Create a project", responses={201: ProjectSerializer})
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """Create a project owned by the user and immediately make it active."""
+        # Check project limit based on user's plan
+        from users.plans import get_plan
+        
+        user_plan = get_plan(request.user.plan)
+        limits = user_plan.get("limits", {})
+        max_projects = limits.get("max_projects", 1)
+        
+        current_project_count = request.user.projects.count()
+        if max_projects > 0 and current_project_count >= max_projects:
+            return Response(
+                {
+                    "message": f"Project limit reached. Your {user_plan['name']} plan allows up to {max_projects} project(s). Upgrade to create more projects.",
+                    "code": "PROJECT_LIMIT_REACHED",
+                    "maxProjects": max_projects,
+                    "currentProjects": current_project_count,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = ProjectSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         project = serializer.save(owner=request.user)
@@ -170,6 +189,25 @@ class ProjectSocialConnectView(ProjectScopedSocialMixin, APIView):
             return Response(
                 {"detail": f"Invalid platform. Choose from: {', '.join(VALID_PLATFORMS)}"},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check social media connection limit based on user's plan
+        from users.plans import get_plan
+        
+        user_plan = get_plan(request.user.plan)
+        limits = user_plan.get("limits", {})
+        max_social_connections = limits.get("max_social_connections_per_project", 1)
+        
+        current_connections = project.social_accounts.filter(connected=True).count()
+        if max_social_connections > 0 and current_connections >= max_social_connections:
+            return Response(
+                {
+                    "message": f"Social media connection limit reached. Your {user_plan['name']} plan allows up to {max_social_connections} connected social account(s) per project. Upgrade to connect more accounts.",
+                    "code": "SOCIAL_CONNECTION_LIMIT_REACHED",
+                    "maxSocialConnections": max_social_connections,
+                    "currentSocialConnections": current_connections,
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         user = request.user

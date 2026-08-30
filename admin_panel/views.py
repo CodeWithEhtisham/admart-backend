@@ -110,6 +110,8 @@ class AdminPlanDetailView(AdminAPIView):
             plan.monthly_credits = Decimal(str(data["monthlyCredits"]))
         if "features" in data:
             plan.features = list(data["features"])
+        if "limits" in data:
+            plan.limits = dict(data["limits"])
         if "isPublic" in data:
             plan.is_public = bool(data["isPublic"])
         if "sortOrder" in data:
@@ -154,6 +156,7 @@ class AdminPlanCreateView(AdminAPIView):
             price_pkr=int(data.get("pricePkr", 0)),
             monthly_credits=Decimal(str(data.get("monthlyCredits", 0))),
             features=list(data.get("features", [])),
+            limits=dict(data.get("limits", {})),
             is_public=bool(data.get("isPublic", True)),
             sort_order=int(data.get("sortOrder", 100)),
         )

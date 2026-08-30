@@ -139,6 +139,7 @@ class PlanDefinition(models.Model):
     price_pkr = models.PositiveIntegerField(default=0)
     monthly_credits = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     features = models.JSONField(default=list, blank=True)
+    limits = models.JSONField(default=dict, blank=True)
     is_public = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
