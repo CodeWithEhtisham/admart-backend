@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import signing
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -391,16 +391,24 @@ class MetaOAuthConnectionTests(APITestCase):
     def test_instagram_connect_url(self) -> None:
         response = self.client.get(self._connect_url("instagram"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("facebook.com", response.data["authUrl"])
-        self.assertIn("public_profile", response.data["authUrl"])
-        self.assertNotIn("instagram_content_publish", response.data["authUrl"])
+        self.assertIn("instagram.com/oauth/authorize", response.data["authUrl"])
+        self.assertIn("instagram_business_basic", response.data["authUrl"])
+        self.assertIn("client_id=test-meta-app", response.data["authUrl"])
+        self.assertNotIn("facebook.com", response.data["authUrl"])
+        self.assertNotIn("instagram_business_content_publish", response.data["authUrl"])
+
+    @override_settings(INSTAGRAM_APP_ID="ig-app-id")
+    def test_instagram_connect_url_prefers_instagram_app_id(self) -> None:
+        response = self.client.get(self._connect_url("instagram"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("client_id=ig-app-id", response.data["authUrl"])
 
     @override_settings(INSTAGRAM_PUBLISH_ENABLED=True)
     def test_instagram_connect_url_includes_publish_scopes_when_enabled(self) -> None:
         response = self.client.get(self._connect_url("instagram"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("instagram_basic", response.data["authUrl"])
-        self.assertIn("instagram_content_publish", response.data["authUrl"])
+        self.assertIn("instagram_business_basic", response.data["authUrl"])
+        self.assertIn("instagram_business_content_publish", response.data["authUrl"])
 
     @patch("projects.oauth.MetaProvider.fetch_profile")
     @patch("projects.oauth.MetaProvider.exchange_code")
@@ -442,3 +450,54 @@ class MetaOAuthConnectionTests(APITestCase):
         account = SocialAccount.objects.get(project=self.project, platform="instagram")
         self.assertEqual(account.handle, "maya.creates")
         self.assertEqual(account.external_id, "ig-999")
+
+
+@override_settings(
+    INSTAGRAM_APP_ID="ig-id",
+    INSTAGRAM_APP_SECRET="ig-secret",
+    INSTAGRAM_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/instagram",
+    INSTAGRAM_PUBLISH_ENABLED=False,
+)
+class InstagramProviderTests(SimpleTestCase):
+    """Instagram Business Login token exchange."""
+
+    @patch("projects.oauth.requests.get")
+    @patch("projects.oauth.requests.post")
+    def test_exchange_code_unwraps_data_and_upgrades_token(self, mock_post, mock_get) -> None:
+        mock_post.return_value.json.return_value = {
+            "data": [
+                {
+                    "access_token": "short",
+                    "user_id": "99",
+                    "permissions": "instagram_business_basic",
+                }
+            ]
+        }
+        mock_get.return_value.json.return_value = {
+            "access_token": "long",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        }
+        from projects.oauth import InstagramProvider
+
+        tokens = InstagramProvider().exchange_code("auth-code")
+        self.assertEqual(tokens["access_token"], "long")
+        self.assertEqual(tokens["refresh_token"], "long")
+        self.assertEqual(tokens["expires_in"], 5184000)
+        self.assertEqual(mock_post.call_args.kwargs["data"]["code"], "auth-code")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["grant_type"], "ig_exchange_token")
+
+    @patch("projects.oauth.requests.get")
+    def test_fetch_profile_returns_handle(self, mock_get) -> None:
+        mock_get.return_value.json.return_value = {
+            "user_id": "17841",
+            "username": "maya.creates",
+            "name": "Maya",
+            "profile_picture_url": "https://cdn.example/ig.jpg",
+        }
+        from projects.oauth import InstagramProvider
+
+        profile = InstagramProvider().fetch_profile("long")
+        self.assertEqual(profile["handle"], "maya.creates")
+        self.assertEqual(profile["externalId"], "17841")
+        self.assertEqual(profile["displayName"], "Maya")

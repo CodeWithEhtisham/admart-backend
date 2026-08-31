@@ -138,12 +138,10 @@ def _pick_youtube_channel(items: list) -> dict | None:
 
 
 class MetaProvider:
-    """Facebook Login (Graph API) — shared base for Facebook Pages and Instagram.
+    """Facebook Login (Graph API) for Facebook Pages.
 
-    A single Meta app backs both platforms; only the requested scopes, redirect URI,
-    and post-auth profile lookup differ. Meta issues no refresh token — instead a
-    short-lived token is exchanged for a long-lived (~60 day) token, which can later
-    be re-extended with ``fb_exchange_token``.
+    Meta issues no refresh token — a short-lived token is exchanged for a long-lived
+    (~60 day) token, which can later be re-extended with ``fb_exchange_token``.
     """
 
     GRAPH_VERSION = "v21.0"
@@ -248,61 +246,149 @@ class MetaProvider:
         }
 
 
-class InstagramProvider(MetaProvider):
-    """Instagram via Facebook Login — resolves the IG Business account linked to a Page."""
+def _instagram_short_lived(payload: dict) -> dict:
+    """Normalize Instagram's short-lived token JSON (flat or ``{data: [...]}``)."""
+    entry = payload
+    data = payload.get("data")
+    if isinstance(data, list) and data:
+        entry = data[0]
+    permissions = entry.get("permissions") or ""
+    if isinstance(permissions, list):
+        permissions = ",".join(permissions)
+    return {
+        "access_token": entry["access_token"],
+        "user_id": str(entry.get("user_id") or ""),
+        "permissions": permissions,
+    }
 
-    def fetch_profile(self, access_token: str) -> dict:
-        pages = requests.get(
-            f"{self.GRAPH}/me/accounts",
-            params={"fields": "name,instagram_business_account", "access_token": access_token},
+
+class InstagramProvider:
+    """Instagram Business Login — signs in with Instagram, not Facebook.
+
+    Requires a Professional (Business or Creator) account. No Facebook Page needed.
+    Uses Instagram App ID/Secret when set; otherwise falls back to META_APP_*.
+    """
+
+    platform = "instagram"
+    AUTH_URL = "https://www.instagram.com/oauth/authorize"
+    TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+    GRAPH = "https://graph.instagram.com"
+    BASE_SCOPES = ["instagram_business_basic"]
+    PUBLISH_SCOPES = ["instagram_business_content_publish"]
+
+    def _client_id(self) -> str:
+        return settings.INSTAGRAM_APP_ID or settings.META_APP_ID
+
+    def _client_secret(self) -> str:
+        return settings.INSTAGRAM_APP_SECRET or settings.META_APP_SECRET
+
+    @property
+    def redirect_uri(self) -> str:
+        return settings.INSTAGRAM_OAUTH_REDIRECT_URI
+
+    @property
+    def scopes(self) -> list[str]:
+        extra = self.PUBLISH_SCOPES if settings.INSTAGRAM_PUBLISH_ENABLED else []
+        return self.BASE_SCOPES + extra
+
+    def build_auth_url(self, state: str) -> str:
+        params = {
+            "client_id": self._client_id(),
+            "redirect_uri": self.redirect_uri,
+            "response_type": "code",
+            "scope": ",".join(self.scopes),
+            "state": state,
+            "force_reauth": "true",
+            "enable_fb_login": "0",
+        }
+        return f"{self.AUTH_URL}?{urlencode(params)}"
+
+    def exchange_code(self, code: str) -> dict:
+        """Exchange the auth code for a short-lived token, then upgrade to ~60 days."""
+        short = requests.post(
+            self.TOKEN_URL,
+            data={
+                "client_id": self._client_id(),
+                "client_secret": self._client_secret(),
+                "grant_type": "authorization_code",
+                "redirect_uri": self.redirect_uri,
+                "code": code,
+            },
             timeout=REQUEST_TIMEOUT,
         )
-        pages.raise_for_status()
-        for page in pages.json().get("data", []):
-            ig = page.get("instagram_business_account")
-            if not ig:
-                continue
-            ig_id = ig["id"]
-            profile = requests.get(
-                f"{self.GRAPH}/{ig_id}",
-                params={"fields": "username,profile_picture_url", "access_token": access_token},
-                timeout=REQUEST_TIMEOUT,
-            )
-            profile.raise_for_status()
-            data = profile.json()
-            return {
-                "externalId": ig_id,
-                "displayName": data.get("username", ""),
-                "handle": data.get("username", ""),
-                "avatarUrl": data.get("profile_picture_url"),
-            }
-        # No Instagram Professional account linked to any of the user's Pages.
-        return {}
+        short.raise_for_status()
+        parsed = _instagram_short_lived(short.json())
+        short_token = parsed["access_token"]
+
+        long = requests.get(
+            f"{self.GRAPH}/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": self._client_secret(),
+                "access_token": short_token,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        long.raise_for_status()
+        data = long.json()
+        token = data["access_token"]
+        # ponytail: Instagram has no separate refresh token; reuse the long-lived token.
+        return {
+            "access_token": token,
+            "refresh_token": token,
+            "expires_in": data.get("expires_in"),
+            "scope": parsed["permissions"],
+        }
+
+    def refresh_access_token(self, token: str) -> dict:
+        """Re-extend a still-valid long-lived Instagram user token (~60 days)."""
+        resp = requests.get(
+            f"{self.GRAPH}/refresh_access_token",
+            params={"grant_type": "ig_refresh_token", "access_token": token},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        new_token = data["access_token"]
+        return {
+            "access_token": new_token,
+            "refresh_token": new_token,
+            "expires_in": data.get("expires_in"),
+        }
+
+    def fetch_profile(self, access_token: str) -> dict:
+        resp = requests.get(
+            f"{self.GRAPH}/me",
+            params={
+                "fields": "user_id,username,name,profile_picture_url",
+                "access_token": access_token,
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        username = (data.get("username") or "").strip()
+        if not username:
+            raise ValueError("Instagram profile missing username")
+        return {
+            "externalId": str(data.get("user_id") or data.get("id") or ""),
+            "displayName": (data.get("name") or username).strip(),
+            "handle": username,
+            "avatarUrl": data.get("profile_picture_url"),
+        }
 
 
 # Scopes are split into "connect now" vs "publish later":
 #   - Login/connect works today with only default scopes.
-#   - The page/IG publishing scopes (pages_manage_posts, pages_read_engagement,
-#     pages_show_list, instagram_content_publish, …) are "Invalid Scopes" until they're
-#     enabled on the Meta app AND approved via App Review. Requesting an un-enabled scope
-#     makes Meta reject the ENTIRE consent screen — so we only request them once they're
-#     enabled.
+#   - Publishing scopes are "Invalid Scopes" until enabled on the Meta app AND
+#     approved via App Review. Requesting an un-enabled scope makes Meta reject
+#     the ENTIRE consent screen — so we only request them once they're enabled.
 #
-# These are gated behind the per-platform settings FACEBOOK_PUBLISH_ENABLED /
-# INSTAGRAM_PUBLISH_ENABLED (sourced from env, default False). Set the matching env var
-# to "true" once the permissions are added + approved in the Meta dashboard — no code
-# change needed. The flag is read at request time, so it can differ per environment.
+# Gated by FACEBOOK_PUBLISH_ENABLED / INSTAGRAM_PUBLISH_ENABLED (env, default False).
 FACEBOOK_PUBLISH_SCOPES = [
     "pages_show_list",
     "pages_read_engagement",
     "pages_manage_posts",
-]
-INSTAGRAM_PUBLISH_SCOPES = [
-    "instagram_basic",
-    "instagram_content_publish",
-    "pages_show_list",
-    "pages_read_engagement",
-    "business_management",
 ]
 
 # Registry of implemented providers. Unknown platform => 400; known platform
@@ -316,13 +402,7 @@ PROVIDERS = {
         publish_scopes=FACEBOOK_PUBLISH_SCOPES,
         publish_setting="FACEBOOK_PUBLISH_ENABLED",
     ),
-    "instagram": InstagramProvider(
-        "instagram",
-        "INSTAGRAM_OAUTH_REDIRECT_URI",
-        base_scopes=["public_profile"],
-        publish_scopes=INSTAGRAM_PUBLISH_SCOPES,
-        publish_setting="INSTAGRAM_PUBLISH_ENABLED",
-    ),
+    "instagram": InstagramProvider(),
 }
 
 
@@ -349,8 +429,11 @@ def ensure_fresh_access_token(account) -> str:
     tokens = provider.refresh_access_token(refresh_token)
     account.store_tokens(
         access_token=tokens.get("access_token"),
+        refresh_token=tokens.get("refresh_token"),
         expires_in=tokens.get("expires_in"),
         scope=tokens.get("scope"),
     )
-    account.save(update_fields=["access_token", "token_expires_at", "scope", "updated_at"])
+    account.save(
+        update_fields=["access_token", "refresh_token", "token_expires_at", "scope", "updated_at"]
+    )
     return account.get_access_token()

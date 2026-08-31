@@ -227,6 +227,10 @@ FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
 INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
     "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
 )
+# Instagram Business Login uses a separate App ID/Secret from the Meta dashboard
+# (Instagram → API setup with Instagram login). Falls back to META_APP_* if unset.
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
 
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
