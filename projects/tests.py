@@ -239,7 +239,10 @@ class YouTubeOAuthConnectionTests(APITestCase):
         self.assertIn("state", response.data)
         self.assertIn("accounts.google.com", response.data["authUrl"])
         self.assertIn("client_id=test-client-id", response.data["authUrl"])
+        self.assertIn("youtube.force-ssl", response.data["authUrl"])
         self.assertIn("youtube.upload", response.data["authUrl"])
+        self.assertIn("select_account", response.data["authUrl"])
+        self.assertNotIn("include_granted_scopes", response.data["authUrl"])
 
         payload = signing.loads(response.data["state"], salt=OAUTH_STATE_SALT, max_age=600)
         self.assertEqual(payload["projectId"], str(self.project.id))

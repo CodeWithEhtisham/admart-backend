@@ -21,20 +21,29 @@ class YouTubeProvider:
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
     SCOPES = [
-        "https://www.googleapis.com/auth/youtube.readonly",
+        # force-ssl is the scope Google's own YouTube OAuth samples use so the
+        # *second* screen lists Brand Accounts / channels (first screen is always Gmail).
+        "https://www.googleapis.com/auth/youtube.force-ssl",
         "https://www.googleapis.com/auth/youtube.upload",
     ]
 
     def build_auth_url(self, state: str) -> str:
-        """Build the Google consent URL. offline + consent => always get a refresh token."""
+        """Build the Google consent URL.
+
+        Google's flow is two screens, both required:
+        1. Pick the Gmail that *owns* the channels
+        2. Pick the YouTube channel / Brand Account
+
+        ``consent select_account`` forces both. YouTube scopes must be present or
+        screen 2 never appears (Gmail only).
+        """
         params = {
             "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
             "redirect_uri": settings.YOUTUBE_OAUTH_REDIRECT_URI,
             "response_type": "code",
             "scope": " ".join(self.SCOPES),
             "access_type": "offline",
-            "prompt": "consent",
-            "include_granted_scopes": "true",
+            "prompt": "consent select_account",
             "state": state,
         }
         return f"{self.AUTH_URL}?{urlencode(params)}"
@@ -71,27 +80,61 @@ class YouTubeProvider:
         return resp.json()
 
     def fetch_profile(self, access_token: str) -> dict:
-        """Fetch the authorized user's YouTube channel profile."""
+        """Fetch the YouTube channel that the user authorized (not the Google user)."""
         resp = requests.get(
             self.CHANNELS_URL,
-            params={"part": "snippet", "mine": "true"},
+            params={"part": "snippet,brandingSettings", "mine": "true", "maxResults": 50},
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
-        items = resp.json().get("items", [])
-        if not items:
+        items = resp.json().get("items", []) or []
+        channel = _pick_youtube_channel(items)
+        if not channel:
             return {}
-        channel = items[0]
         snippet = channel.get("snippet", {}) or {}
+        branding = (channel.get("brandingSettings") or {}).get("channel") or {}
+        title = (branding.get("title") or snippet.get("title") or "").strip()
+        handle = _youtube_handle(snippet.get("customUrl") or branding.get("customUrl") or "")
         thumbnails = snippet.get("thumbnails", {}) or {}
-        default_thumb = thumbnails.get("default", {}) or {}
+        thumb = (
+            thumbnails.get("medium")
+            or thumbnails.get("high")
+            or thumbnails.get("default")
+            or {}
+        )
         return {
             "externalId": channel.get("id", ""),
-            "displayName": snippet.get("title", ""),
-            "handle": snippet.get("customUrl", ""),
-            "avatarUrl": default_thumb.get("url"),
+            "displayName": title,
+            "handle": handle,
+            "avatarUrl": thumb.get("url"),
         }
+
+
+def _youtube_handle(custom_url: str) -> str:
+    value = (custom_url or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        value = value.rstrip("/").rsplit("/", 1)[-1]
+    if value.startswith("@"):
+        return value
+    if value.startswith(("channel/", "c/", "user/")):
+        return f"youtube.com/{value}"
+    return f"@{value}"
+
+
+def _pick_youtube_channel(items: list) -> dict | None:
+    """Prefer a channel with a custom @handle (typical Brand Account) over a bare default."""
+    if not items:
+        return None
+    with_handle = [
+        item
+        for item in items
+        if (item.get("snippet") or {}).get("customUrl")
+        or ((item.get("brandingSettings") or {}).get("channel") or {}).get("customUrl")
+    ]
+    return with_handle[0] if with_handle else items[0]
 
 
 class MetaProvider:

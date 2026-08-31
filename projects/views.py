@@ -339,9 +339,12 @@ class SocialCallbackView(APIView):
 
         account, _ = SocialAccount.objects.get_or_create(project=project, platform=platform)
         account.connected = True
-        account.external_id = profile.get("externalId", "") or account.external_id
-        account.display_name = profile.get("displayName", "") or account.display_name
-        account.handle = profile.get("handle", "") or account.handle
+        if profile.get("externalId"):
+            account.external_id = profile["externalId"]
+        if profile.get("displayName"):
+            account.display_name = profile["displayName"]
+        if profile.get("handle"):
+            account.handle = profile["handle"]
         if profile.get("avatarUrl"):
             account.avatar_url = profile["avatarUrl"]
         account.store_tokens(
