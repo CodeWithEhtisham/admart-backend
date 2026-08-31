@@ -1,4 +1,6 @@
 from typing import Any
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core.signing import TimestampSigner
 from django.test import override_settings
@@ -83,6 +85,21 @@ class UserAuthTests(APITestCase):
         response = self.client.post(self.login_url, login_data, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_user_login_unknown_email_is_404(self) -> None:
+        """Unknown email must not create a user; 404 no_account (not 401)."""
+        response = self.client.post(
+            self.login_url,
+            {"email": "nobody@example.com", "password": "Password123!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["code"], "no_account")
+        self.assertEqual(
+            response.data["message"],
+            "There is no Admart account for this email. Please sign up first, then sign in.",
+        )
+        self.assertFalse(User.objects.filter(email="nobody@example.com").exists())
+
     def test_get_me_unauthorized(self) -> None:
         """Test accessing /me without authorization fails."""
         response = self.client.get(self.me_url)
@@ -141,20 +158,6 @@ class UserAuthTests(APITestCase):
         response = self.client.post(self.reset_password_url, reset_data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("non_field_errors", response.data)
-
-    def test_google_oauth_exchange_success(self) -> None:
-        """Test mock Google OAuth exchange creates user and returns JWT tokens."""
-        google_data = {"code": "mock-auth-code-123456"}
-        response = self.client.post(self.google_url, google_data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("accessToken", response.data)
-        self.assertIn("refreshToken", response.data)
-        self.assertIn("user", response.data)
-        self.assertTrue(response.data["user"]["email"].startswith("google_user_mock-a"))
-        self.assertEqual(response.data["user"]["googleId"], "google-oauth-mock-auth-co")
-        self.assertEqual(response.data["user"]["firstName"], "")
-        self.assertEqual(response.data["user"]["lastName"], "")
-        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
 
     def test_logout_success(self) -> None:
         """Test logout returns standard success message."""
@@ -395,3 +398,166 @@ class ClerkAuthenticationTests(APITestCase):
 
                 user, token = auth.authenticate(mock_request)
                 self.assertEqual(user, existing_user)
+
+
+GOOGLE_CLAIMS = {
+    "sub": "google-sub-123",
+    "email": "ada@example.com",
+    "email_verified": True,
+    "given_name": "Ada",
+    "family_name": "Lovelace",
+    "iss": "https://accounts.google.com",
+    "aud": "test-google-client.apps.googleusercontent.com",
+}
+
+GOOGLE_SETTINGS = dict(
+    GOOGLE_OAUTH_CLIENT_ID="test-google-client.apps.googleusercontent.com",
+    GOOGLE_OAUTH_CLIENT_SECRET="test-google-secret",
+    FRONTEND_URL="http://localhost:5173",
+    CORS_ALLOWED_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"],
+)
+
+
+@override_settings(**GOOGLE_SETTINGS)
+class GoogleAuthTests(APITestCase):
+    """POST /api/auth/google — real code exchange (Google mocked)."""
+
+    def setUp(self) -> None:
+        self.url = reverse("auth_google")
+        self.body = {
+            "code": "4/0AX4XfWh-test-code",
+            "redirectUri": "http://localhost:5173/auth-callback",
+            "redirect_uri": "http://localhost:5173/auth-callback",
+        }
+
+    def test_google_login_missing_user_is_404(self) -> None:
+        with patch("users.views.exchange_code", return_value="fake-id-token"):
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS):
+                response = self.client.post(
+                    self.url,
+                    {**self.body, "intent": "login", "createAccount": False},
+                    format="json",
+                )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["code"], "no_account")
+        self.assertEqual(
+            response.data["message"],
+            "There is no Admart account for this email. Please sign up first, then sign in.",
+        )
+        self.assertFalse(User.objects.filter(email="ada@example.com").exists())
+
+    def test_google_missing_intent_does_not_create(self) -> None:
+        with patch("users.views.exchange_code", return_value="fake-id-token"):
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS):
+                response = self.client.post(self.url, self.body, format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["code"], "no_account")
+        self.assertFalse(User.objects.filter(email="ada@example.com").exists())
+
+    def test_google_register_creates_user_and_returns_jwt(self) -> None:
+        with patch("users.views.exchange_code", return_value="fake-id-token") as mock_ex:
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS) as mock_verify:
+                response = self.client.post(
+                    self.url,
+                    {**self.body, "intent": "register", "createAccount": True},
+                    format="json",
+                )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("accessToken", response.data)
+        self.assertIn("refreshToken", response.data)
+        self.assertEqual(response.data["user"]["email"], "ada@example.com")
+        self.assertEqual(response.data["user"]["firstName"], "Ada")
+        self.assertEqual(response.data["user"]["lastName"], "Lovelace")
+        self.assertEqual(response.data["user"]["googleId"], "google-sub-123")
+        self.assertTrue(response.data["user"]["emailVerified"])
+        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
+        mock_ex.assert_called_once_with(
+            "4/0AX4XfWh-test-code", "http://localhost:5173/auth-callback"
+        )
+        mock_verify.assert_called_once_with("fake-id-token")
+        user = User.objects.get(email="ada@example.com")
+        self.assertTrue(user.email_verified)
+        self.assertFalse(user.has_usable_password())
+
+    def test_google_login_after_register_reuses_user(self) -> None:
+        with patch("users.views.exchange_code", return_value="fake-id-token"):
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS):
+                signup = self.client.post(
+                    self.url,
+                    {**self.body, "intent": "register", "createAccount": True},
+                    format="json",
+                )
+                signin = self.client.post(
+                    self.url,
+                    {**self.body, "intent": "login", "createAccount": False},
+                    format="json",
+                )
+        self.assertEqual(signup.status_code, status.HTTP_200_OK)
+        self.assertEqual(signin.status_code, status.HTTP_200_OK)
+        self.assertEqual(User.objects.filter(email="ada@example.com").count(), 1)
+
+    def test_google_links_existing_email(self) -> None:
+        existing = User.objects.create_user(
+            email="ada@example.com",
+            password="Password123!",
+            first_name="Ada",
+            last_name="",
+            email_verified=False,
+        )
+        with patch("users.views.exchange_code", return_value="fake-id-token"):
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS):
+                response = self.client.post(self.url, self.body, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(User.objects.filter(email="ada@example.com").count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.google_id, "google-sub-123")
+        self.assertTrue(existing.email_verified)
+        self.assertEqual(existing.last_name, "Lovelace")
+
+    def test_google_rejects_unverified_email(self) -> None:
+        from users.google import GoogleAuthError
+
+        with patch("users.views.exchange_code", return_value="fake-id-token"):
+            with patch(
+                "users.views.verify_id_token",
+                side_effect=GoogleAuthError("Google email is not verified."),
+            ):
+                response = self.client.post(self.url, self.body, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["message"], "Google email is not verified.")
+        self.assertFalse(User.objects.filter(email="ada@example.com").exists())
+
+    def test_google_failed_exchange_is_400_not_401(self) -> None:
+        from users.google import GoogleAuthError
+
+        with patch(
+            "users.views.exchange_code",
+            side_effect=GoogleAuthError("Google sign-in failed."),
+        ):
+            response = self.client.post(self.url, self.body, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["message"], "Google sign-in failed.")
+
+    def test_google_missing_code_is_400(self) -> None:
+        response = self.client.post(self.url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["message"], "Missing authorization code.")
+
+    def test_google_rejects_unknown_redirect_uri(self) -> None:
+        from users.google import exchange_code, GoogleAuthError
+
+        with self.assertRaises(GoogleAuthError):
+            exchange_code("some-code", "https://evil.example/callback")
+
+    def test_google_id_token_path_skips_code_exchange(self) -> None:
+        with patch("users.views.exchange_code") as mock_ex:
+            with patch("users.views.verify_id_token", return_value=GOOGLE_CLAIMS):
+                response = self.client.post(
+                    self.url,
+                    {"idToken": "mobile-id-token", "intent": "register", "createAccount": True},
+                    format="json",
+                )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_ex.assert_not_called()
+        self.assertEqual(response.data["user"]["email"], "ada@example.com")
+

@@ -20,6 +20,7 @@ class UserSerializer(serializers.ModelSerializer):
     lastName = serializers.CharField(source="last_name", required=False, allow_blank=True)
     avatarUrl = serializers.URLField(source="avatar_url", required=False, allow_null=True)
     googleId = serializers.CharField(source="google_id", required=False, allow_null=True)
+    emailVerified = serializers.BooleanField(source="email_verified", read_only=True)
     creditsTotal = serializers.DecimalField(
         source="credits_total", max_digits=10, decimal_places=4, read_only=True, coerce_to_string=False
     )
@@ -66,6 +67,7 @@ class UserSerializer(serializers.ModelSerializer):
             "lastName",
             "avatarUrl",
             "googleId",
+            "emailVerified",
             "plan",
             "creditsTotal",
             "creditsUsed",
@@ -84,7 +86,7 @@ class UserSerializer(serializers.ModelSerializer):
             "brand_industry",
             "brand_color_hex",
         ]
-        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "planDetails", "brandKit", "projectCount", "activeProjectId"]
+        read_only_fields = ["id", "email", "plan", "creditsTotal", "creditsUsed", "creditsRemaining", "creditsResetAt", "planDetails", "brandKit", "projectCount", "activeProjectId", "emailVerified"]
         extra_kwargs = {
             "brand_name": {"required": False, "allow_blank": True},
             "brand_industry": {"required": False, "allow_blank": True},
@@ -161,9 +163,34 @@ class ResetPasswordSerializer(serializers.Serializer):
 
 
 class GoogleAuthSerializer(serializers.Serializer):
-    """Serializer for Google OAuth 2.0 exchange."""
+    """Serializer for Google OAuth 2.0 code exchange (web) or id_token (mobile)."""
 
-    code = serializers.CharField(required=True)
+    code = serializers.CharField(required=False, allow_blank=True, default="")
+    redirectUri = serializers.CharField(required=False, allow_blank=True, default="")
+    redirect_uri = serializers.CharField(required=False, allow_blank=True, default="")
+    idToken = serializers.CharField(required=False, allow_blank=True, default="")
+    id_token = serializers.CharField(required=False, allow_blank=True, default="")
+    intent = serializers.CharField(required=False, allow_blank=True, default="")
+    createAccount = serializers.BooleanField(required=False, allow_null=True, default=None)
+
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        code = (attrs.get("code") or "").strip()
+        id_token = (attrs.get("idToken") or attrs.get("id_token") or "").strip()
+        redirect_uri = (attrs.get("redirectUri") or attrs.get("redirect_uri") or "").strip()
+        intent = (attrs.get("intent") or "").strip().lower()
+        if intent and intent not in ("login", "register"):
+            raise serializers.ValidationError({"intent": "Must be login or register."})
+        if not code and not id_token:
+            raise serializers.ValidationError({"code": "This field is required."})
+        if code and not redirect_uri:
+            raise serializers.ValidationError({"redirectUri": "This field is required."})
+        return {
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "id_token": id_token,
+            "intent": intent,
+            "create_account": attrs.get("createAccount"),
+        }
 
 
 class AuthResponseSerializer(serializers.Serializer):

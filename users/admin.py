@@ -47,7 +47,7 @@ class UserAdmin(BaseUserAdmin):
     list_filter = ("plan", "is_staff", "is_superuser", "is_active", "onboarding_completed")
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        (_("Personal Info"), {"fields": ("first_name", "last_name", "avatar_url", "google_id")}),
+        (_("Personal Info"), {"fields": ("first_name", "last_name", "avatar_url", "google_id", "email_verified")}),
         (
             _("Credits & Plan"),
             {

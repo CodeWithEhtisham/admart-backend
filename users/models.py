@@ -56,6 +56,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=150, blank=True)
     avatar_url = models.URLField(max_length=1000, null=True, blank=True)
     google_id = models.CharField(max_length=255, null=True, blank=True)
+    email_verified = models.BooleanField(default=False)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

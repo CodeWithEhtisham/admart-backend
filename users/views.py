@@ -13,6 +13,14 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from projects.models import Project, SocialAccount
+from users.google import (
+    NO_ACCOUNT,
+    GoogleAuthError,
+    exchange_code,
+    resolve_google_user,
+    should_create_account,
+    verify_id_token,
+)
 from users.serializers import (
     AuthResponseSerializer,
     CustomTokenObtainPairSerializer,
@@ -76,6 +84,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         },
     )
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        email = (request.data.get("email") or request.data.get("username") or "").strip()
+        if email and not User.objects.filter(email__iexact=email).exists():
+            return Response(NO_ACCOUNT, status=status.HTTP_404_NOT_FOUND)
         return super().post(request, *args, **kwargs)
 
 
@@ -185,7 +196,7 @@ class ResetPasswordView(APIView):
 
 
 class GoogleAuthView(APIView):
-    """View to exchange Google OAuth 2.0 auth code for user details and tokens."""
+    """Exchange a Google auth code (or id_token) for Admart JWT."""
 
     permission_classes = [AllowAny]
     serializer_class = GoogleAuthSerializer
@@ -198,40 +209,44 @@ class GoogleAuthView(APIView):
         },
     )
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        """Verify auth code and log in / register a Google account."""
         serializer = GoogleAuthSerializer(data=request.data)
-        if serializer.is_valid():
-            # In a real environment, you would exchange the code with Google's API:
-            #   requests.post("https://oauth2.googleapis.com/token", data={code, client_id, ...})
-            # For demonstration/testing, we perform a mock validation/creation:
-            code = serializer.validated_data["code"]
-            email = f"google_user_{code[:6]}@example.com"
-
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "first_name": "",
-                    "last_name": "",
-                    "google_id": f"google-oauth-{code[:12]}",
-                    "avatar_url": "",
-                    "plan": "free",
-                    "credits_total": 50,
-                    "credits_remaining": 50,
-                },
-            )
-
-            refresh = RefreshToken.for_user(user)
-
+        if not serializer.is_valid():
+            code = (request.data.get("code") or "").strip()
+            id_token = (request.data.get("idToken") or request.data.get("id_token") or "").strip()
+            if not code and not id_token:
+                return Response(
+                    {"message": "Missing authorization code."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
-                {
-                    "accessToken": str(refresh.access_token),
-                    "refreshToken": str(refresh),
-                    "user": UserSerializer(user).data,
-                },
-                status=status.HTTP_200_OK,
+                {"message": "Google sign-in failed."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        try:
+            if data["id_token"]:
+                claims = verify_id_token(data["id_token"])
+            else:
+                id_token = exchange_code(data["code"], data["redirect_uri"])
+                claims = verify_id_token(id_token)
+        except GoogleAuthError as exc:
+            return Response({"message": exc.message}, status=exc.status_code)
+
+        create = should_create_account(data.get("intent") or "", data.get("create_account"))
+        user = resolve_google_user(claims, create=create)
+        if user is None:
+            return Response(NO_ACCOUNT, status=status.HTTP_404_NOT_FOUND)
+
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "accessToken": str(refresh.access_token),
+                "refreshToken": str(refresh),
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class LogoutView(APIView):

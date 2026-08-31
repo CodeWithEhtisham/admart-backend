@@ -652,12 +652,23 @@ components:
       - email
     GoogleAuth:
       type: object
-      description: Serializer for Google OAuth 2.0 exchange.
+      description: Serializer for Google OAuth 2.0 code exchange (web) or id_token (mobile).
       properties:
         code:
           type: string
-      required:
-      - code
+        redirectUri:
+          type: string
+        redirect_uri:
+          type: string
+        idToken:
+          type: string
+        id_token:
+          type: string
+        intent:
+          type: string
+        createAccount:
+          type: boolean
+          nullable: true
     Message:
       type: object
       description: Schema for generic API message responses.

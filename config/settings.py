@@ -210,7 +210,8 @@ CORS_ALLOW_CREDENTIALS = True
 # Frontend base URL (where OAuth callbacks redirect back to).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-# Google / YouTube OAuth (social account connections — separate from Google login).
+# Google / YouTube OAuth (Google Sign-In + YouTube social connect).
+# Client id must match the frontend VITE_GOOGLE_CLIENT_ID.
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 YOUTUBE_OAUTH_REDIRECT_URI = os.getenv(
