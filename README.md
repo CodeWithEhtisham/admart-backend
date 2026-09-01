@@ -44,14 +44,14 @@ Django apps: `config`, `users`, `projects`, `content`.
 
 | Route | Notes |
 |---|---|
-| `/progress`, `/result`, `/publish` | Publish/result chrome; no Publication APIs yet |
+| `/progress`, `/result` | Result chrome; publish is backed by `/api/projects/:id/publish` and `/ads/boost` |
 | `/templates`, `/calendar`, `/analytics`, `/notifications` | Local/mock data |
 | `/brand-kit`, `/settings` | Mostly local UI; brand fields exist on User/Project but pages are not fully API-driven |
 | `/dashboard` | Shell UI; not a full analytics backend |
 
 ### Planned
 
-Publication / analytics sync, TikTok OAuth, agent/automation loop. Expand video catalog beyond curated set as needed.
+Publication / analytics sync, full Ads Manager. Expand video catalog beyond curated set as needed.
 
 ---
 
@@ -201,15 +201,18 @@ npm run dev
 
 ## OAuth notes (social)
 
-- **YouTube**: OAuth connect URL + callback implemented; redirects to `{FRONTEND_URL}/social?connected=youtube`.
-- **TikTok**: model allows it; connect URL returns **501** until implemented.
-- **Facebook / Instagram**: Meta app env vars present; publish scopes gated by `FACEBOOK_PUBLISH_ENABLED` / `INSTAGRAM_PUBLISH_ENABLED`.
+- **YouTube / Facebook / Instagram / TikTok / Snapchat**: connect URL + callback implemented; redirects to `{FRONTEND_URL}/social?connected=<platform>`.
+- **Publishing scopes** stay off until App Review: `FACEBOOK_PUBLISH_ENABLED`, `INSTAGRAM_PUBLISH_ENABLED`, `TIKTOK_PUBLISH_ENABLED`.
+- **TikTok** redirect URI must be `https` (ngrok locally). **Snapchat Login Kit** is identity only (no organic post).
+- **Ads accounts** (Meta / TikTok / Snap) use separate OAuth at `/api/projects/:id/ads/connect/<provider>/url` and `/api/ads/callback/<provider>`. Do not mix ads scopes into organic Connect.
+- **Meta Invalid Scopes** on Connect Meta Ads: a Facebook Login + “App Ads Manager” app cannot add Marketing API. Create a second **Business** app with use case **Create & manage ads with Marketing API**, set `META_ADS_APP_ID` / `META_ADS_APP_SECRET`, and add `{BACKEND}/api/ads/callback/meta` as that app’s redirect URI. Keep `META_APP_*` for organic Facebook Login.
+- Fill portal credentials in `.env` (`INSTAGRAM_APP_*`, `TIKTOK_CLIENT_*`, `SNAPCHAT_CLIENT_*`) and restart Django.
 
 ---
 
 ## Known gaps (do not document as done)
 
-1. No publish / analytics APIs yet (`/publish`, `/analytics` UI is mock).
+1. Facebook/Instagram/TikTok organic post needs App Review (`*_PUBLISH_ENABLED`). Full Ads Manager (audiences, reporting, Google/YouTube ads) is later.
 2. Video catalog is curated (not all ~141 fal endpoints); some partner models may 502 if the account lacks access — swap ids in `video_catalog.py`.
 3. `requirements.txt` has no pinned versions; fal is called via `requests` (no fal SDK package).
 

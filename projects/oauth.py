@@ -5,6 +5,8 @@ tokens, refresh tokens, and fetch the connected account's public profile. New
 platforms register here without touching the views or the data model.
 """
 
+import base64
+import hashlib
 from urllib.parse import urlencode
 
 import requests
@@ -478,6 +480,116 @@ class TikTokProvider:
         }
 
 
+def _pkce_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+class SnapchatProvider:
+    """Snapchat Login Kit (authorization code + PKCE). Identity only — no publish."""
+
+    platform = "snapchat"
+    requires_pkce = True
+    AUTH_URL = "https://accounts.snapchat.com/accounts/oauth2/auth"
+    TOKEN_URL = "https://accounts.snapchat.com/accounts/oauth2/token"
+    ME_URL = "https://kit.snapchat.com/v1/me"
+    SCOPES = [
+        "https://auth.snapchat.com/oauth2/api/user.display_name",
+        "https://auth.snapchat.com/oauth2/api/user.external_id",
+        "https://auth.snapchat.com/oauth2/api/user.bitmoji.avatar",
+    ]
+
+    def _basic_auth(self) -> str:
+        raw = f"{settings.SNAPCHAT_CLIENT_ID}:{settings.SNAPCHAT_CLIENT_SECRET}"
+        return base64.b64encode(raw.encode()).decode()
+
+    def build_auth_url(self, state: str, code_verifier: str = "") -> str:
+        params = {
+            "client_id": settings.SNAPCHAT_CLIENT_ID,
+            "redirect_uri": settings.SNAPCHAT_OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": " ".join(self.SCOPES),
+            "state": state,
+            "code_challenge": _pkce_challenge(code_verifier),
+            "code_challenge_method": "S256",
+        }
+        return f"{self.AUTH_URL}?{urlencode(params)}"
+
+    def exchange_code(self, code: str, code_verifier: str = "") -> dict:
+        resp = requests.post(
+            self.TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.SNAPCHAT_OAUTH_REDIRECT_URI,
+                "client_id": settings.SNAPCHAT_CLIENT_ID,
+                "code_verifier": code_verifier,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {self._basic_auth()}",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            raise ValueError(data.get("error_description") or data["error"])
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in"),
+            "scope": data.get("scope", ""),
+        }
+
+    def refresh_access_token(self, refresh_token: str) -> dict:
+        resp = requests.post(
+            self.TOKEN_URL,
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {self._basic_auth()}",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            raise ValueError(data.get("error_description") or data["error"])
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in"),
+        }
+
+    def fetch_profile(self, access_token: str) -> dict:
+        resp = requests.post(
+            self.ME_URL,
+            json={"query": "{me{displayName bitmoji{avatar} externalId}}"},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if payload.get("errors"):
+            raise ValueError(str(payload["errors"]))
+        me = (payload.get("data") or {}).get("me") or {}
+        external_id = me.get("externalId") or ""
+        display = (me.get("displayName") or "").strip()
+        if not external_id and not display:
+            raise ValueError("Snapchat profile empty")
+        bitmoji = me.get("bitmoji") or {}
+        return {
+            "externalId": external_id,
+            "displayName": display,
+            "handle": "",
+            "avatarUrl": bitmoji.get("avatar"),
+        }
+
+
 # Scopes are split into "connect now" vs "publish later":
 #   - Login/connect works today with only default scopes.
 #   - Publishing scopes are "Invalid Scopes" until enabled on the Meta app AND
@@ -504,6 +616,7 @@ PROVIDERS = {
     ),
     "instagram": InstagramProvider(),
     "tiktok": TikTokProvider(),
+    "snapchat": SnapchatProvider(),
 }
 
 

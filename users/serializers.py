@@ -211,7 +211,9 @@ class OnboardingCompleteSerializer(serializers.Serializer):
     """Serializer for completing onboarding — saves platforms, brand info, and optional prompt."""
 
     connectedPlatforms = serializers.ListField(
-        child=serializers.ChoiceField(choices=["tiktok", "youtube", "instagram", "facebook"]),
+        child=serializers.ChoiceField(
+            choices=["tiktok", "youtube", "instagram", "facebook", "snapchat"]
+        ),
         required=False,
         default=list,
     )

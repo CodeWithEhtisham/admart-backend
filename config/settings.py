@@ -260,6 +260,32 @@ TIKTOK_PUBLISH_ENABLED = os.getenv("TIKTOK_PUBLISH_ENABLED", "False").lower() in
     "yes",
 )
 
+# Snapchat Login Kit (identity only). Add the redirect URI in the Snap Kit portal.
+SNAPCHAT_CLIENT_ID = os.getenv("SNAPCHAT_CLIENT_ID", "")
+SNAPCHAT_CLIENT_SECRET = os.getenv("SNAPCHAT_CLIENT_SECRET", "")
+SNAPCHAT_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAPCHAT_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/snapchat"
+)
+
+# Ads Manager OAuth — separate from organic Login Kit. Do not add these scopes to Connect.
+# Marketing API cannot be added to a Facebook Login + App Ads Manager app; use a
+# second Business app and set META_ADS_APP_* (falls back to META_APP_* if empty).
+META_ADS_APP_ID = os.getenv("META_ADS_APP_ID", "")
+META_ADS_APP_SECRET = os.getenv("META_ADS_APP_SECRET", "")
+META_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "META_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/meta"
+)
+TIKTOK_ADS_APP_ID = os.getenv("TIKTOK_ADS_APP_ID", "")
+TIKTOK_ADS_APP_SECRET = os.getenv("TIKTOK_ADS_APP_SECRET", "")
+TIKTOK_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "TIKTOK_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/tiktok"
+)
+SNAP_ADS_CLIENT_ID = os.getenv("SNAP_ADS_CLIENT_ID", "")
+SNAP_ADS_CLIENT_SECRET = os.getenv("SNAP_ADS_CLIENT_SECRET", "")
+SNAP_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAP_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/snap"
+)
+
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")

@@ -273,17 +273,23 @@ class SocialConnectUrlView(ProjectScopedSocialMixin, APIView):
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
 
-        state = signing.dumps(
-            {
-                "projectId": str(project.id),
-                "platform": platform,
-                "userId": str(request.user.id),
-                "nonce": secrets.token_urlsafe(8),
-            },
-            salt=OAUTH_STATE_SALT,
-        )
+        payload = {
+            "projectId": str(project.id),
+            "platform": platform,
+            "userId": str(request.user.id),
+            "nonce": secrets.token_urlsafe(8),
+        }
+        code_verifier = ""
+        if getattr(provider, "requires_pkce", False):
+            code_verifier = secrets.token_urlsafe(64)
+            payload["codeVerifier"] = code_verifier
+        state = signing.dumps(payload, salt=OAUTH_STATE_SALT)
+        if code_verifier:
+            auth_url = provider.build_auth_url(state, code_verifier=code_verifier)
+        else:
+            auth_url = provider.build_auth_url(state)
         return Response(
-            {"authUrl": provider.build_auth_url(state), "state": state},
+            {"authUrl": auth_url, "state": state},
             status=status.HTTP_200_OK,
         )
 
@@ -331,7 +337,10 @@ class SocialCallbackView(APIView):
             return self._redirect(platform, ok=False)
 
         try:
-            tokens = provider.exchange_code(code)
+            if getattr(provider, "requires_pkce", False):
+                tokens = provider.exchange_code(code, code_verifier=payload.get("codeVerifier", ""))
+            else:
+                tokens = provider.exchange_code(code)
             profile = provider.fetch_profile(tokens["access_token"])
         except Exception:  # noqa: BLE001 — provider/network failures map to an error redirect
             logger.exception("OAuth token exchange/profile fetch failed for %s", platform)

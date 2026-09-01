@@ -1,5 +1,12 @@
 from django.urls import path
 
+from projects.ads_views import (
+    AdsConnectUrlView,
+    AdsDisconnectView,
+    ProjectAdAccountListView,
+    ProjectAdBoostView,
+)
+from projects.publish_views import ProjectPublishView
 from projects.views import (
     ProjectActivateView,
     ProjectDetailView,
@@ -35,4 +42,17 @@ urlpatterns = [
         ProjectSocialDisconnectView.as_view(),
         name="project_social_disconnect",
     ),
+    path("<uuid:project_id>/publish", ProjectPublishView.as_view(), name="project_publish"),
+    path("<uuid:project_id>/ads/accounts", ProjectAdAccountListView.as_view(), name="project_ads_list"),
+    path(
+        "<uuid:project_id>/ads/connect/<str:provider>/url",
+        AdsConnectUrlView.as_view(),
+        name="project_ads_connect_url",
+    ),
+    path(
+        "<uuid:project_id>/ads/disconnect/<str:provider>",
+        AdsDisconnectView.as_view(),
+        name="project_ads_disconnect",
+    ),
+    path("<uuid:project_id>/ads/boost", ProjectAdBoostView.as_view(), name="project_ads_boost"),
 ]

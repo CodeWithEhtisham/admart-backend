@@ -34,6 +34,7 @@ from content.views import (
     TemplateListView,
     TemplateUseView,
 )
+from projects.ads_views import AdsCallbackView
 from projects.views import ProjectListCreateView, SocialCallbackView
 from users.credits_views import CreditsBalanceView
 
@@ -59,6 +60,7 @@ urlpatterns = [
     path("api/admin/", include("admin_panel.urls")),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),
+    path("api/ads/callback/<str:provider>", AdsCallbackView.as_view(), name="ads_callback"),
     # OpenAPI schema endpoints
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

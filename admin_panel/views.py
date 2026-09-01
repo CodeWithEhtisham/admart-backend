@@ -470,6 +470,10 @@ class AdminSettingsView(AdminAPIView):
                     "connectEnabled": bool(settings.TIKTOK_CLIENT_KEY),
                     "publishEnabled": settings.TIKTOK_PUBLISH_ENABLED,
                 },
+                "snapchat": {
+                    "connectEnabled": bool(settings.SNAPCHAT_CLIENT_ID),
+                    "publishEnabled": False,
+                },
             },
         }
 

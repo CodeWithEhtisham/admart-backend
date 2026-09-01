@@ -606,3 +606,362 @@ class TikTokProviderTests(SimpleTestCase):
         profile = TikTokProvider().fetch_profile("act.tt")
         self.assertEqual(profile["externalId"], "oid-1")
         self.assertEqual(profile["displayName"], "Maya")
+
+
+@override_settings(
+    SNAPCHAT_CLIENT_ID="snap-id",
+    SNAPCHAT_CLIENT_SECRET="snap-secret",
+    SNAPCHAT_OAUTH_REDIRECT_URI="http://localhost:8000/api/social/callback/snapchat",
+    FRONTEND_URL="http://localhost:5173",
+)
+class SnapchatOAuthConnectionTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="snap@example.com", password="Password123!", first_name="Sam", last_name="Snap"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand A")
+
+    def _connect_url(self) -> str:
+        return reverse(
+            "project_social_connect_url",
+            kwargs={"project_id": self.project.id, "platform": "snapchat"},
+        )
+
+    def test_connect_url_includes_pkce(self) -> None:
+        response = self.client.get(self._connect_url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("accounts.snapchat.com", response.data["authUrl"])
+        self.assertIn("code_challenge_method=S256", response.data["authUrl"])
+        self.assertIn("client_id=snap-id", response.data["authUrl"])
+        payload = signing.loads(response.data["state"], salt=OAUTH_STATE_SALT, max_age=600)
+        self.assertTrue(payload.get("codeVerifier"))
+
+    @patch("projects.oauth.SnapchatProvider.fetch_profile")
+    @patch("projects.oauth.SnapchatProvider.exchange_code")
+    def test_callback_success(self, mock_exchange, mock_profile) -> None:
+        mock_exchange.return_value = {
+            "access_token": "snap.access",
+            "refresh_token": "snap.refresh",
+            "expires_in": 3600,
+        }
+        mock_profile.return_value = {
+            "externalId": "ext-1",
+            "displayName": "Maya",
+            "handle": "",
+            "avatarUrl": "https://cdn.example/bitmoji.png",
+        }
+        state = signing.dumps(
+            {
+                "projectId": str(self.project.id),
+                "platform": "snapchat",
+                "userId": str(self.user.id),
+                "nonce": "abc",
+                "codeVerifier": "verifier",
+            },
+            salt=OAUTH_STATE_SALT,
+        )
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "snapchat"})
+        response = self.client.get(url, {"code": "c", "state": state})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=snapchat")
+        mock_exchange.assert_called_once_with("c", code_verifier="verifier")
+        account = SocialAccount.objects.get(project=self.project, platform="snapchat")
+        self.assertEqual(account.display_name, "Maya")
+        self.assertEqual(account.external_id, "ext-1")
+
+
+@override_settings(
+    SNAPCHAT_CLIENT_ID="snap-id",
+    SNAPCHAT_CLIENT_SECRET="snap-secret",
+    SNAPCHAT_OAUTH_REDIRECT_URI="http://localhost:8000/api/social/callback/snapchat",
+)
+class SnapchatProviderTests(SimpleTestCase):
+    @patch("projects.oauth.requests.post")
+    def test_fetch_profile_reads_graphql_me(self, mock_post) -> None:
+        mock_post.return_value.json.return_value = {
+            "data": {
+                "me": {
+                    "displayName": "Maya",
+                    "externalId": "ext-1",
+                    "bitmoji": {"avatar": "https://cdn.example/b.png"},
+                }
+            },
+            "errors": [],
+        }
+        from projects.oauth import SnapchatProvider
+
+        profile = SnapchatProvider().fetch_profile("tok")
+        self.assertEqual(profile["displayName"], "Maya")
+        self.assertEqual(profile["externalId"], "ext-1")
+        self.assertEqual(profile["avatarUrl"], "https://cdn.example/b.png")
+
+
+class MediaPolicyTests(SimpleTestCase):
+    def test_youtube_rejects_image(self) -> None:
+        from projects.media_policy import validate_organic_platforms
+
+        self.assertEqual(
+            validate_organic_platforms("image", ["youtube"]),
+            "Video only — images cannot be posted here",
+        )
+
+    def test_youtube_accepts_video(self) -> None:
+        from projects.media_policy import validate_organic_platforms
+
+        self.assertEqual(validate_organic_platforms("video", ["youtube"]), "")
+
+    def test_snapchat_organic_rejected(self) -> None:
+        from projects.media_policy import validate_organic_platforms
+
+        self.assertIn("Snapchat", validate_organic_platforms("video", ["snapchat"]))
+
+    def test_tiktok_ads_rejects_image(self) -> None:
+        from projects.media_policy import validate_ads_placements
+
+        self.assertEqual(
+            validate_ads_placements("image", "tiktok", ["tiktok"]),
+            "Video only — images cannot be posted here",
+        )
+
+    def test_meta_ads_accepts_image(self) -> None:
+        from projects.media_policy import validate_ads_placements
+
+        self.assertEqual(validate_ads_placements("image", "meta", ["facebook", "instagram"]), "")
+
+
+def _youtube_ok(*_args, **_kwargs):
+    return {"status": "succeeded", "externalId": "yt-vid-1"}
+
+
+class OrganicPublishTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="pub@example.com", password="Password123!", first_name="P", last_name="U"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand")
+        self.url = reverse("project_publish", kwargs={"project_id": self.project.id})
+
+    def test_image_youtube_returns_400(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        response = self.client.post(
+            self.url,
+            {"kind": "image", "sourceUrl": "https://cdn.example/a.png", "platforms": ["youtube"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Video only", response.data["message"])
+
+    def test_snapchat_organic_returns_400(self) -> None:
+        response = self.client.post(
+            self.url,
+            {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["snapchat"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _youtube_ok})
+    def test_video_youtube_returns_201(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        response = self.client.post(
+            self.url,
+            {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "succeeded")
+        self.assertEqual(response.data["results"]["youtube"]["externalId"], "yt-vid-1")
+
+    def test_facebook_without_review_fails(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        response = self.client.post(
+            self.url,
+            {"kind": "image", "sourceUrl": "https://cdn.example/a.png", "platforms": ["facebook"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["status"], "failed")
+        self.assertIn("App Review", response.data["results"]["facebook"]["error"])
+
+    def test_not_connected_returns_400(self) -> None:
+        response = self.client.post(
+            self.url,
+            {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Not connected", response.data["message"])
+
+
+@override_settings(
+    META_APP_ID="meta-app",
+    META_APP_SECRET="meta-secret",
+    META_ADS_OAUTH_REDIRECT_URI="http://testserver/api/ads/callback/meta",
+    FRONTEND_URL="http://localhost:5173",
+)
+class AdsAccountTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="ads@example.com", password="Password123!", first_name="A", last_name="D"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Ads Brand")
+
+    def test_meta_connect_url(self) -> None:
+        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "meta"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("facebook.com", response.data["authUrl"])
+        self.assertIn("client_id=meta-app", response.data["authUrl"])
+        self.assertIn("ads_management", response.data["authUrl"])
+        self.assertIn("ads_read", response.data["authUrl"])
+        self.assertNotIn("business_management", response.data["authUrl"])
+
+    @override_settings(META_ADS_APP_ID="ads-app-id")
+    def test_meta_connect_url_uses_ads_app_id(self) -> None:
+        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "meta"})
+        response = self.client.get(url)
+        self.assertIn("client_id=ads-app-id", response.data["authUrl"])
+
+    def test_unknown_provider_400(self) -> None:
+        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "google"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_boost_without_account_400(self) -> None:
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "meta",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "placements": ["facebook"],
+                "budget": "10",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Connect", response.data["message"])
+
+    @patch("projects.ads_oauth.create_boost", return_value={"externalId": "camp-1"})
+    def test_meta_boost_201(self, _mock_boost) -> None:
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(
+            project=self.project, provider="meta", connected=True, external_id="act_1"
+        )
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "meta",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "placements": ["facebook", "instagram"],
+                "budget": "25",
+                "startDate": "2026-09-01",
+                "endDate": "2026-09-07",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "succeeded")
+        self.assertEqual(response.data["externalId"], "camp-1")
+
+    @patch("projects.ads_oauth.create_boost", return_value={"externalId": "tt-1"})
+    def test_tiktok_boost_201(self, _mock_boost) -> None:
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(project=self.project, provider="tiktok", connected=True, external_id="adv_1")
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "tiktok",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "placements": ["tiktok"],
+                "budget": "15",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["externalId"], "tt-1")
+
+    @patch("projects.ads_oauth.create_boost", return_value={"externalId": "snap-1"})
+    def test_snap_boost_201(self, _mock_boost) -> None:
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(project=self.project, provider="snap", connected=True, external_id="snap_1")
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "snap",
+                "kind": "image",
+                "sourceUrl": "https://cdn.example/a.png",
+                "placements": ["snapchat"],
+                "budget": "20",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_list_ad_accounts(self) -> None:
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(project=self.project, provider="meta", connected=True, display_name="Acme Ads")
+        url = reverse("project_ads_list", kwargs={"project_id": self.project.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["provider"], "meta")
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(project=self.project, provider="tiktok", connected=True)
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "tiktok",
+                "kind": "image",
+                "sourceUrl": "https://cdn.example/a.png",
+                "placements": ["tiktok"],
+                "budget": "10",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("projects.ads_oauth.MetaAdsProvider.fetch_profile")
+    @patch("projects.ads_oauth.MetaAdsProvider.exchange_code")
+    def test_ads_callback_creates_account(self, mock_exchange, mock_profile) -> None:
+        from projects.ads_views import ADS_STATE_SALT
+        from projects.models import AdAccount
+
+        mock_exchange.return_value = {"access_token": "ads-tok", "expires_in": 3600}
+        mock_profile.return_value = {
+            "externalId": "123456",
+            "displayName": "Meta Ads",
+            "handle": "123456",
+        }
+        state = signing.dumps(
+            {
+                "projectId": str(self.project.id),
+                "provider": "meta",
+                "userId": str(self.user.id),
+                "nonce": "n",
+            },
+            salt=ADS_STATE_SALT,
+        )
+        self.client.force_authenticate(user=None)
+        url = reverse("ads_callback", kwargs={"provider": "meta"})
+        response = self.client.get(url, {"code": "auth-code", "state": state})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?adsConnected=meta")
+        account = AdAccount.objects.get(project=self.project, provider="meta")
+        self.assertTrue(account.connected)
+        self.assertEqual(account.external_id, "123456")
