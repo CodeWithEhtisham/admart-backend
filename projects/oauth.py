@@ -378,6 +378,106 @@ class InstagramProvider:
         }
 
 
+def _tiktok_oauth_body(resp) -> dict:
+    data = resp.json()
+    if data.get("error"):
+        raise ValueError(data.get("error_description") or data["error"])
+    return data
+
+
+class TikTokProvider:
+    """TikTok Login Kit (web). Redirect URI must be https — use ngrok for local."""
+
+    platform = "tiktok"
+    AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
+    TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+    USER_URL = "https://open.tiktokapis.com/v2/user/info/"
+    BASE_SCOPES = ["user.info.basic"]
+    PUBLISH_SCOPES = ["video.upload", "video.publish"]
+
+    @property
+    def scopes(self) -> list[str]:
+        extra = self.PUBLISH_SCOPES if settings.TIKTOK_PUBLISH_ENABLED else []
+        return self.BASE_SCOPES + extra
+
+    def build_auth_url(self, state: str) -> str:
+        params = {
+            "client_key": settings.TIKTOK_CLIENT_KEY,
+            "redirect_uri": settings.TIKTOK_OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": ",".join(self.scopes),
+            "state": state,
+            "disable_auto_auth": "1",
+        }
+        return f"{self.AUTH_URL}?{urlencode(params)}"
+
+    def exchange_code(self, code: str) -> dict:
+        resp = requests.post(
+            self.TOKEN_URL,
+            data={
+                "client_key": settings.TIKTOK_CLIENT_KEY,
+                "client_secret": settings.TIKTOK_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": settings.TIKTOK_OAUTH_REDIRECT_URI,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = _tiktok_oauth_body(resp)
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in"),
+            "scope": data.get("scope", ""),
+        }
+
+    def refresh_access_token(self, refresh_token: str) -> dict:
+        resp = requests.post(
+            self.TOKEN_URL,
+            data={
+                "client_key": settings.TIKTOK_CLIENT_KEY,
+                "client_secret": settings.TIKTOK_CLIENT_SECRET,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = _tiktok_oauth_body(resp)
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in"),
+            "scope": data.get("scope"),
+        }
+
+    def fetch_profile(self, access_token: str) -> dict:
+        resp = requests.get(
+            self.USER_URL,
+            params={"fields": "open_id,display_name,avatar_url"},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        err = payload.get("error") or {}
+        if err.get("code") and err.get("code") != "ok":
+            raise ValueError(err.get("message") or err["code"])
+        user = (payload.get("data") or {}).get("user") or {}
+        display = (user.get("display_name") or "").strip()
+        if not display and not user.get("open_id"):
+            raise ValueError("TikTok profile missing open_id")
+        return {
+            "externalId": user.get("open_id", ""),
+            "displayName": display,
+            "handle": "",
+            "avatarUrl": user.get("avatar_url"),
+        }
+
+
 # Scopes are split into "connect now" vs "publish later":
 #   - Login/connect works today with only default scopes.
 #   - Publishing scopes are "Invalid Scopes" until enabled on the Meta app AND
@@ -403,6 +503,7 @@ PROVIDERS = {
         publish_setting="FACEBOOK_PUBLISH_ENABLED",
     ),
     "instagram": InstagramProvider(),
+    "tiktok": TikTokProvider(),
 }
 
 

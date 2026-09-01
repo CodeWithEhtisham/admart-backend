@@ -466,7 +466,10 @@ class AdminSettingsView(AdminAPIView):
                     "connectEnabled": bool(settings.INSTAGRAM_APP_ID or settings.META_APP_ID),
                     "publishEnabled": settings.INSTAGRAM_PUBLISH_ENABLED,
                 },
-                "tiktok": {"connectEnabled": False, "publishEnabled": False},
+                "tiktok": {
+                    "connectEnabled": bool(settings.TIKTOK_CLIENT_KEY),
+                    "publishEnabled": settings.TIKTOK_PUBLISH_ENABLED,
+                },
             },
         }
 

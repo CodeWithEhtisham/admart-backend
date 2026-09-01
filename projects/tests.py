@@ -249,10 +249,18 @@ class YouTubeOAuthConnectionTests(APITestCase):
         self.assertEqual(payload["userId"], str(self.user.id))
         self.assertEqual(payload["platform"], "youtube")
 
-    def test_connect_url_unimplemented_platform_returns_501(self) -> None:
-        response = self.client.get(self._connect_url("tiktok"))
-        self.assertEqual(response.status_code, status.HTTP_501_NOT_IMPLEMENTED)
-        self.assertEqual(response.data["platform"], "tiktok")
+    def test_tiktok_connect_url_returns_authurl(self) -> None:
+        with self.settings(
+            TIKTOK_CLIENT_KEY="tt-key",
+            TIKTOK_CLIENT_SECRET="tt-secret",
+            TIKTOK_OAUTH_REDIRECT_URI="https://example.ngrok-free.app/api/social/callback/tiktok",
+        ):
+            response = self.client.get(self._connect_url("tiktok"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("tiktok.com/v2/auth/authorize", response.data["authUrl"])
+        self.assertIn("client_key=tt-key", response.data["authUrl"])
+        self.assertIn("user.info.basic", response.data["authUrl"])
+        self.assertNotIn("video.publish", response.data["authUrl"])
 
     def test_connect_url_unknown_platform_returns_400(self) -> None:
         response = self.client.get(self._connect_url("myspace"))
@@ -500,4 +508,101 @@ class InstagramProviderTests(SimpleTestCase):
         profile = InstagramProvider().fetch_profile("long")
         self.assertEqual(profile["handle"], "maya.creates")
         self.assertEqual(profile["externalId"], "17841")
+        self.assertEqual(profile["displayName"], "Maya")
+
+
+@override_settings(
+    TIKTOK_CLIENT_KEY="tt-key",
+    TIKTOK_CLIENT_SECRET="tt-secret",
+    TIKTOK_OAUTH_REDIRECT_URI="https://example.ngrok-free.app/api/social/callback/tiktok",
+    TIKTOK_PUBLISH_ENABLED=False,
+    FRONTEND_URL="http://localhost:5173",
+)
+class TikTokOAuthConnectionTests(APITestCase):
+    """TikTok Login Kit connect URL + callback."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="tiktok@example.com", password="Password123!", first_name="Ty", last_name="Tok"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand A")
+
+    def _valid_state(self) -> str:
+        return signing.dumps(
+            {
+                "projectId": str(self.project.id),
+                "platform": "tiktok",
+                "userId": str(self.user.id),
+                "nonce": "abc",
+            },
+            salt=OAUTH_STATE_SALT,
+        )
+
+    @override_settings(TIKTOK_PUBLISH_ENABLED=True)
+    def test_connect_url_includes_publish_scopes_when_enabled(self) -> None:
+        url = reverse(
+            "project_social_connect_url",
+            kwargs={"project_id": self.project.id, "platform": "tiktok"},
+        )
+        response = self.client.get(url)
+        self.assertIn("video.upload", response.data["authUrl"])
+        self.assertIn("video.publish", response.data["authUrl"])
+
+    @patch("projects.oauth.TikTokProvider.fetch_profile")
+    @patch("projects.oauth.TikTokProvider.exchange_code")
+    def test_callback_success(self, mock_exchange, mock_profile) -> None:
+        mock_exchange.return_value = {
+            "access_token": "act.tt",
+            "refresh_token": "rft.tt",
+            "expires_in": 86400,
+        }
+        mock_profile.return_value = {
+            "externalId": "oid-1",
+            "displayName": "Maya Creates",
+            "handle": "",
+            "avatarUrl": "https://cdn.example/tt.jpg",
+        }
+        self.client.force_authenticate(user=None)
+        url = reverse("social_callback", kwargs={"platform": "tiktok"})
+        response = self.client.get(url, {"code": "c", "state": self._valid_state()})
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=tiktok")
+        account = SocialAccount.objects.get(project=self.project, platform="tiktok")
+        self.assertEqual(account.display_name, "Maya Creates")
+        self.assertEqual(account.get_refresh_token(), "rft.tt")
+
+
+@override_settings(
+    TIKTOK_CLIENT_KEY="tt-key",
+    TIKTOK_CLIENT_SECRET="tt-secret",
+    TIKTOK_OAUTH_REDIRECT_URI="https://example.ngrok-free.app/api/social/callback/tiktok",
+)
+class TikTokProviderTests(SimpleTestCase):
+    @patch("projects.oauth.requests.post")
+    def test_exchange_code_returns_tokens(self, mock_post) -> None:
+        mock_post.return_value.json.return_value = {
+            "access_token": "act.tt",
+            "refresh_token": "rft.tt",
+            "expires_in": 86400,
+            "open_id": "oid-1",
+            "scope": "user.info.basic",
+        }
+        from projects.oauth import TikTokProvider
+
+        tokens = TikTokProvider().exchange_code("auth-code")
+        self.assertEqual(tokens["access_token"], "act.tt")
+        self.assertEqual(tokens["refresh_token"], "rft.tt")
+        self.assertEqual(mock_post.call_args.kwargs["data"]["grant_type"], "authorization_code")
+
+    @patch("projects.oauth.requests.get")
+    def test_fetch_profile_returns_display_name(self, mock_get) -> None:
+        mock_get.return_value.json.return_value = {
+            "data": {"user": {"open_id": "oid-1", "display_name": "Maya", "avatar_url": "https://cdn.example/a.jpg"}},
+            "error": {"code": "ok", "message": ""},
+        }
+        from projects.oauth import TikTokProvider
+
+        profile = TikTokProvider().fetch_profile("act.tt")
+        self.assertEqual(profile["externalId"], "oid-1")
         self.assertEqual(profile["displayName"], "Maya")

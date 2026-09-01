@@ -248,6 +248,18 @@ INSTAGRAM_PUBLISH_ENABLED = os.getenv("INSTAGRAM_PUBLISH_ENABLED", "False").lowe
     "yes",
 )
 
+# TikTok Login Kit. Redirect URI must be https (TikTok rejects http://localhost).
+# Local: ngrok http 8000, then set TIKTOK_OAUTH_REDIRECT_URI to
+#   https://<ngrok-host>/api/social/callback/tiktok
+TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+TIKTOK_OAUTH_REDIRECT_URI = os.getenv("TIKTOK_OAUTH_REDIRECT_URI", "")
+TIKTOK_PUBLISH_ENABLED = os.getenv("TIKTOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
