@@ -730,6 +730,19 @@ class MediaPolicyTests(SimpleTestCase):
 
         self.assertEqual(validate_ads_placements("image", "meta", ["facebook", "instagram"]), "")
 
+    def test_google_ads_rejects_image(self) -> None:
+        from projects.media_policy import validate_ads_placements
+
+        self.assertEqual(
+            validate_ads_placements("image", "google", ["youtube"]),
+            "Video only — images cannot be posted here",
+        )
+
+    def test_google_ads_accepts_video(self) -> None:
+        from projects.media_policy import validate_ads_placements
+
+        self.assertEqual(validate_ads_placements("video", "google", ["youtube"]), "")
+
 
 def _youtube_ok(*_args, **_kwargs):
     return {"status": "succeeded", "externalId": "yt-vid-1"}
@@ -774,6 +787,82 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(response.data["status"], "succeeded")
         self.assertEqual(response.data["results"]["youtube"]["externalId"], "yt-vid-1")
 
+    def test_youtube_passes_title_tags_thumbnail(self) -> None:
+        captured = {}
+
+        def _capture(account, **kwargs):
+            captured.update(kwargs)
+            return {"status": "succeeded", "externalId": "yt-2"}
+
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+            response = self.client.post(
+                self.url,
+                {
+                    "kind": "video",
+                    "sourceUrl": "https://cdn.example/v.mp4",
+                    "platforms": ["youtube"],
+                    "youtube": {
+                        "title": "Summer drop",
+                        "description": "New arrivals",
+                        "tags": ["sale", "brand"],
+                        "privacyStatus": "unlisted",
+                        "thumbnailUrl": "https://cdn.example/thumb.jpg",
+                        "categoryId": "24",
+                    },
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(captured["title"], "Summer drop")
+        self.assertEqual(captured["description"], "New arrivals")
+        self.assertEqual(captured["tags"], ["sale", "brand"])
+        self.assertEqual(captured["privacy"], "unlisted")
+        self.assertEqual(captured["thumbnail_url"], "https://cdn.example/thumb.jpg")
+        self.assertEqual(captured["category_id"], "24")
+        self.assertFalse(captured["made_for_kids"])
+        self.assertTrue(captured["synthetic_media"])
+        self.assertEqual(captured["license_type"], "youtube")
+
+        captured.clear()
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+            response = self.client.post(
+                self.url,
+                {
+                    "kind": "video",
+                    "sourceUrl": "https://cdn.example/v.mp4",
+                    "platforms": ["youtube"],
+                    "youtube": {
+                        "title": "Kids cut",
+                        "madeForKids": "yes",
+                        "containsSyntheticMedia": False,
+                        "license": "creativeCommon",
+                        "notifySubscribers": False,
+                        "playlistId": "PL123",
+                        "language": "en",
+                        "embeddable": False,
+                        "publicStatsViewable": False,
+                        "publishAt": "2026-09-10T15:30:00Z",
+                        "recordingDate": "2026-08-01",
+                        "paidPromotion": True,
+                    },
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(captured["title"], "Kids cut")
+        self.assertTrue(captured["made_for_kids"])
+        self.assertFalse(captured["synthetic_media"])
+        self.assertEqual(captured["license_type"], "creativeCommon")
+        self.assertFalse(captured["notify_subscribers"])
+        self.assertEqual(captured["playlist_id"], "PL123")
+        self.assertEqual(captured["language"], "en")
+        self.assertFalse(captured["embeddable"])
+        self.assertFalse(captured["public_stats"])
+        self.assertEqual(captured["publish_at"], "2026-09-10T15:30:00Z")
+        self.assertEqual(captured["recording_date"], "2026-08-01T00:00:00Z")
+        self.assertTrue(captured["paid_promotion"])
+
     def test_facebook_without_review_fails(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
         response = self.client.post(
@@ -794,10 +883,98 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Not connected", response.data["message"])
 
+    def test_youtube_playlists_requires_connect(self) -> None:
+        url = reverse("project_youtube_playlists", kwargs={"project_id": self.project.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("projects.publish_views.list_youtube_playlists")
+    def test_youtube_playlists_returns_rows(self, mocked) -> None:
+        mocked.return_value = [{"id": "PL1", "title": "Launch"}]
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        url = reverse("project_youtube_playlists", kwargs={"project_id": self.project.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]["title"], "Launch")
+
+
+class YoutubeSuggestTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="yt-suggest@example.com", password="Password123!", first_name="Y", last_name="T"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(
+            owner=self.user, name="Shop", brand_name="Shop Co", brand_industry="retail"
+        )
+        self.url = reverse("project_youtube_suggest", kwargs={"project_id": self.project.id})
+
+    @override_settings(GEMINI_API_KEY="")
+    def test_suggest_requires_gemini_key(self) -> None:
+        response = self.client.post(
+            self.url,
+            {"title": "Summer drop", "prompt": "cinematic product launch for a clothing brand"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn("GEMINI_API_KEY", response.data["message"])
+
+    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
+    @patch("projects.youtube_suggest.requests.post")
+    def test_suggest_uses_gemini_json(self, mock_post) -> None:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    '{"title":"Summer Drop Official","description":"New arrivals '
+                                    'this season.","tags":["sale","fashion","brand"],'
+                                    '"categoryId":"26","language":"en"}'
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        response = self.client.post(
+            self.url,
+            {"title": "clip", "prompt": "summer fashion haul"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["title"], "Summer Drop Official")
+        self.assertEqual(response.data["description"], "New arrivals this season.")
+        self.assertEqual(response.data["tags"], ["sale", "fashion", "brand"])
+        self.assertEqual(response.data["categoryId"], "26")
+        self.assertEqual(response.data["language"], "en")
+
+    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
+    @patch("projects.youtube_suggest.requests.post")
+    def test_suggest_gemini_error_is_not_hidden(self, mock_post) -> None:
+        mock_post.return_value.status_code = 404
+        mock_post.return_value.text = "model not found"
+        response = self.client.post(
+            self.url,
+            {"title": "clip", "prompt": "summer fashion haul"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("Gemini", response.data["message"])
+
+    def test_suggest_requires_prompt_or_title(self) -> None:
+        response = self.client.post(self.url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 @override_settings(
     META_APP_ID="meta-app",
     META_APP_SECRET="meta-secret",
+    META_ADS_APP_ID="",
+    META_ADS_APP_SECRET="",
     META_ADS_OAUTH_REDIRECT_URI="http://testserver/api/ads/callback/meta",
     FRONTEND_URL="http://localhost:5173",
 )
@@ -826,7 +1003,7 @@ class AdsAccountTests(APITestCase):
         self.assertIn("client_id=ads-app-id", response.data["authUrl"])
 
     def test_unknown_provider_400(self) -> None:
-        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "google"})
+        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "myspace"})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -965,3 +1142,55 @@ class AdsAccountTests(APITestCase):
         account = AdAccount.objects.get(project=self.project, provider="meta")
         self.assertTrue(account.connected)
         self.assertEqual(account.external_id, "123456")
+
+    @override_settings(
+        GOOGLE_OAUTH_CLIENT_ID="google-client",
+        GOOGLE_ADS_OAUTH_REDIRECT_URI="http://testserver/api/ads/callback/google",
+    )
+    def test_google_connect_url(self) -> None:
+        url = reverse("project_ads_connect_url", kwargs={"project_id": self.project.id, "provider": "google"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("accounts.google.com", response.data["authUrl"])
+        self.assertIn("adwords", response.data["authUrl"])
+        self.assertNotIn("youtube.upload", response.data["authUrl"])
+
+    def test_google_boost_requires_youtube_channel(self) -> None:
+        from projects.models import AdAccount
+
+        AdAccount.objects.create(project=self.project, provider="google", connected=True, external_id="123")
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "google",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "placements": ["youtube"],
+                "budget": "10",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("YouTube", response.data["message"])
+
+    @patch("projects.ads_oauth.create_boost", return_value={"externalId": "yt-ad-1"})
+    def test_google_boost_201(self, _mock_boost) -> None:
+        from projects.models import AdAccount
+
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        AdAccount.objects.create(project=self.project, provider="google", connected=True, external_id="123")
+        url = reverse("project_ads_boost", kwargs={"project_id": self.project.id})
+        response = self.client.post(
+            url,
+            {
+                "provider": "google",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "placements": ["youtube"],
+                "budget": "20",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["externalId"], "yt-ad-1")

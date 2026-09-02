@@ -182,6 +182,7 @@ class AdAccount(models.Model):
         ("meta", "Meta"),
         ("tiktok", "TikTok"),
         ("snap", "Snapchat"),
+        ("google", "Google Ads"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

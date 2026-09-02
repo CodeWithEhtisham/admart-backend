@@ -286,6 +286,13 @@ SNAP_ADS_OAUTH_REDIRECT_URI = os.getenv(
     "SNAP_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/snap"
 )
 
+# Google Ads (YouTube ads). Same Google Cloud client as YouTube Connect, different
+# redirect URI and adwords scope. Developer token: ads.google.com → API Center.
+GOOGLE_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/google"
+)
+GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
+
 # Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")

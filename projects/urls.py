@@ -6,7 +6,7 @@ from projects.ads_views import (
     ProjectAdAccountListView,
     ProjectAdBoostView,
 )
-from projects.publish_views import ProjectPublishView
+from projects.publish_views import ProjectPublishView, ProjectYoutubePlaylistsView, ProjectYoutubeSuggestView
 from projects.views import (
     ProjectActivateView,
     ProjectDetailView,
@@ -43,6 +43,16 @@ urlpatterns = [
         name="project_social_disconnect",
     ),
     path("<uuid:project_id>/publish", ProjectPublishView.as_view(), name="project_publish"),
+    path(
+        "<uuid:project_id>/social/youtube/playlists",
+        ProjectYoutubePlaylistsView.as_view(),
+        name="project_youtube_playlists",
+    ),
+    path(
+        "<uuid:project_id>/publish/youtube/suggest",
+        ProjectYoutubeSuggestView.as_view(),
+        name="project_youtube_suggest",
+    ),
     path("<uuid:project_id>/ads/accounts", ProjectAdAccountListView.as_view(), name="project_ads_list"),
     path(
         "<uuid:project_id>/ads/connect/<str:provider>/url",

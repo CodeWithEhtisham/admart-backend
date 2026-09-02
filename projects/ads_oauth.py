@@ -162,11 +162,124 @@ class SnapAdsProvider:
         return {"externalId": "", "displayName": "Snap Ads", "handle": ""}
 
 
+class GoogleAdsProvider:
+    """Google Ads API — YouTube ads. Separate from YouTube channel Connect."""
+
+    provider = "google"
+    requires_pkce = False
+    AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+    TOKEN_URL = "https://oauth2.googleapis.com/token"
+    SCOPE = "https://www.googleapis.com/auth/adwords"
+    ADS_API = "https://googleads.googleapis.com/v18"
+
+    def build_auth_url(self, state: str) -> str:
+        params = {
+            "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
+            "redirect_uri": settings.GOOGLE_ADS_OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": self.SCOPE,
+            "access_type": "offline",
+            "prompt": "consent select_account",
+            "state": state,
+        }
+        return f"{self.AUTH_URL}?{urlencode(params)}"
+
+    def exchange_code(self, code: str) -> dict:
+        resp = requests.post(
+            self.TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
+                "client_secret": settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                "redirect_uri": settings.GOOGLE_ADS_OAUTH_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def fetch_profile(self, access_token: str) -> dict:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        dev = getattr(settings, "GOOGLE_ADS_DEVELOPER_TOKEN", "") or ""
+        if not dev:
+            return {"externalId": "", "displayName": "Google Ads", "handle": ""}
+        headers["developer-token"] = dev
+        resp = requests.get(
+            f"{self.ADS_API}/customers:listAccessibleCustomers",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        names = (resp.json() or {}).get("resourceNames") or []
+        cid = (names[0] or "").replace("customers/", "") if names else ""
+        return {"externalId": cid, "displayName": "Google Ads", "handle": cid}
+
+
 ADS_PROVIDERS = {
     "meta": MetaAdsProvider(),
     "tiktok": TikTokAdsProvider(),
     "snap": SnapAdsProvider(),
+    "google": GoogleAdsProvider(),
 }
+
+
+def _google_youtube_boost(account, *, source_url: str, title: str, budget: str) -> dict:
+    """Host the creative on the connected YouTube channel, then create a paused Google Ads campaign."""
+    from projects.models import SocialAccount
+    from projects.publish import publish_youtube
+
+    yt = SocialAccount.objects.filter(
+        project=account.project, platform="youtube", connected=True
+    ).first()
+    if yt is None:
+        raise ValueError("Connect YouTube first. Google Ads needs a video on your channel.")
+    uploaded = publish_youtube(
+        yt, kind="video", source_url=source_url, title=title, privacy="unlisted"
+    )
+    video_id = uploaded.get("externalId") or ""
+    token = account.get_access_token()
+    dev = getattr(settings, "GOOGLE_ADS_DEVELOPER_TOKEN", "") or ""
+    if not dev:
+        raise ValueError("Set GOOGLE_ADS_DEVELOPER_TOKEN to create YouTube ads.")
+    customer = (account.external_id or "").replace("customers/", "").replace("-", "")
+    if not customer:
+        raise ValueError("No Google Ads customer id. Reconnect Google Ads after setting the developer token.")
+    micros = str(int(float(budget or "10") * 1_000_000))
+    resp = requests.post(
+        f"{GoogleAdsProvider.ADS_API}/customers/{customer}/googleAds:mutate",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "developer-token": dev,
+            "Content-Type": "application/json",
+        },
+        json={
+            "mutateOperations": [
+                {
+                    "campaignBudgetOperation": {
+                        "create": {
+                            "name": (title or "Admart YouTube") + " budget",
+                            "amountMicros": micros,
+                            "explicitlyShared": False,
+                        }
+                    }
+                },
+                {
+                    "campaignOperation": {
+                        "create": {
+                            "name": title or "Admart YouTube boost",
+                            "status": "PAUSED",
+                            "advertisingChannelType": "VIDEO",
+                            "campaignBudget": "customers/%s/campaignBudgets/-1" % customer,
+                        }
+                    }
+                },
+            ]
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return {"externalId": video_id, "youtubeVideoId": video_id}
 
 
 def create_boost(account, *, kind: str, source_url: str, title: str, placements: list, budget: str) -> dict:
@@ -201,6 +314,8 @@ def create_boost(account, *, kind: str, source_url: str, title: str, placements:
         resp.raise_for_status()
         data = (resp.json() or {}).get("data") or {}
         return {"externalId": str(data.get("campaign_id", ""))}
+    if account.provider == "google":
+        return _google_youtube_boost(account, source_url=source_url, title=title, budget=budget)
     resp = requests.post(
         "https://adsapi.snapchat.com/v1/adaccounts/" + (account.external_id or "unknown") + "/campaigns",
         headers={"Authorization": f"Bearer {token}"},

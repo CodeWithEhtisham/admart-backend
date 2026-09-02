@@ -12,13 +12,14 @@ PLATFORM_ACCEPTS = {
 }
 
 ORGANIC_PLATFORMS = ("youtube", "tiktok", "instagram", "facebook")
-ADS_PLACEMENTS = ("instagram", "facebook", "tiktok", "snapchat")
-ADS_PROVIDERS = ("meta", "tiktok", "snap")
+ADS_PLACEMENTS = ("instagram", "facebook", "tiktok", "snapchat", "youtube")
+ADS_PROVIDERS = ("meta", "tiktok", "snap", "google")
 
 PROVIDER_PLACEMENTS = {
     "meta": ("facebook", "instagram"),
     "tiktok": ("tiktok",),
     "snap": ("snapchat",),
+    "google": ("youtube",),
 }
 
 
@@ -64,8 +65,6 @@ def validate_ads_placements(kind: str, provider: str, placements: list[str]) -> 
     for placement in placements:
         if placement not in allowed:
             return f"{provider} does not support placement {placement}"
-        if placement not in ADS_PLACEMENTS:
-            return "YouTube ads are not available in boost v1"
         if not platform_accepts(placement, kind):
             return media_block_reason(placement, kind)
     return ""

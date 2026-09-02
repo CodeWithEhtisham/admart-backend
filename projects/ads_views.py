@@ -151,6 +151,16 @@ class ProjectAdBoostView(ProjectScopedSocialMixin, APIView):
                 {"message": f"Connect {provider} ads first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if provider == "google":
+            from projects.models import SocialAccount
+
+            if not SocialAccount.objects.filter(
+                project=project, platform="youtube", connected=True
+            ).exists():
+                return Response(
+                    {"message": "Connect YouTube first. Google Ads runs on a video hosted on your channel."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         job = AdBoostJob.objects.create(
             project=project,
