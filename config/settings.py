@@ -10,46 +10,64 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+from datetime import timedelta
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env
+load_dotenv(BASE_DIR / ".env")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-548$eoapdux5ros4czno60f93yz+pvs+$3$2p$!i8m(0%r=vd$'
+SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-548$eoapdux5ros4czno60f93yz+pvs+$3$2p$!i8m(0%r=vd$")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "*").split(",") if host.strip()]
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # Third party apps
+    "corsheaders",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "drf_spectacular",
+    # Local apps
+    "users.apps.UsersConfig",
+    "projects.apps.ProjectsConfig",
+    "content.apps.ContentConfig",
+    "admin_panel.apps.AdminPanelConfig",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "corsheaders.middleware.CorsMiddleware",  # Must be as high as possible
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "admin_panel.middleware.UpdateLastActiveMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
+
 
 TEMPLATES = [
     {
@@ -114,4 +132,184 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
+
+# Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+# Allow library video uploads up to ~200 MB (view enforces per-type limits).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+# Absolute base for public media URLs when no request is available (e.g. workers).
+# In local dev, leave blank and build URLs from the request; fal needs a publicly
+# reachable URL for uploads — use ngrok / a tunnel or set MEDIA_BASE_URL.
+MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "")
+
+# Custom User Model
+AUTH_USER_MODEL = "users.User"
+
+# Django REST Framework Settings
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "users.authentication.CombinedJWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/day",
+        "user": "1000/day",
+        "auth_sensitive": "5/minute",  # Rate limit login/reset password attempts
+    },
+}
+
+# Simple JWT Settings
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": False,
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+}
+
+# Clerk Authentication Settings
+CLERK_PUBLISHABLE_KEY = os.getenv(
+    "CLERK_PUBLISHABLE_KEY",
+    os.getenv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_Y2FsbS1zZWFsLTgxLmNsZXJrLmFjY291bnRzLmRldiQ"),
+)
+CLERK_SECRET_KEY = os.getenv(
+    "CLERK_SECRET_KEY", "sk_test_5ucViuk9qbITYiQtUvWjjYjY2BLQSsgDyPrX9rEyI6"
+)
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
+
+# Spectacular Schema settings
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Admart API",
+    "DESCRIPTION": "Admart Authentication & Video Publishing Platform Backend API",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
+CORS_ALLOW_CREDENTIALS = True
+
+# Frontend base URL (where OAuth callbacks redirect back to).
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Google / YouTube OAuth (Google Sign-In + YouTube social connect).
+# Client id must match the frontend VITE_GOOGLE_CLIENT_ID.
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+YOUTUBE_OAUTH_REDIRECT_URI = os.getenv(
+    "YOUTUBE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/youtube"
+)
+
+# Meta (Facebook + Instagram) OAuth — a single Meta app powers both platforms.
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
+    "FACEBOOK_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/facebook"
+)
+INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
+    "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
+)
+# Instagram Business Login uses a separate App ID/Secret from the Meta dashboard
+# (Instagram → API setup with Instagram login). Falls back to META_APP_* if unset.
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
+
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Gate Meta page/IG publishing scopes behind App Review. Keep False until the
+# permissions are added + approved in the Meta dashboard, otherwise Meta rejects the
+# entire consent screen with "Invalid Scopes".
+FACEBOOK_PUBLISH_ENABLED = os.getenv("FACEBOOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+INSTAGRAM_PUBLISH_ENABLED = os.getenv("INSTAGRAM_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# TikTok Login Kit. Redirect URI must be https (TikTok rejects http://localhost).
+# Local: ngrok http 8000, then set TIKTOK_OAUTH_REDIRECT_URI to
+#   https://<ngrok-host>/api/social/callback/tiktok
+TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+TIKTOK_OAUTH_REDIRECT_URI = os.getenv("TIKTOK_OAUTH_REDIRECT_URI", "")
+TIKTOK_PUBLISH_ENABLED = os.getenv("TIKTOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Snapchat Login Kit (identity only). Add the redirect URI in the Snap Kit portal.
+SNAPCHAT_CLIENT_ID = os.getenv("SNAPCHAT_CLIENT_ID", "")
+SNAPCHAT_CLIENT_SECRET = os.getenv("SNAPCHAT_CLIENT_SECRET", "")
+SNAPCHAT_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAPCHAT_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/snapchat"
+)
+
+# Ads Manager OAuth — separate from organic Login Kit. Do not add these scopes to Connect.
+# Marketing API cannot be added to a Facebook Login + App Ads Manager app; use a
+# second Business app and set META_ADS_APP_* (falls back to META_APP_* if empty).
+META_ADS_APP_ID = os.getenv("META_ADS_APP_ID", "")
+META_ADS_APP_SECRET = os.getenv("META_ADS_APP_SECRET", "")
+META_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "META_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/meta"
+)
+TIKTOK_ADS_APP_ID = os.getenv("TIKTOK_ADS_APP_ID", "")
+TIKTOK_ADS_APP_SECRET = os.getenv("TIKTOK_ADS_APP_SECRET", "")
+TIKTOK_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "TIKTOK_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/tiktok"
+)
+SNAP_ADS_CLIENT_ID = os.getenv("SNAP_ADS_CLIENT_ID", "")
+SNAP_ADS_CLIENT_SECRET = os.getenv("SNAP_ADS_CLIENT_SECRET", "")
+SNAP_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAP_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/snap"
+)
+
+# Google Ads (YouTube ads). Same Google Cloud client as YouTube Connect, different
+# redirect URI and adwords scope. Developer token: ads.google.com → API Center.
+GOOGLE_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/google"
+)
+GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
+
+# Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
+# derived from SECRET_KEY (fine for dev; set an explicit key in production).
+SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
+
+# fal.ai image generation
+FAL_KEY = os.getenv("FAL_KEY", "")
+FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
+FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
+
+# Prompt enhancer (server-side only)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
+PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
+
+# Optional Runware-powered preview generation for the owned template seed command.
+# The gallery works without this; set these when generating fresh preview_url assets.
+RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")
+RUNWARE_API_URL = os.getenv("RUNWARE_API_URL", "https://api.runware.ai/v1")
+RUNWARE_PREVIEW_MODEL = os.getenv("RUNWARE_PREVIEW_MODEL", "")
+RUNWARE_TIMEOUT = int(os.getenv("RUNWARE_TIMEOUT", "60"))

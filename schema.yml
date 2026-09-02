@@ -1,0 +1,1102 @@
+openapi: 3.0.3
+info:
+  title: Admart API
+  version: 1.0.0
+  description: Admart Authentication & Video Publishing Platform Backend API
+paths:
+  /api/auth/forgot-password:
+    post:
+      operationId: auth_forgot_password_create
+      description: Find user, generate secure signed token, and simulate email delivery.
+      summary: Forgot password request
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/auth/google:
+    post:
+      operationId: auth_google_create
+      description: Verify auth code and log in / register Google User.
+      summary: Google OAuth Callback Exchange
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleAuth'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/GoogleAuth'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GoogleAuth'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+          description: ''
+  /api/auth/login:
+    post:
+      operationId: auth_login_create
+      description: Custom Login View returning camelCase tokens and user profile.
+      summary: Login with email and password
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomTokenObtainPair'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CustomTokenObtainPair'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CustomTokenObtainPair'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+          description: ''
+  /api/auth/logout:
+    post:
+      operationId: auth_logout_create
+      description: Handle logout (accepts optional refresh token for simplejwt blacklisting).
+      summary: Logout User
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/auth/me:
+    get:
+      operationId: auth_me_retrieve
+      description: View to retrieve or update the authenticated user's profile.
+      summary: Get current user details
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    put:
+      operationId: auth_me_update
+      description: View to retrieve or update the authenticated user's profile.
+      summary: Update current user details
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/User'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/User'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    patch:
+      operationId: auth_me_partial_update
+      description: View to retrieve or update the authenticated user's profile.
+      summary: Partially update current user details
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedUser'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedUser'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedUser'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/auth/onboarding/complete:
+    post:
+      operationId: auth_onboarding_complete_create
+      description: Create the first project from onboarding data and mark user onboarded.
+      summary: Complete onboarding
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OnboardingComplete'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/auth/refresh:
+    post:
+      operationId: auth_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/auth/register:
+    post:
+      operationId: auth_register_create
+      description: Handle user registration and generate tokens.
+      summary: Register a new user
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Register'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Register'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Register'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+          description: ''
+  /api/auth/reset-password:
+    post:
+      operationId: auth_reset_password_create
+      description: Unsign and verify the token, then set user's password.
+      summary: Reset password using token
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/projects:
+    get:
+      operationId: projects_list
+      description: Return the user's projects plus the resolved active project id.
+      summary: List the current user's projects
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+          description: ''
+    post:
+      operationId: projects_create
+      description: Create a project owned by the user and immediately make it active.
+      summary: Create a project
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+  /api/projects/{id}:
+    get:
+      operationId: projects_retrieve
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Get a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    put:
+      operationId: projects_update
+      description: Retrieve, partially update, or delete a single owned project.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    patch:
+      operationId: projects_partial_update
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Update a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    delete:
+      operationId: projects_destroy
+      description: Retrieve, partially update, or delete a single owned project.
+      summary: Delete a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/projects/{id}/activate:
+    post:
+      operationId: projects_activate_create
+      description: Set the project's last_accessed_at and the user's active pointer.
+      summary: Activate a project
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: '{ "activeProjectId": "<id>" }'
+  /api/projects/{project_id}/social/accounts:
+    get:
+      operationId: projects_social_accounts_retrieve
+      description: List social accounts connected within a project.
+      summary: List a project's connected social accounts
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/social/connect/{platform}:
+    post:
+      operationId: projects_social_connect_create
+      description: |-
+        Mock-connect a social platform within a project.
+
+        In production this initiates an OAuth flow; for dev it creates/re-activates a
+        SocialAccount immediately.
+      summary: Connect a social platform to a project
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/social/connect/{platform}/url:
+    get:
+      operationId: projects_social_connect_url_retrieve
+      description: |-
+        Begin an OAuth connection: return the provider authorize URL + signed state.
+
+        The frontend redirects the browser to ``authUrl``; the provider then calls our
+        callback (see SocialCallbackView).
+      summary: Get the OAuth authorize URL for connecting a platform
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: '{ "authUrl": "...", "state": "..." }'
+  /api/projects/{project_id}/social/disconnect/{platform}:
+    delete:
+      operationId: projects_social_disconnect_destroy
+      description: Soft-disconnect a social platform within a project.
+      summary: Disconnect a social platform from a project
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/social/callback/{platform}:
+    get:
+      operationId: social_callback_retrieve
+      description: |-
+        OAuth provider redirect target.
+
+        Reached via browser redirect from the provider (no bearer token); secured by the
+        signed ``state``. Exchanges the code, stores encrypted tokens, then 302-redirects
+        back to the frontend ``/social`` page with a status flag.
+      summary: OAuth provider callback
+      parameters:
+      - in: path
+        name: platform
+        schema:
+          type: string
+        required: true
+      tags:
+      - social
+      security:
+      - {}
+      responses:
+        '302':
+          description: No response body
+components:
+  schemas:
+    AuthResponse:
+      type: object
+      description: Schema for authentication responses containing tokens and user
+        profile.
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+      - accessToken
+      - refreshToken
+      - user
+    ConnectedPlatformsEnum:
+      enum:
+      - tiktok
+      - youtube
+      - instagram
+      - facebook
+      type: string
+      description: |-
+        * `tiktok` - tiktok
+        * `youtube` - youtube
+        * `instagram` - instagram
+        * `facebook` - facebook
+    CustomTokenObtainPair:
+      type: object
+      description: Custom Token Obtain Pair Serializer that adds user profile to the
+        response.
+      properties:
+        email:
+          type: string
+          writeOnly: true
+        password:
+          type: string
+          writeOnly: true
+      required:
+      - email
+      - password
+    ForgotPassword:
+      type: object
+      description: Serializer for password reset request.
+      properties:
+        email:
+          type: string
+          format: email
+      required:
+      - email
+    GoogleAuth:
+      type: object
+      description: Serializer for Google OAuth 2.0 code exchange (web) or id_token (mobile).
+      properties:
+        code:
+          type: string
+        redirectUri:
+          type: string
+        redirect_uri:
+          type: string
+        idToken:
+          type: string
+        id_token:
+          type: string
+        intent:
+          type: string
+        createAccount:
+          type: boolean
+          nullable: true
+    Message:
+      type: object
+      description: Schema for generic API message responses.
+      properties:
+        message:
+          type: string
+      required:
+      - message
+    OnboardingComplete:
+      type: object
+      description: Serializer for completing onboarding — saves platforms, brand info,
+        and optional prompt.
+      properties:
+        connectedPlatforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectedPlatformsEnum'
+        projectName:
+          type: string
+          default: ''
+          maxLength: 80
+        brandName:
+          type: string
+          default: ''
+        industry:
+          type: string
+          default: ''
+        brandColorHex:
+          type: string
+          default: '#2563eb'
+        prompt:
+          type: string
+          default: ''
+        template:
+          type: string
+          nullable: true
+    PatchedProject:
+      type: object
+      description: |-
+        Serializer for a Project in camelCase, matching the frontend shape.
+
+        Exposes the per-project brand kit and accepts the snake_case brand fields the
+        onboarding flow sends.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        icon:
+          type: string
+          maxLength: 16
+        color:
+          type: string
+          maxLength: 7
+        org:
+          type: string
+          maxLength: 120
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the project's brand kit dict.
+          readOnly: true
+        lastAccessedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        brand_name:
+          type: string
+          writeOnly: true
+          maxLength: 255
+        brand_industry:
+          type: string
+          writeOnly: true
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          writeOnly: true
+          maxLength: 7
+        brand_logo_url:
+          type: string
+          format: uri
+          writeOnly: true
+          nullable: true
+          maxLength: 1000
+    PatchedUser:
+      type: object
+      description: |-
+        Serializer representing the user profile in camelCase format.
+
+        Accepts both camelCase and snake_case brand fields for write operations
+        (the frontend onboarding sends snake_case: brand_name, brand_industry, brand_color_hex).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        firstName:
+          type: string
+        lastName:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        googleId:
+          type: string
+          nullable: true
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/PlanEnum'
+          readOnly: true
+        creditsTotal:
+          type: integer
+          readOnly: true
+        creditsUsed:
+          type: integer
+          readOnly: true
+        creditsRemaining:
+          type: integer
+          readOnly: true
+        creditsResetAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        onboardingCompleted:
+          type: boolean
+          default: false
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the brand kit dict from the model property.
+          readOnly: true
+        projectCount:
+          type: integer
+          description: Number of projects the user owns (frontend routing signal).
+          readOnly: true
+        activeProjectId:
+          type: string
+          nullable: true
+          description: Resolved active project id (explicit selection or most recent).
+          readOnly: true
+        brand_name:
+          type: string
+          maxLength: 255
+        brand_industry:
+          type: string
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          maxLength: 7
+    PlanEnum:
+      enum:
+      - free
+      - starter
+      - pro
+      - agency
+      type: string
+      description: |-
+        * `free` - Free
+        * `starter` - Starter
+        * `pro` - Pro
+        * `agency` - Agency
+    PlatformEnum:
+      enum:
+      - tiktok
+      - youtube
+      - instagram
+      - facebook
+      type: string
+      description: |-
+        * `tiktok` - TikTok
+        * `youtube` - YouTube
+        * `instagram` - Instagram
+        * `facebook` - Facebook
+    Project:
+      type: object
+      description: |-
+        Serializer for a Project in camelCase, matching the frontend shape.
+
+        Exposes the per-project brand kit and accepts the snake_case brand fields the
+        onboarding flow sends.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        icon:
+          type: string
+          maxLength: 16
+        color:
+          type: string
+          maxLength: 7
+        org:
+          type: string
+          maxLength: 120
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the project's brand kit dict.
+          readOnly: true
+        lastAccessedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        brand_name:
+          type: string
+          writeOnly: true
+          maxLength: 255
+        brand_industry:
+          type: string
+          writeOnly: true
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          writeOnly: true
+          maxLength: 7
+        brand_logo_url:
+          type: string
+          format: uri
+          writeOnly: true
+          nullable: true
+          maxLength: 1000
+      required:
+      - brandKit
+      - createdAt
+      - id
+      - lastAccessedAt
+      - name
+      - updatedAt
+    Register:
+      type: object
+      description: Serializer for registering a new user with 5 free credits.
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          writeOnly: true
+        firstName:
+          type: string
+        lastName:
+          type: string
+      required:
+      - email
+      - firstName
+      - lastName
+      - password
+    ResetPassword:
+      type: object
+      description: Serializer for resetting password using a secure token.
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+          writeOnly: true
+      required:
+      - newPassword
+      - token
+    SocialAccount:
+      type: object
+      description: Serializer for a connected social media account scoped to a project.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        projectId:
+          type: string
+          format: uuid
+          readOnly: true
+        platform:
+          $ref: '#/components/schemas/PlatformEnum'
+        handle:
+          type: string
+          maxLength: 255
+        displayName:
+          type: string
+        connected:
+          type: boolean
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        tokenExpiresAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - createdAt
+      - id
+      - platform
+      - projectId
+      - tokenExpiresAt
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+          writeOnly: true
+      required:
+      - access
+      - refresh
+    User:
+      type: object
+      description: |-
+        Serializer representing the user profile in camelCase format.
+
+        Accepts both camelCase and snake_case brand fields for write operations
+        (the frontend onboarding sends snake_case: brand_name, brand_industry, brand_color_hex).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        firstName:
+          type: string
+        lastName:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        googleId:
+          type: string
+          nullable: true
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/PlanEnum'
+          readOnly: true
+        creditsTotal:
+          type: integer
+          readOnly: true
+        creditsUsed:
+          type: integer
+          readOnly: true
+        creditsRemaining:
+          type: integer
+          readOnly: true
+        creditsResetAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        onboardingCompleted:
+          type: boolean
+          default: false
+        brandKit:
+          type: object
+          additionalProperties: {}
+          description: Return the brand kit dict from the model property.
+          readOnly: true
+        projectCount:
+          type: integer
+          description: Number of projects the user owns (frontend routing signal).
+          readOnly: true
+        activeProjectId:
+          type: string
+          nullable: true
+          description: Resolved active project id (explicit selection or most recent).
+          readOnly: true
+        brand_name:
+          type: string
+          maxLength: 255
+        brand_industry:
+          type: string
+          maxLength: 100
+        brand_color_hex:
+          type: string
+          maxLength: 7
+      required:
+      - activeProjectId
+      - brandKit
+      - creditsRemaining
+      - creditsResetAt
+      - creditsTotal
+      - creditsUsed
+      - email
+      - id
+      - plan
+      - projectCount
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

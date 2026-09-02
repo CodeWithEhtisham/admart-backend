@@ -1,0 +1,273 @@
+import uuid
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import models
+from django.utils import timezone
+
+
+class Project(models.Model):
+    """A workspace owned by a user.
+
+    A user can own many projects. Each project is the parent/bounded context for
+    its own social media accounts, brand kit, and settings — because a single
+    person typically manages several distinct brands or sets of social accounts.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="projects",
+    )
+
+    name = models.CharField(max_length=80)
+    icon = models.CharField(max_length=16, blank=True, default="")
+    color = models.CharField(max_length=7, blank=True, default="#2563eb")
+    org = models.CharField(max_length=120, blank=True, default="")
+
+    # Per-project brand kit / settings. Each project carries its own brand
+    # identity independent of the owning user.
+    brand_name = models.CharField(max_length=255, blank=True, default="")
+    brand_industry = models.CharField(max_length=100, blank=True, default="")
+    brand_color_hex = models.CharField(max_length=7, blank=True, default="#2563eb")
+    brand_logo_url = models.URLField(max_length=1000, null=True, blank=True)
+
+    # Recency tracking — used to auto-select the active project on login.
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_accessed_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "-last_accessed_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.owner_id})"
+
+    def touch(self) -> None:
+        """Mark this project as accessed now."""
+        self.last_accessed_at = timezone.now()
+        self.save(update_fields=["last_accessed_at", "updated_at"])
+
+    @property
+    def brand_kit(self) -> dict:
+        """Return the project's brand kit as a camelCase dict."""
+        return {
+            "brandName": self.brand_name,
+            "industry": self.brand_industry,
+            "brandColorHex": self.brand_color_hex,
+            "logoUrl": self.brand_logo_url,
+        }
+
+
+class SocialAccount(models.Model):
+    """A connected social media account that belongs to a single Project.
+
+    Tracks OAuth connections to TikTok, YouTube, Instagram, Facebook, and Snapchat.
+    Scoped to a project so each project manages its own set of platform connections.
+    """
+
+    PLATFORM_CHOICES = [
+        ("tiktok", "TikTok"),
+        ("youtube", "YouTube"),
+        ("instagram", "Instagram"),
+        ("facebook", "Facebook"),
+        ("snapchat", "Snapchat"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="social_accounts",
+    )
+    platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES)
+    handle = models.CharField(max_length=255, blank=True, default="")
+    display_name = models.CharField(max_length=255, blank=True, default="")
+    external_id = models.CharField(max_length=255, blank=True, default="")
+    # OAuth secrets — stored encrypted (Fernet); never exposed by serializers.
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    scope = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    connected = models.BooleanField(default=True)
+    avatar_url = models.URLField(max_length=1000, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["platform"]
+        unique_together = [("project", "platform")]
+
+    def __str__(self) -> str:
+        return f"{self.project_id} — {self.platform}"
+
+    def store_tokens(
+        self,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        expires_in: int | None = None,
+        scope: str | None = None,
+    ) -> None:
+        """Encrypt and set OAuth tokens. Does not save; caller persists.
+
+        A refresh token is only updated when provided (Google omits it on refresh).
+        """
+        from projects.crypto import encrypt
+
+        if access_token is not None:
+            self.access_token = encrypt(access_token)
+        if refresh_token:
+            self.refresh_token = encrypt(refresh_token)
+        if expires_in:
+            self.token_expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+        if scope is not None:
+            self.scope = scope
+
+    def get_access_token(self) -> str:
+        """Return the decrypted access token (empty string if unset)."""
+        from projects.crypto import decrypt
+
+        return decrypt(self.access_token)
+
+    def get_refresh_token(self) -> str:
+        """Return the decrypted refresh token (empty string if unset)."""
+        from projects.crypto import decrypt
+
+        return decrypt(self.refresh_token)
+
+
+class PublishJob(models.Model):
+    """One organic publish attempt of a generated asset to one or more platforms."""
+
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("succeeded", "Succeeded"),
+        ("partial", "Partial"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="publish_jobs")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="publish_jobs")
+    library_asset = models.ForeignKey(
+        "content.LibraryAsset",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="publish_jobs",
+    )
+    kind = models.CharField(max_length=16)
+    source_url = models.CharField(max_length=2000, blank=True, default="")
+    title = models.CharField(max_length=255, blank=True, default="")
+    platforms = models.JSONField(default=list)
+    results = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class AdAccount(models.Model):
+    """Ads Manager connection for a project. Meta covers Facebook + Instagram ads."""
+
+    PROVIDER_CHOICES = [
+        ("meta", "Meta"),
+        ("tiktok", "TikTok"),
+        ("snap", "Snapchat"),
+        ("google", "Google Ads"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="ad_accounts")
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    handle = models.CharField(max_length=255, blank=True, default="")
+    display_name = models.CharField(max_length=255, blank=True, default="")
+    external_id = models.CharField(max_length=255, blank=True, default="")
+    access_token = models.TextField(blank=True, default="")
+    refresh_token = models.TextField(blank=True, default="")
+    scope = models.TextField(blank=True, default="")
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    connected = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["provider"]
+        unique_together = [("project", "provider")]
+
+    def __str__(self) -> str:
+        return f"{self.project_id} — ads:{self.provider}"
+
+    def store_tokens(
+        self,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        expires_in: int | None = None,
+        scope: str | None = None,
+    ) -> None:
+        from projects.crypto import encrypt
+
+        if access_token is not None:
+            self.access_token = encrypt(access_token)
+        if refresh_token:
+            self.refresh_token = encrypt(refresh_token)
+        if expires_in:
+            self.token_expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+        if scope is not None:
+            self.scope = scope
+
+    def get_access_token(self) -> str:
+        from projects.crypto import decrypt
+
+        return decrypt(self.access_token)
+
+    def get_refresh_token(self) -> str:
+        from projects.crypto import decrypt
+
+        return decrypt(self.refresh_token)
+
+
+class AdBoostJob(models.Model):
+    """Simple boost: one creative + budget + dates on a connected ads account."""
+
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="ad_boost_jobs")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ad_boost_jobs")
+    ad_account = models.ForeignKey(AdAccount, on_delete=models.CASCADE, related_name="boost_jobs")
+    library_asset = models.ForeignKey(
+        "content.LibraryAsset",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ad_boost_jobs",
+    )
+    kind = models.CharField(max_length=16)
+    source_url = models.CharField(max_length=2000, blank=True, default="")
+    title = models.CharField(max_length=255, blank=True, default="")
+    placements = models.JSONField(default=list)
+    budget = models.CharField(max_length=32, blank=True, default="")
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
+    external_id = models.CharField(max_length=255, blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
