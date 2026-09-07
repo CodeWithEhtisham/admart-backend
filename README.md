@@ -202,7 +202,7 @@ npm run dev
 ## OAuth notes (social)
 
 - **YouTube / Facebook / Instagram / TikTok / Snapchat**: connect URL + callback implemented; redirects to `{FRONTEND_URL}/social?connected=<platform>`.
-- **Publishing scopes** stay off until added on the app: `FACEBOOK_PUBLISH_ENABLED`, `INSTAGRAM_PUBLISH_ENABLED`, `TIKTOK_PUBLISH_ENABLED`. Facebook Page posts: add Page permissions on the Meta app, set `FACEBOOK_PUBLISH_ENABLED=True`, reconnect Facebook.
+- **Publishing scopes** stay off until added on the app: `FACEBOOK_PUBLISH_ENABLED`, `INSTAGRAM_PUBLISH_ENABLED`, `TIKTOK_PUBLISH_ENABLED`. Facebook Page posts: add Page permissions, set `FACEBOOK_PUBLISH_ENABLED=True`, reconnect. Instagram feed/Reels: add `instagram_business_content_publish`, set `INSTAGRAM_PUBLISH_ENABLED=True`, reconnect a Professional account (media URL must be public).
 - **TikTok** redirect URI must be `https` (ngrok locally). **Snapchat Login Kit** is identity only (no organic post).
 - **Ads accounts** (Meta / TikTok / Snap / Google) use separate OAuth at `/api/projects/:id/ads/connect/<provider>/url` and `/api/ads/callback/<provider>`. Do not mix ads scopes into organic Connect.
 - **YouTube ads** are Google Ads (`adwords` scope), not YouTube Connect. Add `{BACKEND}/api/ads/callback/google` in Google Cloud and set `GOOGLE_ADS_DEVELOPER_TOKEN`. Boost uploads the video to the connected YouTube channel (unlisted) then creates a paused campaign.
@@ -213,7 +213,7 @@ npm run dev
 
 ## Known gaps (do not document as done)
 
-1. Instagram/TikTok organic post still needs App Review (`*_PUBLISH_ENABLED`). Facebook posts to a Page when `FACEBOOK_PUBLISH_ENABLED` is on. Full Ads Manager (audiences, reporting) is later.
+1. TikTok organic post still needs review (`TIKTOK_PUBLISH_ENABLED`). Facebook/Instagram organic work when their `*_PUBLISH_ENABLED` flags are on. Full Ads Manager (audiences, reporting) is later.
 2. Video catalog is curated (not all ~141 fal endpoints); some partner models may 502 if the account lacks access — swap ids in `video_catalog.py`.
 3. `requirements.txt` has no pinned versions; fal is called via `requests` (no fal SDK package).
 

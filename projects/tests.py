@@ -901,6 +901,41 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(captured["caption"], "Hello page")
         self.assertEqual(captured["page_id"], "111")
 
+    @override_settings(INSTAGRAM_PUBLISH_ENABLED=False)
+    def test_instagram_without_review_fails(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
+        response = self.client.post(
+            self.url,
+            {"kind": "image", "sourceUrl": "https://cdn.example/a.png", "platforms": ["instagram"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["status"], "failed")
+        self.assertIn("App Review", response.data["results"]["instagram"]["error"])
+
+    def test_instagram_passes_caption(self) -> None:
+        captured = {}
+
+        def _capture(account, **kwargs):
+            captured.update(kwargs)
+            return {"status": "succeeded", "externalId": "ig-1"}
+
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"instagram": _capture}):
+            response = self.client.post(
+                self.url,
+                {
+                    "kind": "image",
+                    "sourceUrl": "https://cdn.example/a.png",
+                    "title": "Fallback title",
+                    "platforms": ["instagram"],
+                    "instagram": {"caption": "Hello feed"},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(captured["caption"], "Hello feed")
+
     def test_facebook_pages_requires_connect(self) -> None:
         url = reverse("project_facebook_pages", kwargs={"project_id": self.project.id})
         response = self.client.get(url)
@@ -1000,6 +1035,89 @@ class FacebookPagePublishTests(SimpleTestCase):
                     title="Hi",
                 )
         self.assertIn("Page", str(ctx.exception))
+
+
+@override_settings(INSTAGRAM_PUBLISH_ENABLED=True)
+class InstagramPublishTests(SimpleTestCase):
+    def test_posts_image_container_then_publish(self) -> None:
+        from projects.publish import publish_instagram
+
+        account = MagicMock()
+        account.external_id = "17841"
+        created = MagicMock()
+        created.ok = True
+        created.json.return_value = {"id": "container-1"}
+        published = MagicMock()
+        published.ok = True
+        published.json.return_value = {"id": "media-9"}
+
+        with (
+            patch("projects.publish.ensure_fresh_access_token", return_value="ig-tok"),
+            patch("projects.publish.requests.post", side_effect=[created, published]) as mock_post,
+        ):
+            result = publish_instagram(
+                account,
+                kind="image",
+                source_url="https://cdn.example/a.png",
+                title="Fallback",
+                caption="Hello feed",
+            )
+        self.assertEqual(result["externalId"], "media-9")
+        create_url, create_kwargs = mock_post.call_args_list[0]
+        self.assertIn("graph.instagram.com", create_url[0])
+        self.assertIn("/17841/media", create_url[0])
+        self.assertEqual(create_kwargs["data"]["image_url"], "https://cdn.example/a.png")
+        self.assertEqual(create_kwargs["data"]["caption"], "Hello feed")
+        publish_url, publish_kwargs = mock_post.call_args_list[1]
+        self.assertIn("/17841/media_publish", publish_url[0])
+        self.assertEqual(publish_kwargs["data"]["creation_id"], "container-1")
+
+    def test_posts_reel_after_container_ready(self) -> None:
+        from projects.publish import publish_instagram
+
+        account = MagicMock()
+        account.external_id = "17841"
+        created = MagicMock()
+        created.ok = True
+        created.json.return_value = {"id": "container-2"}
+        status = MagicMock()
+        status.ok = True
+        status.json.return_value = {"status_code": "FINISHED"}
+        published = MagicMock()
+        published.ok = True
+        published.json.return_value = {"id": "reel-3"}
+
+        with (
+            patch("projects.publish.ensure_fresh_access_token", return_value="ig-tok"),
+            patch("projects.publish.requests.post", side_effect=[created, published]) as mock_post,
+            patch("projects.publish.requests.get", return_value=status),
+            patch("projects.publish.time.sleep"),
+        ):
+            result = publish_instagram(
+                account,
+                kind="video",
+                source_url="https://cdn.example/v.mp4",
+                title="Clip",
+                caption="Reel caption",
+            )
+        self.assertEqual(result["externalId"], "reel-3")
+        self.assertEqual(mock_post.call_args_list[0][1]["data"]["media_type"], "REELS")
+        self.assertEqual(mock_post.call_args_list[0][1]["data"]["video_url"], "https://cdn.example/v.mp4")
+
+    def test_localhost_media_errors(self) -> None:
+        from projects.publish import publish_instagram
+
+        account = MagicMock()
+        account.external_id = "17841"
+        with patch("projects.publish.ensure_fresh_access_token", return_value="ig-tok"):
+            with self.assertRaises(RuntimeError) as ctx:
+                publish_instagram(
+                    account,
+                    kind="image",
+                    source_url="http://localhost:8000/media/a.png",
+                    title="Hi",
+                )
+        self.assertIn("public", str(ctx.exception).lower())
 
 
 class YoutubeSuggestTests(APITestCase):

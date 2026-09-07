@@ -75,6 +75,13 @@ def _facebook_publish_kwargs(data, title: str) -> dict:
     }
 
 
+def _instagram_publish_kwargs(data, title: str) -> dict:
+    raw = data.get("instagram") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return {"caption": (raw.get("caption") or title or "").strip()[:2200]}
+
+
 class ProjectPublishView(ProjectScopedSocialMixin, APIView):
     """POST /api/projects/:id/publish — post a generated asset to connected accounts."""
 
@@ -103,6 +110,7 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
             request.data, title, (asset.thumbnail_url if asset else "") or ""
         )
         facebook_kwargs = _facebook_publish_kwargs(request.data, title)
+        instagram_kwargs = _instagram_publish_kwargs(request.data, title)
         error = validate_organic_platforms(kind, platforms)
         if error:
             return Response({"message": error}, status=status.HTTP_400_BAD_REQUEST)
@@ -139,6 +147,8 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                     kwargs.update(youtube_kwargs)
                 elif platform == "facebook":
                     kwargs.update(facebook_kwargs)
+                elif platform == "instagram":
+                    kwargs.update(instagram_kwargs)
                 results[platform] = publisher(connected[platform], **kwargs)
             except PublishUnavailable as exc:
                 results[platform] = {"status": "failed", "error": str(exc)}

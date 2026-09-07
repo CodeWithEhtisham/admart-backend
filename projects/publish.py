@@ -1,5 +1,8 @@
 """Organic publish to connected social accounts."""
 
+import time
+from urllib.parse import urlparse
+
 import requests
 from django.conf import settings
 
@@ -23,6 +26,7 @@ def _fetchable_url(source_url: str) -> str:
 
 
 GRAPH = "https://graph.facebook.com/v21.0"
+IG_GRAPH = "https://graph.instagram.com/v21.0"
 
 
 def _google_error(resp) -> str:
@@ -220,6 +224,53 @@ def list_youtube_playlists(account) -> list[dict]:
     return rows
 
 
+def _public_media_url(source_url: str) -> str:
+    url = _fetchable_url(source_url)
+    host = (urlparse(url).hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.endswith(".local"):
+        raise RuntimeError(
+            "Instagram must download the file from a public URL. Set MEDIA_BASE_URL to https (ngrok)."
+        )
+    return url
+
+
+def _ig_user_id(account, token: str) -> str:
+    ig_id = (account.external_id or "").strip()
+    if ig_id:
+        return ig_id
+    resp = requests.get(
+        f"{IG_GRAPH}/me",
+        params={"fields": "user_id", "access_token": token},
+        timeout=REQUEST_TIMEOUT,
+    )
+    if not resp.ok:
+        raise RuntimeError(_google_error(resp))
+    ig_id = str((resp.json() or {}).get("user_id") or (resp.json() or {}).get("id") or "")
+    if not ig_id:
+        raise RuntimeError("Instagram user id missing. Reconnect Instagram.")
+    return ig_id
+
+
+def _wait_ig_container(creation_id: str, token: str) -> None:
+    deadline = time.time() + min(UPLOAD_TIMEOUT, 180)
+    while time.time() < deadline:
+        resp = requests.get(
+            f"{IG_GRAPH}/{creation_id}",
+            params={"fields": "status_code,status", "access_token": token},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if not resp.ok:
+            raise RuntimeError(_google_error(resp))
+        body = resp.json() or {}
+        code = (body.get("status_code") or "").upper()
+        if code == "FINISHED":
+            return
+        if code in ("ERROR", "EXPIRED"):
+            raise RuntimeError(body.get("status") or f"Instagram container {code}")
+        time.sleep(2)
+    raise RuntimeError("Instagram is still processing the video. Try again in a minute.")
+
+
 def publish_facebook(
     account,
     *,
@@ -272,31 +323,36 @@ def publish_facebook(
     }
 
 
-def publish_instagram(account, *, kind: str, source_url: str, title: str) -> dict:
+def publish_instagram(account, *, kind: str, source_url: str, title: str, caption: str = "") -> dict:
     if not settings.INSTAGRAM_PUBLISH_ENABLED:
-        raise PublishUnavailable("Instagram publishing needs App Review. Set INSTAGRAM_PUBLISH_ENABLED after approval.")
+        raise PublishUnavailable(
+            "Instagram publishing needs App Review. Set INSTAGRAM_PUBLISH_ENABLED after approval."
+        )
     token = ensure_fresh_access_token(account)
-    ig_id = account.external_id
-    media_type = "REELS" if kind == "video" else "IMAGE"
-    body = {"caption": title, "access_token": token}
+    ig_id = _ig_user_id(account, token)
+    media_url = _public_media_url(source_url)
+    text = (caption or title or "").strip()[:2200]
+    body = {"caption": text, "access_token": token}
     if kind == "video":
-        body.update({"media_type": media_type, "video_url": source_url})
+        body.update({"media_type": "REELS", "video_url": media_url, "share_to_feed": "true"})
     else:
-        body["image_url"] = source_url
-    container = requests.post(
-        f"https://graph.facebook.com/v21.0/{ig_id}/media",
-        data=body,
-        timeout=UPLOAD_TIMEOUT,
-    )
-    container.raise_for_status()
-    creation_id = container.json()["id"]
-    publish = requests.post(
-        f"https://graph.facebook.com/v21.0/{ig_id}/media_publish",
+        body["image_url"] = media_url
+    container = requests.post(f"{IG_GRAPH}/{ig_id}/media", data=body, timeout=UPLOAD_TIMEOUT)
+    if not container.ok:
+        raise RuntimeError(_google_error(container))
+    creation_id = str((container.json() or {}).get("id") or "")
+    if not creation_id:
+        raise RuntimeError("Instagram did not return a media container.")
+    if kind == "video":
+        _wait_ig_container(creation_id, token)
+    published = requests.post(
+        f"{IG_GRAPH}/{ig_id}/media_publish",
         data={"creation_id": creation_id, "access_token": token},
         timeout=UPLOAD_TIMEOUT,
     )
-    publish.raise_for_status()
-    return {"status": "succeeded", "externalId": str(publish.json().get("id", creation_id))}
+    if not published.ok:
+        raise RuntimeError(_google_error(published))
+    return {"status": "succeeded", "externalId": str((published.json() or {}).get("id", creation_id))}
 
 
 def publish_tiktok(account, *, kind: str, source_url: str, title: str) -> dict:
