@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core import signing
@@ -352,6 +352,8 @@ class YouTubeOAuthConnectionTests(APITestCase):
     FACEBOOK_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/facebook",
     INSTAGRAM_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/instagram",
     FRONTEND_URL="http://localhost:5173",
+    FACEBOOK_PUBLISH_ENABLED=False,
+    INSTAGRAM_PUBLISH_ENABLED=False,
 )
 class MetaOAuthConnectionTests(APITestCase):
     """Test suite for the shared Meta (Facebook + Instagram) OAuth flow."""
@@ -863,6 +865,7 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(captured["recording_date"], "2026-08-01T00:00:00Z")
         self.assertTrue(captured["paid_promotion"])
 
+    @override_settings(FACEBOOK_PUBLISH_ENABLED=False)
     def test_facebook_without_review_fails(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
         response = self.client.post(
@@ -873,6 +876,44 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["status"], "failed")
         self.assertIn("App Review", response.data["results"]["facebook"]["error"])
+
+    def test_facebook_passes_caption_and_page(self) -> None:
+        captured = {}
+
+        def _capture(account, **kwargs):
+            captured.update(kwargs)
+            return {"status": "succeeded", "externalId": "fb-1"}
+
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"facebook": _capture}):
+            response = self.client.post(
+                self.url,
+                {
+                    "kind": "image",
+                    "sourceUrl": "https://cdn.example/a.png",
+                    "title": "Fallback title",
+                    "platforms": ["facebook"],
+                    "facebook": {"caption": "Hello page", "pageId": "111"},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(captured["caption"], "Hello page")
+        self.assertEqual(captured["page_id"], "111")
+
+    def test_facebook_pages_requires_connect(self) -> None:
+        url = reverse("project_facebook_pages", kwargs={"project_id": self.project.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("projects.publish_views.list_facebook_pages")
+    def test_facebook_pages_returns_rows(self, mocked) -> None:
+        mocked.return_value = [{"id": "111", "name": "Brand Page"}]
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        url = reverse("project_facebook_pages", kwargs={"project_id": self.project.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]["name"], "Brand Page")
 
     def test_not_connected_returns_400(self) -> None:
         response = self.client.post(
@@ -896,6 +937,69 @@ class OrganicPublishTests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data[0]["title"], "Launch")
+
+
+@override_settings(FACEBOOK_PUBLISH_ENABLED=True)
+class FacebookPagePublishTests(SimpleTestCase):
+    def test_posts_image_to_page(self) -> None:
+        from projects.publish import publish_facebook
+
+        pages = MagicMock()
+        pages.ok = True
+        pages.json.return_value = {
+            "data": [{"id": "111", "name": "Brand Page", "access_token": "page-tok"}]
+        }
+        media = MagicMock()
+        media.content = b"fake-png"
+        media.headers = {"content-type": "image/png"}
+        media.raise_for_status = MagicMock()
+        posted = MagicMock()
+        posted.ok = True
+        posted.json.return_value = {"id": "post-9"}
+
+        def _get(url, **kwargs):
+            if "accounts" in url:
+                return pages
+            return media
+
+        with (
+            patch("projects.publish.ensure_fresh_access_token", return_value="user-tok"),
+            patch("projects.publish.requests.get", side_effect=_get),
+            patch("projects.publish.requests.post", return_value=posted) as mock_post,
+        ):
+            result = publish_facebook(
+                MagicMock(),
+                kind="image",
+                source_url="https://cdn.example/a.png",
+                title="Fallback",
+                caption="Hello page",
+                page_id="111",
+            )
+        self.assertEqual(result["externalId"], "post-9")
+        args, kwargs = mock_post.call_args
+        self.assertIn("/111/photos", args[0])
+        self.assertEqual(kwargs["data"]["caption"], "Hello page")
+        self.assertEqual(kwargs["data"]["access_token"], "page-tok")
+        self.assertIn("source", kwargs["files"])
+
+    def test_no_pages_errors(self) -> None:
+        from projects.publish import publish_facebook
+
+        pages = MagicMock()
+        pages.ok = True
+        pages.json.return_value = {"data": []}
+        with (
+            patch("projects.publish.ensure_fresh_access_token", return_value="user-tok"),
+            patch("projects.publish.requests.get", return_value=pages),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                publish_facebook(
+                    MagicMock(),
+                    kind="image",
+                    source_url="https://cdn.example/a.png",
+                    title="Hi",
+                )
+        self.assertIn("Page", str(ctx.exception))
 
 
 class YoutubeSuggestTests(APITestCase):

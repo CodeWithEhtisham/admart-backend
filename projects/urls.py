@@ -6,7 +6,12 @@ from projects.ads_views import (
     ProjectAdAccountListView,
     ProjectAdBoostView,
 )
-from projects.publish_views import ProjectPublishView, ProjectYoutubePlaylistsView, ProjectYoutubeSuggestView
+from projects.publish_views import (
+    ProjectFacebookPagesView,
+    ProjectPublishView,
+    ProjectYoutubePlaylistsView,
+    ProjectYoutubeSuggestView,
+)
 from projects.views import (
     ProjectActivateView,
     ProjectDetailView,
@@ -47,6 +52,11 @@ urlpatterns = [
         "<uuid:project_id>/social/youtube/playlists",
         ProjectYoutubePlaylistsView.as_view(),
         name="project_youtube_playlists",
+    ),
+    path(
+        "<uuid:project_id>/social/facebook/pages",
+        ProjectFacebookPagesView.as_view(),
+        name="project_facebook_pages",
     ),
     path(
         "<uuid:project_id>/publish/youtube/suggest",

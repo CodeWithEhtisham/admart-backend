@@ -22,6 +22,9 @@ def _fetchable_url(source_url: str) -> str:
     return f"{base}{path}"
 
 
+GRAPH = "https://graph.facebook.com/v21.0"
+
+
 def _google_error(resp) -> str:
     try:
         body = resp.json() or {}
@@ -31,6 +34,31 @@ def _google_error(resp) -> str:
     if isinstance(err, dict):
         return err.get("message") or str(err)
     return str(err) or resp.text[:400]
+
+
+def _facebook_accounts(account) -> list[dict]:
+    token = ensure_fresh_access_token(account)
+    resp = requests.get(
+        f"{GRAPH}/me/accounts",
+        params={"fields": "id,name,access_token", "access_token": token},
+        timeout=REQUEST_TIMEOUT,
+    )
+    if not resp.ok:
+        raise RuntimeError(_google_error(resp))
+    return list((resp.json() or {}).get("data") or [])
+
+
+def list_facebook_pages(account) -> list[dict]:
+    if not settings.FACEBOOK_PUBLISH_ENABLED:
+        raise PublishUnavailable(
+            "Facebook publishing needs App Review. Set FACEBOOK_PUBLISH_ENABLED after approval."
+        )
+    rows = []
+    for page in _facebook_accounts(account):
+        page_id = page.get("id") or ""
+        if page_id:
+            rows.append({"id": page_id, "name": (page.get("name") or "").strip()})
+    return rows
 
 
 def publish_youtube(
@@ -192,18 +220,56 @@ def list_youtube_playlists(account) -> list[dict]:
     return rows
 
 
-def publish_facebook(account, *, kind: str, source_url: str, title: str) -> dict:
+def publish_facebook(
+    account,
+    *,
+    kind: str,
+    source_url: str,
+    title: str,
+    caption: str = "",
+    page_id: str = "",
+) -> dict:
     if not settings.FACEBOOK_PUBLISH_ENABLED:
-        raise PublishUnavailable("Facebook publishing needs App Review. Set FACEBOOK_PUBLISH_ENABLED after approval.")
-    token = ensure_fresh_access_token(account)
+        raise PublishUnavailable(
+            "Facebook publishing needs App Review. Set FACEBOOK_PUBLISH_ENABLED after approval."
+        )
+    pages = _facebook_accounts(account)
+    if not pages:
+        raise RuntimeError("No Facebook Page found. Create a Page, then reconnect Facebook.")
+    page = next((p for p in pages if p.get("id") == page_id), None) if page_id else pages[0]
+    if page_id and page is None:
+        raise RuntimeError("That Facebook Page is not in this account.")
+    page_token = (page or {}).get("access_token") or ""
+    if not page_token:
+        raise RuntimeError("Facebook Page token missing. Reconnect Facebook.")
+    media = requests.get(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
+    media.raise_for_status()
     path = "videos" if kind == "video" else "photos"
+    filename = "video.mp4" if kind == "video" else "photo.jpg"
+    ctype = (media.headers.get("content-type") or "").split(";")[0].strip()
+    if not ctype or ctype == "application/octet-stream":
+        ctype = "video/mp4" if kind == "video" else "image/jpeg"
+    text = (caption or title or "").strip()
+    data = {"access_token": page_token, "published": "true"}
+    if kind == "video":
+        data["description"] = text
+        if title:
+            data["title"] = title[:255]
+    else:
+        data["caption"] = text
     resp = requests.post(
-        f"https://graph.facebook.com/v21.0/me/{path}",
-        data={"url": source_url, "description": title, "access_token": token},
+        f"{GRAPH}/{page['id']}/{path}",
+        data=data,
+        files={"source": (filename, media.content, ctype)},
         timeout=UPLOAD_TIMEOUT,
     )
-    resp.raise_for_status()
-    return {"status": "succeeded", "externalId": str((resp.json() or {}).get("id", ""))}
+    if not resp.ok:
+        raise RuntimeError(_google_error(resp))
+    return {
+        "status": "succeeded",
+        "externalId": str((resp.json() or {}).get("id", "")),
+        "pageId": page["id"],
+    }
 
 
 def publish_instagram(account, *, kind: str, source_url: str, title: str) -> dict:

@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from content.models import LibraryAsset
 from projects.media_policy import validate_organic_platforms
 from projects.models import PublishJob, SocialAccount
-from projects.publish import PUBLISHERS, PublishUnavailable, list_youtube_playlists
+from projects.publish import PUBLISHERS, PublishUnavailable, list_facebook_pages, list_youtube_playlists
 from projects.serializers import PublishJobSerializer
 from projects.views import ProjectScopedSocialMixin
 from projects.youtube_suggest import (
@@ -65,6 +65,16 @@ def _youtube_publish_kwargs(data, title: str, thumbnail_fallback: str = "") -> d
     }
 
 
+def _facebook_publish_kwargs(data, title: str) -> dict:
+    raw = data.get("facebook") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "caption": (raw.get("caption") or title or "").strip()[:5000],
+        "page_id": str(raw.get("pageId") or "").strip(),
+    }
+
+
 class ProjectPublishView(ProjectScopedSocialMixin, APIView):
     """POST /api/projects/:id/publish — post a generated asset to connected accounts."""
 
@@ -92,6 +102,7 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
         youtube_kwargs = _youtube_publish_kwargs(
             request.data, title, (asset.thumbnail_url if asset else "") or ""
         )
+        facebook_kwargs = _facebook_publish_kwargs(request.data, title)
         error = validate_organic_platforms(kind, platforms)
         if error:
             return Response({"message": error}, status=status.HTTP_400_BAD_REQUEST)
@@ -126,6 +137,8 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                 kwargs = {"kind": kind, "source_url": source_url, "title": title}
                 if platform == "youtube":
                     kwargs.update(youtube_kwargs)
+                elif platform == "facebook":
+                    kwargs.update(facebook_kwargs)
                 results[platform] = publisher(connected[platform], **kwargs)
             except PublishUnavailable as exc:
                 results[platform] = {"status": "failed", "error": str(exc)}
@@ -162,6 +175,23 @@ class ProjectYoutubePlaylistsView(ProjectScopedSocialMixin, APIView):
         except Exception as exc:  # noqa: BLE001
             return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(playlists)
+
+
+class ProjectFacebookPagesView(ProjectScopedSocialMixin, APIView):
+    """GET /api/projects/:id/social/facebook/pages"""
+
+    def get(self, request: Request, project_id: str, *args, **kwargs) -> Response:
+        project = self.get_project(request, project_id)
+        account = SocialAccount.objects.filter(project=project, platform="facebook", connected=True).first()
+        if account is None:
+            return Response({"message": "Connect Facebook first."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            pages = list_facebook_pages(account)
+        except PublishUnavailable as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001
+            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(pages)
 
 
 class ProjectYoutubeSuggestView(ProjectScopedSocialMixin, APIView):
