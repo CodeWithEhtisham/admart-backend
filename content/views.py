@@ -25,7 +25,7 @@ from content.fal_models import (
 from content.jobs import refresh_job
 from content.library import mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
-from content.models import ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
+from content.models import FavoriteTemplate, ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
 from content.pricing import attach_image_pricing, quote_image_job, quote_response
 from content.prompt_enhancer import enhance_prompt
 from content.serializers import (
@@ -328,7 +328,10 @@ class TemplateListView(APIView):
         data = TemplateSerializer(
             items,
             many=True,
-            context={"trending_ids": _trending_template_ids()},
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": _favorite_template_ids(request.user),
+            },
         ).data
         return Response(
             {
@@ -347,7 +350,10 @@ class TemplateDetailView(APIView):
         return Response(
             TemplateSerializer(
                 template,
-                context={"trending_ids": _trending_template_ids()},
+                context={
+                    "trending_ids": _trending_template_ids(),
+                    "favorite_ids": _favorite_template_ids(request.user),
+                },
             ).data
         )
 
@@ -357,11 +363,23 @@ class TemplateUseView(APIView):
 
     def post(self, request, template_id):
         with transaction.atomic():
-            template = get_object_or_404(
-                Template.objects.select_for_update(),
-                id=template_id,
-                is_active=True,
+            template = (
+                Template.objects.select_for_update().filter(id=template_id).first()
             )
+            if template is None:
+                return Response(
+                    {"detail": "Template not found."}, status=status.HTTP_404_NOT_FOUND
+                )
+            # Favorited templates stay usable even after a gallery refresh
+            # deactivates them (favorites outlive template refreshes).
+            is_favorite = FavoriteTemplate.objects.filter(
+                user=request.user, template=template
+            ).exists()
+            if not template.is_active and not is_favorite:
+                return Response(
+                    {"detail": "Template is no longer available."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             TemplateUseEvent.objects.create(template=template, user=request.user)
             Template.objects.filter(id=template.id).update(
                 uses_count=F("uses_count") + 1,
@@ -371,7 +389,10 @@ class TemplateUseView(APIView):
 
         serialized = TemplateSerializer(
             template,
-            context={"trending_ids": _trending_template_ids()},
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": _favorite_template_ids(request.user),
+            },
         ).data
         return Response(
             {
@@ -379,6 +400,63 @@ class TemplateUseView(APIView):
                 "templateConfig": template.template_config,
             }
         )
+
+
+class TemplateFavoriteListView(APIView):
+    """List the current user's favorited templates.
+
+    Includes templates deactivated by gallery refreshes so favorites never
+    disappear from the user's collection.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        favorite_ids = _favorite_template_ids(request.user)
+        templates = Template.objects.filter(
+            id__in=favorite_ids,
+            favorited_by__user=request.user,
+        ).order_by("-favorited_by__created_at")
+        data = TemplateSerializer(
+            templates,
+            many=True,
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": favorite_ids,
+            },
+        ).data
+        return Response({"items": data, "count": len(data)})
+
+
+class TemplateFavoriteView(APIView):
+    """Add (POST) or remove (DELETE) a template from the user's favorites."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, template_id):
+        template = Template.objects.filter(id=template_id).first()
+        if template is None:
+            return Response(
+                {"detail": "Template not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        _, created = FavoriteTemplate.objects.get_or_create(
+            user=request.user, template=template
+        )
+        return Response(
+            {"templateId": str(template.id), "isFavorite": True, "created": created},
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, template_id):
+        deleted, _ = FavoriteTemplate.objects.filter(
+            user=request.user, template_id=template_id
+        ).delete()
+        if not deleted:
+            return Response(
+                {"detail": "Template is not in favorites."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({"templateId": str(template_id), "isFavorite": False})
 
 
 class FalModelSearchView(APIView):
@@ -577,4 +655,13 @@ def _trending_template_ids() -> set:
         Template.objects.filter(is_active=True, uses_last_7d__gt=0)
         .order_by("-uses_last_7d", "-uses_count")
         .values_list("id", flat=True)[:6]
+    )
+
+
+def _favorite_template_ids(user) -> set:
+    """Return the set of template ids the user has favorited (empty for anonymous)."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+    return set(
+        FavoriteTemplate.objects.filter(user=user).values_list("template_id", flat=True)
     )

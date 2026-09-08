@@ -355,6 +355,7 @@ class TemplateSerializer(serializers.ModelSerializer):
     isActive = serializers.BooleanField(source="is_active", read_only=True)
     trending = serializers.SerializerMethodField()
     estimatedCredits = serializers.SerializerMethodField()
+    isFavorite = serializers.SerializerMethodField()
 
     class Meta:
         model = Template
@@ -372,11 +373,16 @@ class TemplateSerializer(serializers.ModelSerializer):
             "isActive",
             "trending",
             "estimatedCredits",
+            "isFavorite",
         ]
 
     def get_trending(self, obj) -> bool:
         trending_ids = self.context.get("trending_ids") or set()
         return obj.id in trending_ids
+
+    def get_isFavorite(self, obj) -> bool:
+        favorite_ids = self.context.get("favorite_ids") or set()
+        return obj.id in favorite_ids
 
     def get_estimatedCredits(self, obj) -> str | None:
         config = obj.template_config or {}

@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 
 from content.fal_client import FalSubmission
 from content.mapping import build_fal_input
-from content.models import ImageJob, LibraryAsset, Template, TemplateUseEvent
+from content.models import FavoriteTemplate, ImageJob, LibraryAsset, Template, TemplateUseEvent
 from content.video_catalog import VIDEO_ALLOW_LISTS
 from content.video_mapping import build_video_fal_input
 from projects.models import Project
@@ -677,4 +677,69 @@ class LibraryApiTests(APITestCase):
         other = User.objects.create_user(email="lib-other@example.com", password="pass12345")
         other_project = Project.objects.create(owner=other, name="Other")
         response = self.client.get(f"/api/projects/{other_project.id}/library")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class TemplateFavoriteTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="fav@example.com", password="pass12345")
+        self.other = User.objects.create_user(email="fav-other@example.com", password="pass12345")
+        self.template = Template.objects.create(
+            title="Favorite Me",
+            category="ad",
+            format="1:1 image",
+            is_video=False,
+            template_config={"kind": "image", "prompt": "Test prompt"},
+        )
+        self.list_url = "/api/templates/favorites"
+        self.detail_url = f"/api/templates/{self.template.id}/favorite"
+
+    def test_favorite_requires_auth(self) -> None:
+        self.assertEqual(self.client.post(self.detail_url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.get(self.list_url).status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_add_list_remove_favorite(self) -> None:
+        self.client.force_authenticate(user=self.user)
+
+        added = self.client.post(self.detail_url)
+        self.assertEqual(added.status_code, status.HTTP_200_OK)
+        self.assertTrue(added.data["isFavorite"])
+
+        listed = self.client.get(self.list_url)
+        self.assertEqual(listed.data["count"], 1)
+        self.assertEqual(listed.data["items"][0]["id"], str(self.template.id))
+        self.assertTrue(listed.data["items"][0]["isFavorite"])
+
+        removed = self.client.delete(self.detail_url)
+        self.assertEqual(removed.status_code, status.HTTP_200_OK)
+        self.assertFalse(removed.data["isFavorite"])
+        self.assertEqual(self.client.get(self.list_url).data["count"], 0)
+
+    def test_favorites_are_per_user(self) -> None:
+        self.client.force_authenticate(user=self.other)
+        self.client.post(self.detail_url)
+
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.list_url).data["count"], 0)
+
+    def test_template_serializer_exposes_is_favorite(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.detail_url)
+        listed = self.client.get("/api/templates")
+        match = [i for i in listed.data["items"] if i["id"] == str(self.template.id)]
+        self.assertTrue(match[0]["isFavorite"])
+
+    def test_favorited_inactive_template_stays_usable(self) -> None:
+        """Favorites outlive gallery refreshes: deactivated favorites remain usable."""
+        self.template.is_active = False
+        self.template.save()
+        FavoriteTemplate.objects.create(user=self.user, template=self.template)
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(f"/api/templates/{self.template.id}/use")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Non-favorited users cannot use the deactivated template.
+        self.client.force_authenticate(user=self.other)
+        response = self.client.post(f"/api/templates/{self.template.id}/use")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -31,6 +31,8 @@ from content.views import (
     ImageModelCatalogView,
     PromptEnhanceView,
     TemplateDetailView,
+    TemplateFavoriteListView,
+    TemplateFavoriteView,
     TemplateListView,
     TemplateUseView,
 )
@@ -54,8 +56,10 @@ urlpatterns = [
     path("api/fal/models", FalModelSearchView.as_view(), name="fal_models"),
     path("api/prompts/enhance", PromptEnhanceView.as_view(), name="prompt_enhance"),
     path("api/templates", TemplateListView.as_view(), name="template_list"),
+    path("api/templates/favorites", TemplateFavoriteListView.as_view(), name="template_favorites"),
     path("api/templates/<uuid:template_id>", TemplateDetailView.as_view(), name="template_detail"),
     path("api/templates/<uuid:template_id>/use", TemplateUseView.as_view(), name="template_use"),
+    path("api/templates/<uuid:template_id>/favorite", TemplateFavoriteView.as_view(), name="template_favorite"),
     # Superadmin panel API
     path("api/admin/", include("admin_panel.urls")),
     # OAuth provider callback (browser redirect from provider; secured by signed state).

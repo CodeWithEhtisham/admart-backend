@@ -1,11 +1,19 @@
 import logging
 import os
+import sys
 import threading
 
 from django.apps import AppConfig
 from django.db.models.signals import post_migrate
 
 logger = logging.getLogger(__name__)
+
+
+def _is_running_tests() -> bool:
+    """True when running under `manage.py test` (or TESTING is set explicitly)."""
+    from django.conf import settings
+
+    return "test" in sys.argv or bool(getattr(settings, "TESTING", False))
 
 
 class ContentConfig(AppConfig):
@@ -25,9 +33,7 @@ def _seed_templates_on_migrate(app_config, **kwargs):
     """
     if app_config.name != "content":
         return
-    from django.conf import settings
-
-    if getattr(settings, "TESTING", False):
+    if _is_running_tests():
         return
     from django.core.management import call_command
 
@@ -44,7 +50,7 @@ def _start_template_auto_refresher():
     """
     from django.conf import settings
 
-    if getattr(settings, "TESTING", False):
+    if _is_running_tests():
         return
 
     try:
