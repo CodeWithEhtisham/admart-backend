@@ -302,8 +302,13 @@ class TemplateListView(APIView):
         if model_name and model_name != "all":
             qs = qs.filter(template_config__modelName__iexact=model_name)
 
-        sort = (request.query_params.get("sort") or "trending").strip().lower()
-        if sort in {"new", "newest"}:
+        sort = (request.query_params.get("sort") or "featured").strip().lower()
+        if sort == "trending":
+            # Real trending: only templates actually used in the rolling 7-day window.
+            qs = qs.filter(uses_last_7d__gt=0).order_by(
+                "-uses_last_7d", "-uses_count", "-created_at"
+            )
+        elif sort in {"new", "newest"}:
             qs = qs.order_by("-created_at", "title")
         elif sort in {"uses", "popular"}:
             qs = qs.order_by("-uses_count", "-uses_last_7d", "-created_at")
