@@ -6,7 +6,8 @@ from datetime import datetime
 from django.utils import timezone
 
 from content.models import ImageJob, VideoJob
-from projects.models import PublishJob
+from projects.media_policy import ORGANIC_PLATFORMS
+from projects.models import PublishJob, SocialAccount
 
 PLATFORM_CODE = {
     "tiktok": "T",
@@ -30,7 +31,21 @@ def build_project_calendar(project, *, year: int, month: int) -> dict:
     events.extend(_publish_events(project, start, end))
     events.extend(_generation_events(project, start, end))
     events.sort(key=lambda row: row["at"])
-    return {"year": year, "month": month, "events": events}
+    return {
+        "year": year,
+        "month": month,
+        "events": events,
+        "connectedPlatforms": _connected_platforms(project),
+    }
+
+
+def _connected_platforms(project):
+    connected_set = set(
+        SocialAccount.objects.filter(
+            project=project, connected=True, platform__in=ORGANIC_PLATFORMS
+        ).values_list("platform", flat=True)
+    )
+    return [p for p in ORGANIC_PLATFORMS if p in connected_set]
 
 
 def _month_bounds(year: int, month: int):
