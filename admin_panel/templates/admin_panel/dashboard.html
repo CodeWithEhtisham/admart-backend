@@ -664,66 +664,200 @@ function renderPlans(el){
   ${(plansData.items||[]).length===0?'<div class="empty">No plans found. Create one to get started.</div>':''}
   <div class="card-sm mt-4" style="font-size:14px;color:var(--text-secondary)"><span class="primary">Change a customer's plan?</span> Open the <a href="#" onclick="switchTab('customers');return false">Customers</a> tab and click a customer.</div>`;
 }
+const PLAN_FEATURE_TOGGLES=[
+  {k:'can_schedule_publishing',l:'Scheduled publishing',f:'Scheduled publishing'},
+  {k:'can_auto_publish',l:'Auto-publishing',f:'Auto-publishing workflows'},
+  {k:'has_analytics',l:'Analytics dashboard',f:'Publish content analytics'},
+  {k:'has_priority_queue',l:'Priority generation queue',f:'Priority generation queue'}
+];
+const PLAN_AUTO_FEATURE_PATTERNS=[
+  /^[0-9][0-9,]* Admart credits monthly$/i,
+  /^(unlimited projects|[0-9]+ projects?)$/i,
+  /^(unlimited brand workspaces|[0-9]+ brand workspaces?)$/i,
+  /^[0-9]+ social media connections per project$/i,
+  /^scheduled publishing$/i,
+  /^auto-publishing workflows$/i,
+  /^publish content analytics$/i,
+  /^priority generation queue$/i,
+  /^[0-9]+% launch discount$/i
+];
+let planForm=null;
+function planFormFromPlan(p){
+  const L=p.limits||{};
+  const isAuto=line=>PLAN_AUTO_FEATURE_PATTERNS.some(re=>re.test(line||''));
+  return {
+    planId:p.id||'',name:p.name||'',description:p.description||'',
+    priceUsd:p.priceUsd??'',pricePkr:p.pricePkr??'',credits:p.monthlyCredits??'',
+    maxProjects:L.max_projects>0?L.max_projects:2,projectsUnlimited:L.max_projects===-1,
+    brandWorkspaces:L.max_brand_workspaces>0?L.max_brand_workspaces:2,workspacesUnlimited:L.max_brand_workspaces===-1,
+    socialAccounts:L.max_social_connections_per_project??2,
+    discountPercent:Number(L.discount_percent)||0,
+    toggles:{
+      can_schedule_publishing:!!L.can_schedule_publishing,
+      can_auto_publish:!!L.can_auto_publish,
+      has_analytics:!!L.has_analytics,
+      has_priority_queue:!!L.has_priority_queue
+    },
+    extraFeatures:(p.features||[]).filter(f=>f&&!isAuto(f)),
+    isPublic:p.isPublic!==false
+  };
+}
+function buildPlanFeatures(f){
+  const out=[];const credits=Number(f.credits)||0;
+  if(credits>0)out.push(fmtN(credits)+' Admart credits monthly');
+  if(f.projectsUnlimited)out.push('Unlimited projects');else out.push((Number(f.maxProjects)||0)+' project'+(Number(f.maxProjects)===1?'':'s'));
+  if(f.workspacesUnlimited)out.push('Unlimited brand workspaces');else out.push((Number(f.brandWorkspaces)||0)+' brand workspace'+(Number(f.brandWorkspaces)===1?'':'s'));
+  out.push((Number(f.socialAccounts)||0)+' social media connections per project');
+  PLAN_FEATURE_TOGGLES.forEach(t=>{if(f.toggles[t.k])out.push(t.f)});
+  if(Number(f.discountPercent)>0)out.push(Number(f.discountPercent)+'% launch discount');
+  (f.extraFeatures||[]).filter(Boolean).forEach(x=>out.push(x));
+  return out;
+}
+function planPreviewHtml(f){
+  const discount=Number(f.discountPercent)||0;
+  const priceUsd=Number(f.priceUsd)||0;
+  const finalUsd=discount>0?priceUsd*(1-discount/100):priceUsd;
+  const pricePkr=Number(f.pricePkr)||0;
+  const finalPkr=discount>0?Math.round(pricePkr*(1-discount/100)):pricePkr;
+  const features=buildPlanFeatures(f);
+  return `
+  <div class="flex justify-between items-center"><div style="font-size:18px;font-weight:700">${f.name||'Plan name'}</div>${planBadge(f.planId||'new')}</div>
+  <div class="mt-3" style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">
+    ${discount>0?`<span style="text-decoration:line-through;font-size:14px;color:var(--text-muted)">$${fmtN(priceUsd)}</span>`:''}
+    <span class="mono" style="font-size:30px;font-weight:700">$${fmtN(finalUsd)}</span>
+    <span style="font-size:14px;color:var(--text-muted)">/mo · ${fmtN(finalPkr)} PKR</span>
+  </div>
+  ${discount>0?`<span class="badge" style="border:1px solid rgba(52,211,153,.4);background:rgba(52,211,153,.1);color:var(--success)">${discount}% OFF</span>`:''}
+  <p style="font-size:14px;color:var(--text-secondary);margin-top:8px">${fmtN(Number(f.credits)||0)} Admart credits / month</p>
+  <ul style="margin-top:12px;font-size:14px;color:var(--text-secondary)">${features.map(x=>`<li style="padding:4px 0;display:flex;gap:8px"><span style="color:var(--success)">&#10003;</span>${x}</li>`).join('')}</ul>
+  ${!f.isPublic?'<div style="margin-top:8px;border-radius:8px;background:var(--bg-surface);padding:6px 10px;font-size:12px;color:var(--text-muted)">Hidden from customers (not public)</div>':''}`;
+}
+function pmCollect(){
+  const g=id=>document.getElementById(id);
+  if(!g('pmName'))return;
+  planForm.name=g('pmName').value;
+  planForm.planId=g('pmPlanId').value;
+  planForm.description=g('pmDesc').value;
+  planForm.priceUsd=g('pmPriceUsd').value;
+  planForm.pricePkr=g('pmPricePkr').value;
+  planForm.discountPercent=g('pmDiscount').value;
+  planForm.credits=g('pmCredits').value;
+  planForm.maxProjects=g('pmProjects').value;
+  planForm.projectsUnlimited=g('pmProjUnl').checked;
+  planForm.brandWorkspaces=g('pmWorkspaces').value;
+  planForm.workspacesUnlimited=g('pmWsUnl').checked;
+  planForm.socialAccounts=g('pmSocial').value;
+  PLAN_FEATURE_TOGGLES.forEach(t=>{planForm.toggles[t.k]=g('pmTg_'+t.k).checked});
+  planForm.isPublic=g('pmPublic').checked;
+}
+function renderPlanPreview(){pmCollect();const box=document.getElementById('pmPreview');if(box)box.innerHTML=planPreviewHtml(planForm)}
+
 function openPlanModal(planId){
   const isEdit=!!planId;
   const decodedId=isEdit?decodeURIComponent(planId):null;
   const existing=isEdit?(plansData.items||[]).find(p=>p.id===decodedId):null;
-  const name=existing?existing.name:'';
-  const desc=existing?existing.description:'';
-  const priceUsd=existing?existing.priceUsd:'';
-  const pricePkr=existing?existing.pricePkr:'';
-  const credits=existing?existing.monthlyCredits:'';
-  const features=existing?(existing.features||[]).join('\n'):'';
-  const isPublic=existing?existing.isPublic!==false:true;
-  const planIdField=isEdit?planId:'';
+  planForm=planFormFromPlan(existing||{features:[],limits:{}});
+  const f=planForm;
   document.getElementById('modalWrap').innerHTML=`
-  <div class="modal-bg" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()" style="max-width:520px">
+  <div class="modal-bg" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()" style="max-width:920px">
     <h2 style="font-family:&#39;Space Grotesk&#39;,sans-serif;font-size:20px;font-weight:700">${isEdit?'Edit':'Create'} plan</h2>
-    <p class="text-xs mt-2" style="color:var(--text-muted)">${isEdit?'Update plan details. Changes apply to the billing page immediately.':'Add a new subscription plan visible on the billing page.'}</p>
-    <div class="mt-4" style="display:flex;flex-direction:column;gap:12px">
-      <div class="flex gap-2">
-        <input class="inp" id="pmPlanId" placeholder="Plan ID (e.g. starter)" value="${planIdField}" ${isEdit?'disabled style="flex:1;opacity:.5"':'style="flex:1"'}>
-        <input class="inp" id="pmName" placeholder="Name *" value="${name}">
+    <p class="text-xs mt-2" style="color:var(--text-muted)">${isEdit?'Update the numbers and ticks — the plan card updates as you type.':'Add a new subscription plan. Just enter the numbers and tick the features.'}</p>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:24px;margin-top:16px" class="plan-form-grid">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="flex gap-2">
+          <input class="inp" id="pmPlanId" placeholder="Plan ID (e.g. starter) *" value="${f.planId}" ${isEdit?'disabled style=\'flex:1;opacity:.5\'':'style="flex:1"'}>
+          <input class="inp" id="pmName" data-pm="1" placeholder="Name *" value="${f.name}" style="flex:1">
+        </div>
+        <textarea class="inp" id="pmDesc" data-pm="1" rows="2" placeholder="Description (shown under the plan name)">${f.description}</textarea>
+        <div><label class="section-title">Pricing</label>
+          <div class="flex gap-2 mt-1">
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmPriceUsd" step="0.01" placeholder="Price $ / mo" value="${f.priceUsd}"></div>
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmPricePkr" placeholder="Price PKR / mo" value="${f.pricePkr}"></div>
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmDiscount" min="0" max="90" placeholder="Discount %" value="${f.discountPercent||''}"></div>
+          </div>
+        </div>
+        <div><label class="section-title">What the plan includes</label>
+          <div class="flex gap-2 mt-1">
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmCredits" min="0" placeholder="Credits / mo" value="${f.credits}"></div>
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmProjects" min="0" placeholder="Projects" value="${f.maxProjects}" ${f.projectsUnlimited?'disabled style="opacity:.4"':''}><label class="flex items-center gap-1 mt-1" style="font-size:11px;color:var(--text-muted)"><input type="checkbox" id="pmProjUnl" ${f.projectsUnlimited?'checked':''}> Unlimited</label></div>
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmSocial" min="0" placeholder="Social accounts" value="${f.socialAccounts}"></div>
+          </div>
+          <div class="flex gap-2 mt-1" style="align-items:center">
+            <div style="flex:1"><input class="inp mono" data-pm="1" type="number" id="pmWorkspaces" min="0" placeholder="Brand workspaces" value="${f.brandWorkspaces}" ${f.workspacesUnlimited?'disabled style="opacity:.4"':''}></div>
+            <label class="flex items-center gap-1" style="font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="pmWsUnl" ${f.workspacesUnlimited?'checked':''}> Unlimited workspaces</label>
+          </div>
+        </div>
+        <div><label class="section-title">Feature access</label>
+          <div class="grid-2 mt-1">
+            ${PLAN_FEATURE_TOGGLES.map(t=>`<label class="flex items-center gap-2" style="font-size:13px;color:var(--text-secondary);padding:6px 10px;border:1px solid var(--border-default);border-radius:10px;cursor:pointer"><input type="checkbox" id="pmTg_${t.k}" data-pm="1" ${f.toggles[t.k]?'checked':''}> ${t.l}</label>`).join('')}
+          </div>
+        </div>
+        <div><label class="section-title">Extra feature lines (optional, one per line)</label>
+          <textarea class="inp" id="pmExtra" rows="2" style="min-height:52px" placeholder="e.g. Email support&#10;Team seats">${(f.extraFeatures||[]).join('\n')}</textarea>
+        </div>
+        <div class="flex gap-3 items-center"><input type="checkbox" id="pmPublic" data-pm="1" ${f.isPublic?'checked':''}><label for="pmPublic" style="font-size:14px;color:var(--text-secondary)">Public (shown on billing page)</label></div>
+        <p id="pmErr" class="text-xs" style="color:var(--error)"></p>
       </div>
-      <textarea class="inp" id="pmDesc" placeholder="Description">${desc}</textarea>
-      <div class="flex gap-2">
-        <div style="flex:1"><label class="section-title">Price (USD)</label><input class="inp mono" type="number" id="pmPriceUsd" step="0.01" value="${priceUsd}"></div>
-        <div style="flex:1"><label class="section-title">Price (PKR)</label><input class="inp mono" type="number" id="pmPricePkr" value="${pricePkr}"></div>
-        <div style="flex:1"><label class="section-title">Monthly credits</label><input class="inp mono" type="number" id="pmCredits" step="0.01" value="${credits}"></div>
+      <div>
+        <label class="section-title">Live preview</label>
+        <div class="card" id="pmPreview" style="margin-top:8px;border-color:rgba(91,124,250,0.3)">${planPreviewHtml(planForm)}</div>
       </div>
-      <div><label class="section-title">Features (one per line)</label><textarea class="inp" id="pmFeatures" style="min-height:120px" placeholder="8 Admart credits monthly&#10;Image generation&#10;Priority support">${features}</textarea></div>
-      <div class="flex gap-3 items-center"><input type="checkbox" id="pmPublic" ${isPublic?'checked':''}><label for="pmPublic" style="font-size:14px;color:var(--text-secondary)">Public (shown on billing page)</label></div>
-      <p id="pmErr" class="text-xs" style="color:var(--error)"></p>
     </div>
     <div class="flex mt-5" style="justify-content:flex-end;gap:8px">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="pmBtn" onclick="submitPlan('${isEdit?planId:''}')">${isEdit?'Save changes':'Create plan'}</button>
     </div>
   </div></div>`;
-  if(!isEdit)setTimeout(()=>document.getElementById('pmPlanId')?.focus(),50);
+  document.querySelectorAll('#modalWrap [data-pm]').forEach(el=>{
+    el.addEventListener('input',()=>{
+      const unlP=document.getElementById('pmProjUnl'),unlW=document.getElementById('pmWsUnl');
+      if(unlP)document.getElementById('pmProjects').disabled=unlP.checked,document.getElementById('pmProjects').style.opacity=unlP.checked?.4:1;
+      if(unlW)document.getElementById('pmWorkspaces').disabled=unlW.checked,document.getElementById('pmWorkspaces').style.opacity=unlW.checked?.4:1;
+      renderPlanPreview();
+    });
+    el.addEventListener('change',renderPlanPreview);
+  });
+  if(!isEdit)setTimeout(()=>document.getElementById('pmName')?.focus(),50);
 }
 async function submitPlan(existingId){
-  const planId=document.getElementById('pmPlanId').value.trim();
-  const name=document.getElementById('pmName').value.trim();
-  const priceUsd=document.getElementById('pmPriceUsd').value;
-  const pricePkr=document.getElementById('pmPricePkr').value;
-  const credits=document.getElementById('pmCredits').value;
-  const features=document.getElementById('pmFeatures').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const isPublic=document.getElementById('pmPublic').checked;
+  pmCollect();
+  planForm.extraFeatures=(document.getElementById('pmExtra').value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const planId=(planForm.planId||'').trim();
+  const name=(planForm.name||'').trim();
   if(!planId||!name){document.getElementById('pmErr').textContent='Plan ID and name are required.';return}
   document.getElementById('pmBtn').disabled=true;
+  const payload={
+    planId,name,
+    description:(planForm.description||'').trim(),
+    priceUsd:Number(planForm.priceUsd)||0,
+    pricePkr:Number(planForm.pricePkr)||0,
+    monthlyCredits:Number(planForm.credits)||0,
+    features:buildPlanFeatures(planForm),
+    limits:{
+      max_projects:planForm.projectsUnlimited?-1:Number(planForm.maxProjects)||0,
+      max_brand_workspaces:planForm.workspacesUnlimited?-1:Number(planForm.brandWorkspaces)||0,
+      max_social_connections_per_project:Number(planForm.socialAccounts)||0,
+      can_schedule_publishing:!!planForm.toggles.can_schedule_publishing,
+      can_auto_publish:!!planForm.toggles.can_auto_publish,
+      has_analytics:!!planForm.toggles.has_analytics,
+      has_priority_queue:!!planForm.toggles.has_priority_queue,
+      discount_percent:Number(planForm.discountPercent)||0
+    },
+    isPublic:planForm.isPublic
+  };
   const decodedExisting=existingId?decodeURIComponent(existingId):null;
   try{
     if(decodedExisting){
-      await api('PUT',`/api/admin/plans/${encodeURIComponent(decodedExisting)}`,{name,priceUsd,pricePkr,monthlyCredits:credits,features,isPublic});
+      await api('PUT',`/api/admin/plans/${encodeURIComponent(decodedExisting)}`,payload);
     }else{
-      await api('POST','/api/admin/plans/create',{planId,name,description:document.getElementById('pmDesc').value.trim(),priceUsd,pricePkr,monthlyCredits:credits,features,isPublic});
+      await api('POST','/api/admin/plans/create',payload);
     }
-    toast(existingId?'Plan updated.':'Plan created.');
+    toast(decodedExisting?'Plan updated.':'Plan created.');
     closeModal();
   }catch(e){document.getElementById('pmErr').textContent=e?.message||'Error';return}finally{document.getElementById('pmBtn').disabled=false}
   await loadPlans();renderContent();
 }
+
 async function deletePlan(encodedPlanId){
   const planId=decodeURIComponent(encodedPlanId);
   if(!confirm('Delete plan "'+planId+'" permanently? Customers on this plan will not be affected.'))return;
