@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from projects.crypto import decrypt
-from projects.models import Project, SocialAccount
+from projects.models import Project, PublishJob, SocialAccount
 from projects.views import OAUTH_STATE_SALT
 
 User = get_user_model()
@@ -1416,3 +1416,149 @@ class AdsAccountTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["externalId"], "yt-ad-1")
+
+
+class ProjectAnalyticsTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="an@example.com", password="Password123!", first_name="A", last_name="N"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand")
+        self.url = reverse("project_analytics", kwargs={"project_id": self.project.id})
+
+    def test_empty_project_zeros(self) -> None:
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["totals"]["posts"], 0)
+        self.assertEqual(response.data["range"], "30d")
+        self.assertEqual(response.data["connectedPlatforms"], [])
+        self.assertEqual(response.data["byPlatform"], [])
+        self.assertEqual(len(response.data["series"]), 31)
+
+    def test_counts_jobs_and_filters_platform(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="YT drop",
+            platforms=["youtube"],
+            status="succeeded",
+        )
+        old = PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="image",
+            title="FB still",
+            platforms=["facebook"],
+            status="failed",
+        )
+        old.created_at = timezone.now() - timedelta(days=40)
+        old.save(update_fields=["created_at"])
+        response = self.client.get(self.url, {"range": "30d"})
+        self.assertEqual(response.data["totals"]["posts"], 1)
+        self.assertEqual(response.data["totals"]["succeeded"], 1)
+        self.assertEqual(response.data["totals"]["videos"], 1)
+        yt = next(row for row in response.data["byPlatform"] if row["id"] == "youtube")
+        self.assertEqual(yt["count"], 1)
+        all_time = self.client.get(self.url, {"range": "all"})
+        self.assertEqual(all_time.data["totals"]["posts"], 2)
+        fb_only = self.client.get(self.url, {"range": "all", "platform": "facebook"})
+        self.assertEqual(fb_only.data["totals"]["posts"], 1)
+        self.assertEqual(fb_only.data["posts"][0]["title"], "FB still")
+        self.assertEqual(fb_only.data["posts"][0]["platform"], "facebook")
+
+    def test_one_job_two_platforms_counts_sends(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Dual",
+            platforms=["youtube", "facebook"],
+            status="partial",
+            results={
+                "youtube": {"status": "succeeded", "externalId": "yt-1"},
+                "facebook": {"status": "failed", "error": "no page"},
+            },
+        )
+        response = self.client.get(self.url, {"range": "all"})
+        self.assertEqual(response.data["totals"]["posts"], 1)
+        self.assertEqual(response.data["totals"]["partial"], 1)
+        counts = {row["id"]: row["count"] for row in response.data["byPlatform"]}
+        self.assertEqual(counts["youtube"], 1)
+        self.assertEqual(counts["facebook"], 1)
+        outcomes = {row["id"]: row for row in response.data["byPlatform"]}
+        self.assertEqual(outcomes["youtube"]["succeeded"], 1)
+        self.assertEqual(outcomes["facebook"]["failed"], 1)
+        by_dest = {row["platform"]: row for row in response.data["posts"]}
+        self.assertEqual(by_dest["youtube"]["status"], "succeeded")
+        self.assertEqual(by_dest["facebook"]["status"], "failed")
+        self.assertIsNone(by_dest["youtube"]["views"])
+        self.assertIsNone(by_dest["facebook"]["likes"])
+
+    def test_dropdown_only_connected_platforms(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=False)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Hidden IG",
+            platforms=["instagram"],
+            status="succeeded",
+        )
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="YT drop",
+            platforms=["youtube"],
+            status="succeeded",
+        )
+        response = self.client.get(self.url, {"range": "all"})
+        self.assertEqual(response.data["connectedPlatforms"], ["youtube"])
+        self.assertEqual([row["id"] for row in response.data["byPlatform"]], ["youtube"])
+        self.assertEqual(response.data["totals"]["posts"], 1)
+        self.assertNotIn("instagram", response.data["series"][0])
+        self.assertIn("youtube", response.data["series"][0])
+
+    @patch(
+        "projects.insights.youtube_video_stats",
+        return_value={"yt-1": {"views": 1280, "likes": 44, "comments": 9, "shares": None}},
+    )
+    def test_table_rows_include_youtube_stats(self, _mock_yt) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="YT drop",
+            platforms=["youtube"],
+            status="succeeded",
+            results={"youtube": {"status": "succeeded", "externalId": "yt-1"}},
+        )
+        response = self.client.get(self.url, {"range": "all"})
+        row = response.data["posts"][0]
+        self.assertEqual(row["platform"], "youtube")
+        self.assertEqual(row["views"], 1280)
+        self.assertEqual(row["likes"], 44)
+        self.assertEqual(row["comments"], 9)
+        self.assertIsNone(row["shares"])
+        self.assertEqual(row["engagementRate"], 4.1)
+
+    def test_foreign_project_404(self) -> None:
+        other = User.objects.create_user(
+            email="x@example.com", password="Password123!", first_name="X", last_name="Y"
+        )
+        foreign = Project.objects.create(owner=other, name="Other")
+        url = reverse("project_analytics", kwargs={"project_id": foreign.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

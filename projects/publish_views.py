@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content.models import LibraryAsset
+from projects.analytics import build_project_analytics
 from projects.media_policy import validate_organic_platforms
 from projects.models import PublishJob, SocialAccount
 from projects.publish import PUBLISHERS, PublishUnavailable, list_facebook_pages, list_youtube_playlists
@@ -224,4 +225,17 @@ class ProjectYoutubeSuggestView(ProjectScopedSocialMixin, APIView):
             return Response({"message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except YoutubeSuggestProviderError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(payload)
+
+
+class ProjectAnalyticsView(ProjectScopedSocialMixin, APIView):
+    """GET /api/projects/:id/analytics — publish activity for the project."""
+
+    def get(self, request: Request, project_id: str, *args, **kwargs) -> Response:
+        project = self.get_project(request, project_id)
+        payload = build_project_analytics(
+            project,
+            range_key=(request.query_params.get("range") or "30d").strip(),
+            platform=(request.query_params.get("platform") or "all").strip(),
+        )
         return Response(payload)

@@ -39,13 +39,14 @@ Django apps: `config`, `users`, `projects`, `content`.
 | Video jobs (fal.ai): create, poll, cancel, frame upload, model catalog | ✅ | ✅ `/video-gen` (also `/create`) |
 | Library list/detail + soft-delete + user upload | ✅ | ✅ `/library` (images + videos) |
 | Social accounts list / OAuth connect URL / disconnect / callback | ✅ YouTube (+ Meta stubs) | ✅ `/social` |
+| Analytics from publish jobs | ✅ `GET /api/projects/:id/analytics` | ✅ `/analytics` |
 
 ### Frontend pages that are mostly mock / not backed by API yet
 
 | Route | Notes |
 |---|---|
 | `/progress`, `/result` | Result chrome; publish is backed by `/api/projects/:id/publish` and `/ads/boost` |
-| `/templates`, `/calendar`, `/analytics`, `/notifications` | Local/mock data |
+| `/templates`, `/calendar`, `/notifications` | Local/mock data |
 | `/brand-kit`, `/settings` | Mostly local UI; brand fields exist on User/Project but pages are not fully API-driven |
 | `/dashboard` | Shell UI; not a full analytics backend |
 
