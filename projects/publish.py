@@ -279,6 +279,7 @@ def publish_facebook(
     title: str,
     caption: str = "",
     page_id: str = "",
+    scheduled_at=None,
 ) -> dict:
     if not settings.FACEBOOK_PUBLISH_ENABLED:
         raise PublishUnavailable(
@@ -302,6 +303,9 @@ def publish_facebook(
         ctype = "video/mp4" if kind == "video" else "image/jpeg"
     text = (caption or title or "").strip()
     data = {"access_token": page_token, "published": "true"}
+    if scheduled_at:
+        data["published"] = "false"
+        data["scheduled_publish_time"] = str(int(scheduled_at.timestamp()))
     if kind == "video":
         data["description"] = text
         if title:

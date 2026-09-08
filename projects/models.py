@@ -145,6 +145,8 @@ class PublishJob(models.Model):
 
     STATUS_CHOICES = [
         ("queued", "Queued"),
+        ("draft", "Draft"),
+        ("scheduled", "Scheduled"),
         ("running", "Running"),
         ("succeeded", "Succeeded"),
         ("partial", "Partial"),
@@ -166,6 +168,8 @@ class PublishJob(models.Model):
     title = models.CharField(max_length=255, blank=True, default="")
     platforms = models.JSONField(default=list)
     results = models.JSONField(default=dict, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    scheduled_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
     error = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(default=timezone.now)

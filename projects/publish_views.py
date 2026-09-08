@@ -1,5 +1,9 @@
 """Organic publish API."""
 
+from datetime import datetime, timezone as dt_timezone
+
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -8,6 +12,7 @@ from rest_framework.views import APIView
 
 from content.models import LibraryAsset
 from projects.analytics import build_project_analytics
+from projects.calendar import build_project_calendar
 from projects.media_policy import validate_organic_platforms
 from projects.models import PublishJob, SocialAccount
 from projects.publish import PUBLISHERS, PublishUnavailable, list_facebook_pages, list_youtube_playlists
@@ -83,6 +88,27 @@ def _instagram_publish_kwargs(data, title: str) -> dict:
     return {"caption": (raw.get("caption") or title or "").strip()[:2200]}
 
 
+def _object_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _parse_scheduled_at(raw) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if len(text) == 16:
+        text = text + ":00"
+    parsed = parse_datetime(text)
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+NATIVE_SCHEDULE = frozenset({"youtube", "facebook"})
+
+
 class ProjectPublishView(ProjectScopedSocialMixin, APIView):
     """POST /api/projects/:id/publish — post a generated asset to connected accounts."""
 
@@ -118,17 +144,35 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
         if not source_url:
             return Response({"message": "sourceUrl or assetId is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        action = (request.data.get("action") or "publish").strip().lower()
+        if action not in ("publish", "draft", "schedule"):
+            return Response({"message": "action must be publish, draft, or schedule."}, status=status.HTTP_400_BAD_REQUEST)
+        scheduled_at = _parse_scheduled_at(request.data.get("scheduledAt"))
+        if action == "schedule":
+            if scheduled_at is None:
+                return Response({"message": "Pick a date and time to schedule."}, status=status.HTTP_400_BAD_REQUEST)
+            if scheduled_at <= timezone.now():
+                return Response({"message": "Schedule time must be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+            youtube_kwargs["publish_at"] = scheduled_at.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            facebook_kwargs["scheduled_at"] = scheduled_at
+
         connected = {
             a.platform: a
             for a in SocialAccount.objects.filter(project=project, platform__in=platforms, connected=True)
         }
-        missing = [p for p in platforms if p not in connected]
-        if missing:
-            return Response(
-                {"message": f"Not connected: {', '.join(missing)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if action != "draft":
+            missing = [p for p in platforms if p not in connected]
+            if missing:
+                return Response(
+                    {"message": f"Not connected: {', '.join(missing)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
+        stored_payload = {
+            "youtube": _object_dict(request.data.get("youtube")),
+            "facebook": _object_dict(request.data.get("facebook")),
+            "instagram": _object_dict(request.data.get("instagram")),
+        }
         job = PublishJob.objects.create(
             project=project,
             user=request.user,
@@ -137,10 +181,18 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
             source_url=source_url,
             title=title,
             platforms=platforms,
-            status="running",
+            payload=stored_payload,
+            scheduled_at=scheduled_at if action == "schedule" else None,
+            status="draft" if action == "draft" else "running",
         )
+        if action == "draft":
+            return Response(PublishJobSerializer(job).data, status=status.HTTP_201_CREATED)
+
         results = {}
         for platform in platforms:
+            if action == "schedule" and platform not in NATIVE_SCHEDULE:
+                results[platform] = {"status": "scheduled"}
+                continue
             publisher = PUBLISHERS[platform]
             try:
                 kwargs = {"kind": kind, "source_url": source_url, "title": title}
@@ -151,15 +203,19 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                 elif platform == "instagram":
                     kwargs.update(instagram_kwargs)
                 results[platform] = publisher(connected[platform], **kwargs)
+                if action == "schedule" and results[platform].get("status") == "succeeded":
+                    results[platform]["status"] = "scheduled"
             except PublishUnavailable as exc:
                 results[platform] = {"status": "failed", "error": str(exc)}
             except Exception as exc:  # noqa: BLE001
                 results[platform] = {"status": "failed", "error": str(exc)}
 
         statuses = [row.get("status") for row in results.values()]
-        if all(s == "succeeded" for s in statuses):
+        if action == "schedule" and all(s in ("scheduled", "succeeded") for s in statuses):
+            job.status = "scheduled"
+        elif all(s == "succeeded" for s in statuses):
             job.status = "succeeded"
-        elif any(s == "succeeded" for s in statuses):
+        elif any(s in ("succeeded", "scheduled") for s in statuses):
             job.status = "partial"
         else:
             job.status = "failed"
@@ -239,3 +295,19 @@ class ProjectAnalyticsView(ProjectScopedSocialMixin, APIView):
             platform=(request.query_params.get("platform") or "all").strip(),
         )
         return Response(payload)
+
+
+class ProjectCalendarView(ProjectScopedSocialMixin, APIView):
+    """GET /api/projects/:id/calendar — scheduled posts and generations for a month."""
+
+    def get(self, request: Request, project_id: str, *args, **kwargs) -> Response:
+        project = self.get_project(request, project_id)
+        now = timezone.now()
+        try:
+            year = int(request.query_params.get("year") or now.year)
+            month = int(request.query_params.get("month") or now.month)
+        except (TypeError, ValueError):
+            return Response({"message": "year and month must be numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        if year < 2000 or year > 2100 or month < 1 or month > 12:
+            return Response({"message": "Invalid year or month."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(build_project_calendar(project, year=year, month=month))

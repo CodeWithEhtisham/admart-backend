@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.core import signing
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -789,6 +790,89 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(response.data["status"], "succeeded")
         self.assertEqual(response.data["results"]["youtube"]["externalId"], "yt-vid-1")
 
+    def test_draft_does_not_call_publisher(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": MagicMock(side_effect=AssertionError("draft"))}):
+            response = self.client.post(
+                self.url,
+                {
+                    "action": "draft",
+                    "kind": "video",
+                    "sourceUrl": "https://cdn.example/v.mp4",
+                    "platforms": ["youtube"],
+                    "title": "Hold this",
+                    "youtube": {"title": "Hold this", "description": "later"},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "draft")
+        job = PublishJob.objects.get(id=response.data["id"])
+        self.assertEqual(job.payload["youtube"]["description"], "later")
+
+    def test_schedule_youtube_uses_publish_at(self) -> None:
+        from datetime import timedelta
+
+        captured = {}
+
+        def _capture(account, **kwargs):
+            captured.update(kwargs)
+            return {"status": "succeeded", "externalId": "yt-sched"}
+
+        when = timezone.now() + timedelta(days=2)
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+            response = self.client.post(
+                self.url,
+                {
+                    "action": "schedule",
+                    "scheduledAt": when.isoformat(),
+                    "kind": "video",
+                    "sourceUrl": "https://cdn.example/v.mp4",
+                    "platforms": ["youtube"],
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "scheduled")
+        self.assertTrue(captured["publish_at"])
+        self.assertEqual(response.data["results"]["youtube"]["status"], "scheduled")
+
+    def test_schedule_past_time_400(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        response = self.client.post(
+            self.url,
+            {
+                "action": "schedule",
+                "scheduledAt": "2020-01-01T12:00:00Z",
+                "kind": "video",
+                "sourceUrl": "https://cdn.example/v.mp4",
+                "platforms": ["youtube"],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_schedule_instagram_is_saved_not_posted(self) -> None:
+        from datetime import timedelta
+
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
+        with patch.dict("projects.publish_views.PUBLISHERS", {"instagram": MagicMock(side_effect=AssertionError("ig"))}):
+            response = self.client.post(
+                self.url,
+                {
+                    "action": "schedule",
+                    "scheduledAt": (timezone.now() + timedelta(days=1)).isoformat(),
+                    "kind": "image",
+                    "sourceUrl": "https://cdn.example/a.png",
+                    "platforms": ["instagram"],
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "scheduled")
+        self.assertEqual(response.data["results"]["instagram"]["status"], "scheduled")
+
     def test_youtube_passes_title_tags_thumbnail(self) -> None:
         captured = {}
 
@@ -1530,6 +1614,27 @@ class ProjectAnalyticsTests(APITestCase):
         self.assertNotIn("instagram", response.data["series"][0])
         self.assertIn("youtube", response.data["series"][0])
 
+    def test_draft_and_scheduled_are_not_counted(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Draft",
+            platforms=["youtube"],
+            status="draft",
+        )
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Later",
+            platforms=["youtube"],
+            status="scheduled",
+        )
+        response = self.client.get(self.url, {"range": "all"})
+        self.assertEqual(response.data["totals"]["posts"], 0)
+
     @patch(
         "projects.insights.youtube_video_stats",
         return_value={"yt-1": {"views": 1280, "likes": 44, "comments": 9, "shares": None}},
@@ -1560,5 +1665,97 @@ class ProjectAnalyticsTests(APITestCase):
         )
         foreign = Project.objects.create(owner=other, name="Other")
         url = reverse("project_analytics", kwargs={"project_id": foreign.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ProjectCalendarTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="cal@example.com", password="Password123!", first_name="C", last_name="L"
+        )
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Brand")
+        self.url = reverse("project_calendar", kwargs={"project_id": self.project.id})
+
+    def test_empty_month(self) -> None:
+        response = self.client.get(self.url, {"year": 2026, "month": 9})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["events"], [])
+
+    def test_scheduled_publish_and_generating_video(self) -> None:
+        from datetime import timedelta
+
+        from content.models import VideoJob
+
+        when = timezone.now() + timedelta(hours=2)
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Later drop",
+            platforms=["youtube", "facebook"],
+            status="scheduled",
+            scheduled_at=when,
+        )
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Hidden draft",
+            platforms=["youtube"],
+            status="draft",
+        )
+        VideoJob.objects.create(
+            project=self.project,
+            user=self.user,
+            capability="textToVideo",
+            model="demo",
+            status="running",
+            prompt="Make a cinematic recap",
+        )
+        response = self.client.get(
+            self.url,
+            {"year": timezone.now().year, "month": timezone.now().month},
+        )
+        kinds = {row["id"].split(":")[0] for row in response.data["events"]}
+        titles = {row["title"] for row in response.data["events"]}
+        self.assertIn("pub", kinds)
+        self.assertIn("vid", kinds)
+        self.assertIn("Later drop", titles)
+        self.assertNotIn("Hidden draft", titles)
+        self.assertTrue(any(row["status"] == "generating" for row in response.data["events"]))
+        self.assertTrue(any(row["status"] == "scheduled" and row["platform"] == "Y" for row in response.data["events"]))
+
+    def test_partial_job_names_each_platform(self) -> None:
+        PublishJob.objects.create(
+            project=self.project,
+            user=self.user,
+            kind="video",
+            title="Dual",
+            platforms=["youtube", "facebook"],
+            status="partial",
+            results={
+                "youtube": {"status": "succeeded", "externalId": "yt-1"},
+                "facebook": {"status": "failed", "error": "no page"},
+            },
+        )
+        response = self.client.get(
+            self.url,
+            {"year": timezone.now().year, "month": timezone.now().month},
+        )
+        by_platform = {row["platform"]: row for row in response.data["events"]}
+        self.assertEqual(by_platform["Y"]["status"], "published")
+        self.assertEqual(by_platform["Y"]["platformName"], "YouTube")
+        self.assertEqual(by_platform["F"]["status"], "failed")
+        self.assertEqual(by_platform["F"]["platformName"], "Facebook")
+        self.assertEqual(by_platform["F"]["error"], "no page")
+
+    def test_foreign_project_404(self) -> None:
+        other = User.objects.create_user(
+            email="z@example.com", password="Password123!", first_name="Z", last_name="Z"
+        )
+        foreign = Project.objects.create(owner=other, name="Other")
+        url = reverse("project_calendar", kwargs={"project_id": foreign.id})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

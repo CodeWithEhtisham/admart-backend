@@ -79,6 +79,7 @@ class PublishJobSerializer(serializers.ModelSerializer):
     assetId = serializers.UUIDField(source="library_asset_id", read_only=True, allow_null=True)
     sourceUrl = serializers.CharField(source="source_url", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    scheduledAt = serializers.DateTimeField(source="scheduled_at", read_only=True, allow_null=True)
 
     class Meta:
         model = PublishJob
@@ -92,6 +93,7 @@ class PublishJobSerializer(serializers.ModelSerializer):
             "results",
             "status",
             "error",
+            "scheduledAt",
             "createdAt",
         ]
         read_only_fields = fields

@@ -23,7 +23,7 @@ def build_project_analytics(project, *, range_key: str = "30d", platform: str = 
     platform = platform if platform in connected else "all"
     now = timezone.now()
     start = None if range_key == "all" else now - timedelta(days=RANGE_DAYS[range_key])
-    qs = PublishJob.objects.filter(project=project)
+    qs = PublishJob.objects.filter(project=project).exclude(status__in=("draft", "scheduled", "queued"))
     if start is not None:
         qs = qs.filter(created_at__gte=start)
     jobs = list(qs.order_by("-created_at"))
