@@ -228,17 +228,27 @@ class Template(models.Model):
     """Owned prompt/template catalog item shown on the public template page."""
 
     CATEGORY_CHOICES = [
-        ("ad", "Ad"),
-        ("reel", "Reel"),
-        ("carousel", "Carousel"),
-        ("story", "Story"),
-        ("product", "Product"),
-        ("announce", "Announcement"),
+        ("ads-product", "Ads & Product"),
+        ("brand-logo", "Brand & Logo"),
+        ("video", "Video"),
+        ("illustration-3d", "Illustration & 3D"),
+        ("posters-visuals", "Posters & Visuals"),
+        ("portraits", "Portraits"),
+        ("storyboard-characters", "Storyboard & Characters"),
+        ("wallpaper", "Wallpaper"),
     ]
+
+    # Mirrors meigen.ai's site category slugs (the ?category=… URLs) so filters
+    # agree with the gallery we sync from.
+    CATEGORY_SLUGS = {slug for slug, _label in CATEGORY_CHOICES}
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=180)
-    category = models.CharField(max_length=24, choices=CATEGORY_CHOICES)
+    category = models.CharField(
+        max_length=32,
+        choices=CATEGORY_CHOICES,
+        help_text="Gallery section this template belongs to (meigen category slugs).",
+    )
     format = models.CharField(max_length=40)
     is_video = models.BooleanField(default=False)
     preview_url = models.CharField(max_length=2000, blank=True, default="")

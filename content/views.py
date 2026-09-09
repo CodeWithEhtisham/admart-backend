@@ -274,15 +274,78 @@ class PromptEnhanceView(APIView):
         return Response(result)
 
 
+# Categories used before the meigen-style scheme; mapped on read so old rows
+# keep showing up under the new tabs until the next gallery refresh rewrites them.
+_LEGACY_CATEGORY_MAP = {
+    "ad": "ads-product",
+    "ads": "ads-product",
+    "product": "ads-product",
+    "announce": "ads-product",
+    "announcement": "ads-product",
+    "carousel": "ads-product",
+    "story": "ads-product",
+    "reel": "video",
+}
+
+
+def _with_current_categories(queryset):
+    """Annotate legacy category values onto their new meigen-style slugs.
+
+    New rows are written with the new slugs directly; this only affects rows
+    created before the category migration until the gallery refresh updates them.
+    """
+    from django.db.models import Case, CharField, Value, When
+
+    whens = [
+        When(category=old, then=Value(new)) for old, new in _LEGACY_CATEGORY_MAP.items()
+    ]
+    return queryset.annotate(
+        current_category=Case(*whens, default=F("category"), output_field=CharField())
+    )
+
+
+def _category_stats():
+    """Per-category image/video counts for the frontend category pills."""
+    from django.db.models import Count, Q
+
+    stats = {
+        slug: {"images": 0, "videos": 0}
+        for slug, _label in Template.CATEGORY_CHOICES
+    }
+    rows = (
+        _with_current_categories(Template.objects.filter(is_active=True))
+        .values("current_category")
+        .annotate(
+            images=Count("id", filter=Q(is_video=False)),
+            videos=Count("id", filter=Q(is_video=True)),
+        )
+    )
+    for row in rows:
+        entry = stats.get(row["current_category"])
+        if entry is not None:
+            entry["images"] = row["images"]
+            entry["videos"] = row["videos"]
+    all_stats = {
+        "images": sum(entry["images"] for entry in stats.values()),
+        "videos": sum(entry["videos"] for entry in stats.values()),
+    }
+    stats["all"] = all_stats
+    return stats
+
+
+def _category(request):
+    return (request.query_params.get("category") or "").strip().lower()
+
+
 class TemplateListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Template.objects.filter(is_active=True)
+        qs = _with_current_categories(Template.objects.filter(is_active=True))
 
-        category = (request.query_params.get("category") or "").strip().lower()
+        category = _category(request)
         if category and category != "all":
-            qs = qs.filter(category=category)
+            qs = qs.filter(current_category=category)
 
         media = (request.query_params.get("media") or "").strip().lower()
         if media == "image":
@@ -292,10 +355,12 @@ class TemplateListView(APIView):
 
         search = (request.query_params.get("search") or "").strip()
         if search:
+            # Search titles plus the full prompt/description text stored in
+            # template_config (titles are often truncated or just "{").
             qs = qs.filter(
                 Q(title__icontains=search)
-                | Q(category__icontains=search)
-                | Q(format__icontains=search)
+                | Q(template_config__prompt__icontains=search)
+                | Q(template_config__description__icontains=search)
             )
 
         model_name = (request.query_params.get("model") or "").strip()
@@ -338,6 +403,7 @@ class TemplateListView(APIView):
                 "items": data,
                 "nextCursor": next_cursor,
                 "count": qs.count(),
+                "categoryStats": _category_stats(),
             }
         )
 
@@ -346,7 +412,13 @@ class TemplateDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, template_id):
-        template = get_object_or_404(Template, id=template_id, is_active=True)
+        template = _with_current_categories(
+            Template.objects.filter(id=template_id, is_active=True)
+        ).first()
+        if template is None:
+            return Response(
+                {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
+            )
         return Response(
             TemplateSerializer(
                 template,
@@ -413,9 +485,11 @@ class TemplateFavoriteListView(APIView):
 
     def get(self, request):
         favorite_ids = _favorite_template_ids(request.user)
-        templates = Template.objects.filter(
-            id__in=favorite_ids,
-            favorited_by__user=request.user,
+        templates = _with_current_categories(
+            Template.objects.filter(
+                id__in=favorite_ids,
+                favorited_by__user=request.user,
+            )
         ).order_by("-favorited_by__created_at")
         data = TemplateSerializer(
             templates,

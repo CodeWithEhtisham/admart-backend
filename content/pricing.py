@@ -25,6 +25,8 @@ ADMART_CREDIT_CURRENCY = "Admart credits"
 FAL_COST_BASIS_CURRENCY = "fal credits"
 MIN_MARKUP = Decimal("0.25")
 MARKUP_CURVE_NUMERATOR = Decimal("1.2")
+# Guaranteed gross margin on the cheapest plan (e.g. 0.10 = 10%).
+MIN_PLAN_MARGIN = Decimal(str(getattr(settings, "MIN_PLAN_MARGIN", "0.10")))
 
 # Last known values from fal's /v1/models/pricing endpoint for the current
 # supported catalog. Used only when FAL_KEY/network is unavailable.
@@ -85,10 +87,38 @@ def admart_markup_multiplier(fal_cost: Decimal | int | float | str) -> Decimal:
     """Return the Admart price multiplier for a raw fal job cost.
 
     Formula: price = cost * (1 + max(0.25, 1.2 / (cost + 1))).
+    A floor is applied so the cheapest plan's credit value never erodes margin
+    on expensive jobs (e.g. long videos on the Pro plan).
     """
     cost = quantize_credits(fal_cost)
-    markup = max(MIN_MARKUP, MARKUP_CURVE_NUMERATOR / (cost + Decimal("1")))
+    markup = max(MIN_MARKUP, _minimum_viable_markup(), MARKUP_CURVE_NUMERATOR / (cost + Decimal("1")))
     return Decimal("1") + markup
+
+
+def _minimum_viable_markup() -> Decimal:
+    """The smallest markup extra that keeps Admart margin >= 0 on the cheapest plan.
+
+    The cheapest plan gives the user the most credits per dollar (e.g. Pro at
+    $0.658/credit). For a fal job costing ``c``, the user pays ``c*m`` credits
+    which are worth ``c*m*v`` dollars (v = credit value). To not lose money we
+    need ``c*m*v >= c`` → ``m >= 1/v``. We use the worst plan to bound it.
+    """
+    try:
+        from users.plans import get_plan, get_public_plan_ids
+
+        worst_value = Decimal("1")
+        for plan_id in get_public_plan_ids():
+            plan = get_plan(plan_id)
+            price = Decimal(str(plan.get("price_usd") or 0))
+            credits = Decimal(str(plan.get("monthly_credits") or 0))
+            if price > 0 and credits > 0:
+                value = price / credits
+                if value < worst_value:
+                    worst_value = value
+        # Floor so that even the cheapest plan keeps >= MIN_PLAN_MARGIN margin.
+        return ((Decimal("1") + MIN_PLAN_MARGIN) / worst_value) - Decimal("1")
+    except Exception:
+        return Decimal("0.25")
 
 
 def all_priced_endpoint_ids() -> list[str]:

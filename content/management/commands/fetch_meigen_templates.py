@@ -50,6 +50,51 @@ VULGAR_CONTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Keyword scoring used to mirror meigen.ai's own category sections
+# (?category=logo, ?category=ads-product, …). Their public API ignores the
+# category param, so we classify with the same signals their site uses.
+MEIGEN_CATEGORY_KEYWORDS = {
+    "brand-logo": (
+        (("brand", 3), ("logo", 4), ("monogram", 4), ("wordmark", 4), ("letterhead", 3),
+         ("business card", 3), ("stationery", 2), ("emblem", 3), ("mascot logo", 4),
+         ("branding", 3), ("identity design", 3), ("badge", 1)),
+    ),
+    "illustration-3d": (
+        (("3d", 3), ("3d render", 4), ("illustration", 3), ("vector", 2), ("claymorphism", 4),
+         ("clay style", 4), ("isometric", 3), ("blender", 3), ("octane render", 3),
+         ("cartoon", 2), ("flat design", 2), ("low poly", 4), ("cgi", 3)),
+    ),
+    "posters-visuals": (
+        (("poster", 4), ("flyer", 3), ("billboard", 3), ("typography", 2), ("album cover", 3),
+         ("book cover", 3), ("event promo", 3), ("print ad", 3), ("movie poster", 4),
+         ("visual identity", 2), ("packaging", 2), ("label design", 2)),
+    ),
+    "portraits": (
+        (("portrait", 4), ("headshot", 4), ("profile picture", 3), ("selfie", 3),
+         ("face closeup", 4), ("facial", 3), ("professional photo of a woman", 2),
+         ("professional photo of a man", 2), ("studio portrait", 4), ("head shot", 4)),
+    ),
+    "storyboard-characters": (
+        (("storyboard", 5), ("character sheet", 5), ("character design", 5), ("character concept", 4),
+         ("turnaround", 4), ("mascot character", 4), ("comic panel", 4), ("sequential art", 4),
+         ("expression sheet", 5), ("anime character", 4)),
+    ),
+    "wallpaper": (
+        (("wallpaper", 5), ("desktop background", 5), ("phone wallpaper", 5), ("4k background", 4),
+         ("seamless pattern", 3), ("abstract background", 3), ("minimal background", 3),
+         ("texture background", 3)),
+    ),
+    # Default bucket: promo/ads/product/marketing content — matches meigen's
+    # "Ads & Product" section, the largest one on the site.
+    "ads-product": (
+        (("ad", 2), ("advert", 3), ("advertisement", 3), ("commercial", 2), ("product", 2),
+         ("promo", 3), ("sale", 2), ("discount", 2), ("offer", 2), ("campaign", 2),
+         ("marketing", 2), ("cta", 2), ("instagram", 1), ("social media post", 3),
+         ("product photography", 4), ("product shot", 4), ("ecommerce", 3), ("landing page", 2),
+         ("banner", 2), ("restaurant", 1), ("menu", 1), ("gym", 1), ("real estate", 2)),
+    ),
+}
+
 # meigen display name -> fal model id used for actual generation
 IMAGE_MODEL_MAP = {
     "GPT Image": "openai/gpt-image-2",
@@ -153,6 +198,31 @@ def normalize_video_aspect(aspect: str) -> str:
     return best[0]
 
 
+def infer_meigen_category(item: dict, is_video: bool) -> str:
+    """Map a meigen item onto one of meigen's own site category slugs.
+
+    The meigen API ignores its ``category`` query param (verified: the same
+    items come back for every category), so their site classifies client-side.
+    We mirror that with a keyword score over title + prompt. Videos always go
+    to the "Videos" section, like the meigen site does.
+    """
+    if is_video:
+        return "video"
+    haystack = f"{(item.get('title') or '')}\n{(item.get('prompt') or '')}".lower()
+    scores = {}
+    for slug, keywords in MEIGEN_CATEGORY_KEYWORDS.items():
+        score = 0
+        for keyword, weight in keywords:
+            if keyword in haystack:
+                score += weight
+        if score:
+            scores[slug] = score
+    if not scores:
+        return "ads-product"
+    best = max(scores.items(), key=lambda pair: (pair[1], pair[0]))
+    return best[0]
+
+
 def build_seed(item: dict) -> dict | None:
     """Convert a meigen API item into a Template seed payload (or None to skip)."""
     is_video = (item.get("mediaType") or "").lower() == "video"
@@ -236,10 +306,12 @@ def build_seed(item: dict) -> dict | None:
     if is_video and (item.get("videoUrl") or "").strip():
         config["videoUrl"] = (item.get("videoUrl") or "").strip()
 
+    category = infer_meigen_category(item, is_video)
+
     return {
         "id": f"meigen-{meigen_id}",
         "title": title,
-        "category": "reel" if is_video else "ad",
+        "category": category,
         "format": f"{aspect} {'video' if is_video else 'image'}",
         "is_video": is_video,
         "preview_url": preview_url,

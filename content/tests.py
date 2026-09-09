@@ -109,7 +109,7 @@ class TemplateApiTests(APITestCase):
         )
         self.image_template = Template.objects.create(
             title="Burger Deal Poster",
-            category="ad",
+            category="ads-product",
             format="1:1 image",
             is_video=False,
             preview_url="/template-media/burger-deal.png",
@@ -125,7 +125,7 @@ class TemplateApiTests(APITestCase):
         )
         self.video_template = Template.objects.create(
             title="Launch Reel",
-            category="reel",
+            category="video",
             format="9:16 video",
             is_video=True,
             uses_count=10,
@@ -142,14 +142,14 @@ class TemplateApiTests(APITestCase):
     def test_template_list_is_public_and_filters_server_side(self):
         response = self.client.get(
             "/api/templates",
-            {"category": "ad", "search": "burger", "sort": "trending"},
+            {"category": "ads-product", "search": "burger", "sort": "trending"},
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         item = response.data["items"][0]
         self.assertEqual(item["id"], str(self.image_template.id))
-        self.assertEqual(item["category"], "ad")
+        self.assertEqual(item["category"], "ads-product")
         self.assertEqual(item["isVideo"], False)
         self.assertIn("estimatedCredits", item)
 
@@ -197,9 +197,9 @@ class PricingFormulaTests(APITestCase):
         self.assertEqual(nano["fal_cost_decimal"], Decimal("0.0800"))
         self.assertEqual(nano["credits_decimal"], Decimal("0.1689"))
         self.assertEqual(gpt["fal_cost_decimal"], Decimal("1.0000"))
-        self.assertEqual(gpt["credits_decimal"], Decimal("1.6000"))
+        self.assertEqual(gpt["credits_decimal"], Decimal("1.6709"))
         self.assertEqual(veo["fal_cost_decimal"], Decimal("3.2000"))
-        self.assertEqual(veo["credits_decimal"], Decimal("4.1143"))
+        self.assertEqual(veo["credits_decimal"], Decimal("5.3468"))
 
     @override_settings(FAL_KEY="")
     def test_seedance_token_based_pricing(self):
@@ -217,8 +217,8 @@ class PricingFormulaTests(APITestCase):
         # tokens = 1280*720*5*24/1024 = 108_000; quantity = 108 (thousands)
         self.assertEqual(video["quantity_decimal"], Decimal("108"))
         self.assertEqual(video["fal_cost_decimal"], Decimal("1.5120"))
-        # ~2.2343 credits per video, matching the plan allowance math
-        self.assertEqual(video["credits_decimal"], Decimal("2.2343"))
+        # ~2.5264 credits per video (margin-floor markup 1.6709), matching plan math
+        self.assertEqual(video["credits_decimal"], Decimal("2.5264"))
 
         video_1080 = pricing.quote_video_job(
             "textToVideo",
@@ -713,7 +713,7 @@ class TemplateFavoriteTests(APITestCase):
         self.other = User.objects.create_user(email="fav-other@example.com", password="pass12345")
         self.template = Template.objects.create(
             title="Favorite Me",
-            category="ad",
+            category="ads-product",
             format="1:1 image",
             is_video=False,
             template_config={"kind": "image", "prompt": "Test prompt"},

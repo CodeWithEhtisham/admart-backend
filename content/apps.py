@@ -85,6 +85,9 @@ def _start_template_auto_refresher():
                 logger.exception("Template gallery auto-refresh failed; will retry next cycle.")
             time.sleep(interval_minutes * 60)
 
+    # The RUN_MAIN guard above guarantees exactly one loop per runserver child
+    # (and none in the autoreload parent), so a plain daemon thread works for
+    # both development and production — no extra processes or pid files needed.
     threading.Thread(
         target=_refresh_loop,
         name="template-auto-refresh",
