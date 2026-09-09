@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import difflib
 import re
 import time
 
@@ -30,8 +31,20 @@ REQUEST_DELAY = 0.35  # seconds between API calls (rate limiting courtesy)
 # and ``wallpaper`` return different items, every other slug returns the plain
 # featured feed). We still request the working ones so those sections fill up
 # properly; the rest of the gallery is classified locally by keyword score.
-CATEGORY_HARVEST_SOURCES = ("logo", "wallpaper")
+# (meigen slug -> category override). Only these slugs actually filter on the
+# API; everything else is filled from the default feed + local classification.
+CATEGORY_HARVEST_SOURCES = (
+    ("logo", "brand-logo"),
+    ("wallpaper", "wallpaper"),
+    ("product", "ads-product"),
+    ("poster", "posters-visuals"),
+)
 CATEGORY_HARVEST_LIMIT = 40  # per category source
+
+# Near-duplicate titles collapse: meigen often lists the same prompt as several
+# items (tiny wording/spacing differences). Similarity threshold for treating
+# two normalized titles as the same template.
+DUP_TITLE_RATIO = 0.93
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -205,6 +218,38 @@ def normalize_video_aspect(aspect: str) -> str:
     return best[0]
 
 
+def normalize_title(raw: str) -> str:
+    """Lowercase and strip every non-letter/digit (Unicode-aware, keeps CJK)."""
+    return re.sub(r"[\W_]+", "", (raw or "").lower())
+
+
+def titles_similar(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if min(la, lb) / max(la, lb) < 0.85:
+        return False
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    return matcher.real_quick_ratio() >= DUP_TITLE_RATIO and matcher.ratio() >= DUP_TITLE_RATIO
+
+
+def dedupe_seeds_by_title(seeds: list[dict]) -> tuple[list[dict], int]:
+    """Drop seeds whose title is (near-)identical to one already kept."""
+    kept: list[dict] = []
+    kept_titles: list[str] = []
+    dropped = 0
+    for seed in seeds:
+        norm = normalize_title(seed["title"])
+        if any(titles_similar(norm, existing) for existing in kept_titles):
+            dropped += 1
+            continue
+        kept_titles.append(norm)
+        kept.append(seed)
+    return kept, dropped
+
+
 def infer_meigen_category(item: dict, is_video: bool) -> str:
     """Map a meigen item onto one of meigen's own site category slugs.
 
@@ -233,7 +278,7 @@ def infer_meigen_category(item: dict, is_video: bool) -> str:
     return best[0]
 
 
-def build_seed(item: dict) -> dict | None:
+def build_seed(item: dict, category_override: str | None = None) -> dict | None:
     """Convert a meigen API item into a Template seed payload (or None to skip)."""
     is_video = (item.get("mediaType") or "").lower() == "video"
     prompt = (item.get("prompt") or "").strip()
@@ -316,7 +361,7 @@ def build_seed(item: dict) -> dict | None:
     if is_video and (item.get("videoUrl") or "").strip():
         config["videoUrl"] = (item.get("videoUrl") or "").strip()
 
-    category = infer_meigen_category(item, is_video)
+    category = category_override or infer_meigen_category(item, is_video)
 
     return {
         "id": f"meigen-{meigen_id}",
@@ -335,7 +380,7 @@ class Command(BaseCommand):
     help = "Fetch featured meigen.ai templates and seed/update the Template gallery."
 
     def add_arguments(self, parser):
-        parser.add_argument("--images", type=int, default=200)
+        parser.add_argument("--images", type=int, default=300)
         parser.add_argument("--videos", type=int, default=100)
         parser.add_argument("--keep-owned", action="store_true")
         parser.add_argument("--dry-run", action="store_true")
@@ -371,6 +416,9 @@ class Command(BaseCommand):
             )
             seeds.extend(source_seeds)
             skipped += source_skipped
+
+        seeds, title_dupes = dedupe_seeds_by_title(seeds)
+        skipped += title_dupes
 
         if not seeds:
             raise CommandError("No usable templates were fetched from meigen.ai.")
@@ -430,7 +478,7 @@ class Command(BaseCommand):
                         skipped += 1
                         continue
                     seen_ids.add(meigen_id)
-                seed = build_seed(item)
+                seed = build_seed(item, category_override=category)
                 if seed is None:
                     skipped += 1
                     continue
@@ -481,15 +529,17 @@ class Command(BaseCommand):
                     "is_video": seed["is_video"],
                     "preview_url": seed["preview_url"],
                     "template_config": config,
-                    "uses_count": seed.get("uses_count") or 0,
-                    "uses_last_7d": seed.get("uses_last_7d") or 0,
                     "is_active": True,
                 }
                 existing = Template.objects.filter(template_config__seedKey=seed_key).first()
                 if existing is None:
+                    defaults["uses_count"] = seed.get("uses_count") or 0
+                    defaults["uses_last_7d"] = seed.get("uses_last_7d") or 0
                     Template.objects.create(**defaults)
                     created += 1
                 else:
+                    # Never clobber real usage counters with the (always zero)
+                    # values meigen reports — only set them on create.
                     Template.objects.filter(id=existing.id).update(**defaults)
                     updated += 1
                 active_keys.add(seed_key)
