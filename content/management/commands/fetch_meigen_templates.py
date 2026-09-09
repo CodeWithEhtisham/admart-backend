@@ -26,6 +26,13 @@ REQUEST_TIMEOUT = 30
 REQUEST_RETRIES = 3
 REQUEST_DELAY = 0.35  # seconds between API calls (rate limiting courtesy)
 
+# Meigen's API only honours a couple of its category slugs (verified: ``logo``
+# and ``wallpaper`` return different items, every other slug returns the plain
+# featured feed). We still request the working ones so those sections fill up
+# properly; the rest of the gallery is classified locally by keyword score.
+CATEGORY_HARVEST_SOURCES = ("logo", "wallpaper")
+CATEGORY_HARVEST_LIMIT = 40  # per category source
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -210,11 +217,14 @@ def infer_meigen_category(item: dict, is_video: bool) -> str:
         return "video"
     haystack = f"{(item.get('title') or '')}\n{(item.get('prompt') or '')}".lower()
     scores = {}
-    for slug, keywords in MEIGEN_CATEGORY_KEYWORDS.items():
+    for slug, groups in MEIGEN_CATEGORY_KEYWORDS.items():
         score = 0
-        for keyword, weight in keywords:
-            if keyword in haystack:
-                score += weight
+        for group in groups:
+            # Tolerate either a flat ((kw, w), …) tuple or a nested one.
+            pairs = group if group and isinstance(group[0], tuple) else (group,)
+            for keyword, weight in pairs:
+                if keyword in haystack:
+                    score += weight
         if score:
             scores[slug] = score
     if not scores:
@@ -340,12 +350,27 @@ class Command(BaseCommand):
 
         seeds: list[dict] = []
         skipped = 0
+        seen_ids: set[str] = set()
+
+        # Note: all videos are forced into the "video" category by the
+        # classifier, so category harvests only make sense for images.
+        sources: list[tuple[str, str | None, int]] = [
+            (MEIGEN_IMAGES_URL, None, image_count),
+            (MEIGEN_VIDEOS_URL, None, video_count),
+        ]
         if image_count:
-            seeds, skipped = self._fetch(MEIGEN_IMAGES_URL, image_count)
-        if video_count:
-            video_seeds, video_skipped = self._fetch(MEIGEN_VIDEOS_URL, video_count)
-            seeds.extend(video_seeds)
-            skipped += video_skipped
+            sources.extend(
+                (MEIGEN_IMAGES_URL, slug, CATEGORY_HARVEST_LIMIT)
+                for slug in CATEGORY_HARVEST_SOURCES
+            )
+        for url, category, limit in sources:
+            if not limit:
+                continue
+            source_seeds, source_skipped = self._fetch(
+                url, limit, category=category, seen_ids=seen_ids
+            )
+            seeds.extend(source_seeds)
+            skipped += source_skipped
 
         if not seeds:
             raise CommandError("No usable templates were fetched from meigen.ai.")
@@ -368,25 +393,43 @@ class Command(BaseCommand):
             return
 
         created, updated, deactivated = self._store(seeds, keep_owned=keep_owned)
+        by_category: dict[str, int] = {}
+        for seed in seeds:
+            by_category[seed["category"]] = by_category.get(seed["category"], 0) + 1
+        breakdown = ", ".join(f"{slug}={n}" for slug, n in sorted(by_category.items()))
         self.stdout.write(
             self.style.SUCCESS(
                 f"Meigen templates: {created} created, {updated} updated, "
-                f"{len(seeds)} active, {skipped} skipped, {deactivated} deactivated."
+                f"{len(seeds)} active, {skipped} skipped, {deactivated} deactivated. "
+                f"Categories: {breakdown}"
             )
         )
 
-    def _fetch(self, url: str, limit: int) -> tuple[list[dict], int]:
+    def _fetch(
+        self,
+        url: str,
+        limit: int,
+        *,
+        category: str | None = None,
+        seen_ids: set[str] | None = None,
+    ) -> tuple[list[dict], int]:
         seeds: list[dict] = []
         skipped = 0
         offset = 0
         while len(seeds) < limit:
-            page = self._get_json(url, offset)
+            page = self._get_json(url, offset, category=category)
             items = page.get("images") or []
             if not items:
                 break
             for item in items:
                 if len(seeds) >= limit:
                     break
+                meigen_id = str(item.get("id") or "")
+                if meigen_id and seen_ids is not None:
+                    if meigen_id in seen_ids:
+                        skipped += 1
+                        continue
+                    seen_ids.add(meigen_id)
                 seed = build_seed(item)
                 if seed is None:
                     skipped += 1
@@ -398,8 +441,10 @@ class Command(BaseCommand):
                 break
         return seeds, skipped
 
-    def _get_json(self, url: str, offset: int) -> dict:
+    def _get_json(self, url: str, offset: int, *, category: str | None = None) -> dict:
         params = {"sort": "featured", "limit": PAGE_SIZE, "offset": offset}
+        if category:
+            params["category"] = category
         last_error: Exception | None = None
         for attempt in range(1, REQUEST_RETRIES + 1):
             try:
