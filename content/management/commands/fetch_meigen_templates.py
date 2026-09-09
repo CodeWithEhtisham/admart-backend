@@ -405,8 +405,8 @@ class Command(BaseCommand):
         ]
         if image_count:
             sources.extend(
-                (MEIGEN_IMAGES_URL, slug, CATEGORY_HARVEST_LIMIT)
-                for slug in CATEGORY_HARVEST_SOURCES
+                (MEIGEN_IMAGES_URL, override, CATEGORY_HARVEST_LIMIT)
+                for _slug, override in CATEGORY_HARVEST_SOURCES
             )
         for url, category, limit in sources:
             if not limit:
