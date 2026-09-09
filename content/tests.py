@@ -201,6 +201,33 @@ class PricingFormulaTests(APITestCase):
         self.assertEqual(veo["fal_cost_decimal"], Decimal("3.2000"))
         self.assertEqual(veo["credits_decimal"], Decimal("4.1143"))
 
+    @override_settings(FAL_KEY="")
+    def test_seedance_token_based_pricing(self):
+        """Seedance bills per 1000 tokens; a 5s 720p video is ~108k tokens (~$1.51)."""
+        from content import pricing
+
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+
+        video = pricing.quote_video_job(
+            "textToVideo",
+            "bytedance/seedance-2.0/text-to-video",
+            {"resolution": "720p", "duration": "5s"},
+        )
+        # tokens = 1280*720*5*24/1024 = 108_000; quantity = 108 (thousands)
+        self.assertEqual(video["quantity_decimal"], Decimal("108"))
+        self.assertEqual(video["fal_cost_decimal"], Decimal("1.5120"))
+        # ~2.2343 credits per video, matching the plan allowance math
+        self.assertEqual(video["credits_decimal"], Decimal("2.2343"))
+
+        video_1080 = pricing.quote_video_job(
+            "textToVideo",
+            "bytedance/seedance-2.0/text-to-video",
+            {"resolution": "1080p", "duration": "5s"},
+        )
+        self.assertEqual(video_1080["quantity_decimal"], Decimal("243"))
+        self.assertGreater(video_1080["credits_decimal"], video["credits_decimal"])
+
 
 class FalModelSearchApiTests(APITestCase):
     def setUp(self) -> None:
