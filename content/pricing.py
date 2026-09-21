@@ -22,7 +22,7 @@ PRICING_URL = "https://api.fal.ai/v1/models/pricing"
 PRICING_TTL_SECONDS = 30 * 60
 CREDIT_QUANT = Decimal("0.0001")
 ADMART_CREDIT_CURRENCY = "Admart credits"
-FAL_COST_BASIS_CURRENCY = "fal credits"
+FAL_COST_BASIS_CURRENCY = "provider credits"
 MIN_MARKUP = Decimal("0.25")
 MARKUP_CURVE_NUMERATOR = Decimal("1.2")
 # Guaranteed gross margin on the cheapest plan (e.g. 0.10 = 10%).
@@ -237,7 +237,7 @@ def _attach_pricing(catalog: dict[str, list[dict[str, Any]]]) -> dict[str, list[
                     "unitPrice": serialize_decimal(raw_unit_price),
                     "unit": row.get("unit", "units"),
                     "currency": row.get("currency", "USD"),
-                    "source": "fal.ai",
+                    "source": "provider",
                     "admartUnitPrice": serialize_decimal(raw_unit_price * multiplier),
                     "admartCurrency": ADMART_CREDIT_CURRENCY,
                     "markupMultiplier": serialize_decimal(multiplier),
@@ -266,7 +266,7 @@ def _quote(*, capability: str, model: str, data: dict[str, Any], quantity: Decim
         "fal_cost_decimal": fal_cost,
         "markup_multiplier_decimal": multiplier,
         "credits_decimal": credits,
-        "source": "fal.ai",
+        "source": "provider",
     }
 
 

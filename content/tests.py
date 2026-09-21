@@ -1,6 +1,7 @@
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
+import requests
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework import status
@@ -323,6 +324,124 @@ class FalModelSearchApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("_fal", response.data)
         self.assertIn("textToImage", response.data["_fal"]["discoverable"])
+
+
+class MergedCatalogApiTests(APITestCase):
+    """Curated + live provider discovery merge served by the model catalog endpoints."""
+
+    def setUp(self) -> None:
+        from content import fal_models, pricing
+
+        fal_models._CACHE.clear()
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+        self.user = User.objects.create_user(
+            email="mergedcat@example.com",
+            password="pass12345",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def tearDown(self) -> None:
+        from content import fal_models, pricing
+
+        fal_models._CACHE.clear()
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_image_catalog_merges_discovered_models(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/new-image-model",
+                        "metadata": {
+                            "display_name": "New Image Model",
+                            "category": "text-to-image",
+                            "status": "active",
+                        },
+                    }
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {
+            "fal-ai/new-image-model": {
+                "unit_price": "0.03",
+                "unit": "images",
+                "currency": "USD",
+            }
+        }
+
+        response = self.client.get("/api/images/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        curated = [m for m in response.data["textToImage"] if m.get("source") != "provider"]
+        discovered = [m for m in response.data["textToImage"] if m.get("source") == "provider"]
+        self.assertTrue(curated)
+        self.assertEqual(len(discovered), 1)
+        self.assertEqual(discovered[0]["id"], "fal-ai/new-image-model")
+        self.assertFalse(discovered[0]["enabled"])
+        self.assertEqual(discovered[0]["pricing"]["unitPrice"], "0.03")
+        self.assertIn("admartUnitPrice", discovered[0]["pricing"])
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_video_catalog_merges_discovered_models(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/new-video-model",
+                        "metadata": {
+                            "display_name": "New Video Model",
+                            "category": "text-to-video",
+                            "status": "active",
+                        },
+                    }
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {}
+
+        response = self.client.get("/api/videos/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        discovered = [m for m in response.data["textToVideo"] if m.get("source") == "provider"]
+        self.assertEqual(len(discovered), 1)
+        self.assertEqual(discovered[0]["id"], "fal-ai/new-video-model")
+        self.assertFalse(discovered[0]["enabled"])
+        self.assertNotIn("pricing", discovered[0])
+
+    @override_settings(FAL_KEY="")
+    @patch("content.fal_models.requests.get")
+    def test_catalog_falls_back_to_curated_when_provider_unreachable(self, mock_models):
+        mock_models.side_effect = requests.RequestException("network down")
+
+        response = self.client.get("/api/images/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("_fal_error", response.data)
+        self.assertTrue(response.data["textToImage"])
+        self.assertFalse(
+            any(m.get("source") == "provider" for m in response.data["textToImage"])
+        )
+
+    def test_discovered_model_ids_are_not_generatable(self):
+        """Allow-lists stay curated; discovery entries must never enable jobs."""
+        from content.catalog import resolve_model
+        from content.video_catalog import resolve_video_model
+
+        with self.assertRaises(ValueError):
+            resolve_model("textToImage", "fal-ai/flux-2-pro")
+        with self.assertRaises(ValueError):
+            resolve_video_model("textToVideo", "bytedance/seedance-2.5/text-to-video")
 
 
 class UrlResolveTests(APITestCase):

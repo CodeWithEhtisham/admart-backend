@@ -2,6 +2,7 @@ from django.urls import path
 
 from admin_panel.views import (
     AdminPaymentListView,
+    AdminPaymentReviewView,
     AdminPlanCreateView,
     AdminPlanDetailView,
     AdminPlansView,
@@ -29,4 +30,9 @@ urlpatterns = [
     path("users/<uuid:user_id>/plan", AdminUserPlanView.as_view(), name="admin_user_plan"),
     path("users/<uuid:user_id>/credits", AdminUserCreditsView.as_view(), name="admin_user_credits"),
     path("payments", AdminPaymentListView.as_view(), name="admin_payments"),
+    path(
+        "payments/<uuid:payment_id>/review",
+        AdminPaymentReviewView.as_view(),
+        name="admin_payment_review",
+    ),
 ]

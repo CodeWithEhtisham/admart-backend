@@ -1,4 +1,4 @@
-"""Curated fal.ai video model catalog with per-model field profiles."""
+"""Curated video model catalog with per-model field profiles."""
 
 from __future__ import annotations
 

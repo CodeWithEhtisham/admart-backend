@@ -24,8 +24,11 @@ class SubscriptionAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("user_email", "amount", "currency", "method", "status", "provider_ref", "created_at")
-    list_filter = ("status", "method", "currency")
+    list_display = (
+        "user_email", "plan", "amount", "currency", "method", "status",
+        "provider_ref", "reviewed_by_email", "created_at",
+    )
+    list_filter = ("status", "method", "currency", "plan")
     search_fields = ("user__email", "provider_ref")
     readonly_fields = ("id", "created_at", "updated_at")
     date_hierarchy = "created_at"
@@ -33,6 +36,10 @@ class PaymentAdmin(admin.ModelAdmin):
     @admin.display(description="User")
     def user_email(self, obj):
         return obj.user.email
+
+    @admin.display(description="Reviewed by")
+    def reviewed_by_email(self, obj):
+        return obj.reviewed_by.email if obj.reviewed_by else "-"
 
 
 @admin.register(CreditAdjustment)

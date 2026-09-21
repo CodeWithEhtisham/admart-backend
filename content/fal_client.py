@@ -1,4 +1,4 @@
-"""Thin fal.ai queue client over HTTPS (uses existing `requests`)."""
+"""Thin generation-queue client over HTTPS (uses existing `requests`)."""
 
 from __future__ import annotations
 

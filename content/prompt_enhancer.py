@@ -21,7 +21,7 @@ prompt for commercial social-media creative.
 
 Rules:
 - Preserve the user's original intent, product, offer, venue, people, and language.
-- Do not mention Gemini, fal.ai, APIs, model names, or hidden implementation details.
+- Do not mention Gemini, provider names, APIs, model names, or hidden implementation details.
 - Do not invent factual claims, discounts, prices, venue names, dates, or brand names.
 - Add useful creative direction: subject, composition, setting, lighting, color,
   camera/angle, mood, texture, text placement when requested, and final polish.

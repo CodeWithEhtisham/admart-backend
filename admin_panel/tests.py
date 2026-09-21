@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
@@ -202,6 +204,154 @@ class AdminPaymentTests(APITestCase):
         self.assertEqual(Payment.objects.filter(user=self.customer).count(), 1)
 
 
+class AdminPaymentReviewTests(APITestCase):
+    """Approve/reject flow for client-submitted EasyPaisa payments."""
+
+    def setUp(self) -> None:
+        self.customer = User.objects.create_user(
+            email="customer@example.com",
+            password="Password123!",
+            plan="free",
+            credits_total=10,
+            credits_used=0,
+            credits_remaining=10,
+        )
+        self.superuser = User.objects.create_user(
+            email="owner@example.com", password="Password123!", is_superuser=True, is_staff=True
+        )
+        self.staff = User.objects.create_user(
+            email="staff@example.com", password="Password123!", is_staff=True
+        )
+        self.payment = Payment.objects.create(
+            user=self.customer,
+            plan="plus",
+            amount=7999,
+            currency="PKR",
+            method="easypaisa",
+            status="pending",
+        )
+        self.review_url = reverse("admin_payment_review", args=[self.payment.id])
+
+    def test_staff_cannot_review(self) -> None:
+        self.client.force_authenticate(user=self.staff)
+        response = self.client.post(
+            self.review_url, {"decision": "approve"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_anonymous_cannot_review(self) -> None:
+        response = self.client.post(
+            self.review_url, {"decision": "approve"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_approve_grants_credits_on_top(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.post(
+            self.review_url, {"decision": "approve"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "paid")
+
+        self.payment.refresh_from_db()
+        self.customer.refresh_from_db()
+        self.assertEqual(self.payment.status, "paid")
+        self.assertEqual(self.payment.reviewed_by, self.superuser)
+        self.assertEqual(self.customer.plan, "plus")
+        # Plus grants 35 monthly credits added on top of the existing 10.
+        self.assertEqual(self.customer.credits_total, 45)
+        self.assertEqual(self.customer.credits_remaining, 45)
+        self.assertIsNotNone(self.customer.credits_reset_at)
+        self.assertTrue(
+            Subscription.objects.filter(user=self.customer, plan="plus", status="active").exists()
+        )
+        adjustment = CreditAdjustment.objects.filter(user=self.customer, reason="payment").latest("created_at")
+        self.assertEqual(adjustment.amount, 35)
+        self.assertEqual(adjustment.performed_by, self.superuser)
+
+    def test_approve_twice_is_rejected(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        first = self.client.post(self.review_url, {"decision": "approve"}, format="json")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        second = self.client.post(self.review_url, {"decision": "approve"}, format="json")
+        self.assertEqual(second.status_code, status.HTTP_409_CONFLICT)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.credits_total, 45)
+
+    def test_reject_stores_reason_no_credits(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.post(
+            self.review_url,
+            {"decision": "reject", "reason": "Payment not received"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.payment.refresh_from_db()
+        self.customer.refresh_from_db()
+        self.assertEqual(self.payment.status, "failed")
+        self.assertEqual(self.payment.notes, "Payment not received")
+        self.assertEqual(self.customer.plan, "free")
+        self.assertEqual(self.customer.credits_total, 10)
+        self.assertFalse(CreditAdjustment.objects.filter(user=self.customer).exists())
+
+    def test_review_rejects_unknown_decision(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.post(
+            self.review_url, {"decision": "maybe"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, "pending")
+
+    def test_review_after_reject_is_rejected(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        self.client.post(self.review_url, {"decision": "reject"}, format="json")
+        response = self.client.post(self.review_url, {"decision": "approve"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.plan, "free")
+
+    def test_approve_topup_grants_credits_without_changing_plan(self) -> None:
+        self.customer.plan = "basic"
+        self.customer.credits_total = Decimal("8")
+        self.customer.credits_remaining = Decimal("2")
+        self.customer.save()
+
+        topup_payment = Payment.objects.create(
+            user=self.customer,
+            payment_type="topup",
+            pack="pack_medium",
+            amount=4199,
+            currency="PKR",
+            method="easypaisa",
+            status="pending",
+        )
+        url = reverse("admin_payment_review", args=[topup_payment.id])
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.post(url, {"decision": "approve"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        topup_payment.refresh_from_db()
+        self.customer.refresh_from_db()
+        self.assertEqual(topup_payment.status, "paid")
+        self.assertEqual(self.customer.plan, "basic")
+        self.assertEqual(self.customer.credits_total, Decimal("23"))
+        self.assertEqual(self.customer.credits_remaining, Decimal("17"))
+        self.assertTrue(
+            CreditAdjustment.objects.filter(user=self.customer, reason="topup").exists()
+        )
+
+    def test_list_includes_review_fields(self) -> None:
+        self.client.force_authenticate(user=self.staff)
+        response = self.client.get(reverse("admin_payments"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = response.data["items"][0]
+        self.assertEqual(item["plan"], "plus")
+        self.assertEqual(item["currentPlan"], "free")
+        self.assertIn("screenshotUrl", item)
+        self.assertIn("reviewedAt", item)
+
+
 class AdminStatsTests(APITestCase):
     """Stats aggregates reflect real data (users, jobs, payments, subscriptions)."""
 
@@ -291,6 +441,17 @@ class AdminSettingsTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["defaultFreeCredits"], "100")
         self.assertEqual(response.data["maintenanceBanner"], "Scheduled maintenance")
+
+    def test_superuser_edits_easypaisa_details(self) -> None:
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.put(
+            self.url,
+            {"easypaisaNumber": "0300-1234567", "easypaisaName": "Admart Media"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["easypaisaNumber"], "0300-1234567")
+        self.assertEqual(response.data["easypaisaName"], "Admart Media")
 
     def test_default_free_credits_applied_on_create(self) -> None:
         from admin_panel.models import AdminSetting

@@ -318,6 +318,7 @@ function initials(u){const t=((u?.firstName||'')+' '+(u?.lastName||'')).trim()||
 function avatar(u,sz=''){return u?.avatarUrl?`<div class="avatar ${sz}"><img src="${u.avatarUrl}" alt=""></div>`:`<div class="avatar ${sz}">${initials(u)}</div>`}
 function csrf(){const m=document.cookie.match(/csrftoken=([^;]+)/);return m?m[1]:''}
 function api(method,url,body){return fetch(url,{method,headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},credentials:'same-origin',body:body?JSON.stringify(body):undefined}).then(r=>{if(!r.ok)throw new Error(r.status+' '+r.statusText);return r.json()})}
+const IS_OWNER={% if is_owner %}true{% else %}false{% endif %};
 
 let toastTimer;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2800)}
@@ -584,14 +585,31 @@ async function deleteUser(id){if(!confirm('Delete this customer permanently?'))r
    ================================================================ */
 let payData={items:[]},payRev=null,payStatus='',payEmail='',payPage=1;
 async function loadPayments(){try{const[items,rev]=await Promise.all([api('GET',`/api/admin/payments?status=${payStatus}&email=${payEmail}&limit=200`),api('GET','/api/admin/revenue')]);payData=items;payRev=rev}catch(e){toast('Could not load payments.')}}
+async function decidePayment(id,decision){
+  if(decision==='reject'){
+    const reason=prompt('Reason for rejection (shown to the customer):');
+    if(reason===null)return;
+    return submitPaymentReview(id,decision,reason);
+  }
+  if(!confirm('Approve this payment? Credits will be granted automatically.'))return;
+  return submitPaymentReview(id,decision,'');
+}
+async function submitPaymentReview(id,decision,reason){
+  try{
+    await api('POST',`/api/admin/payments/${id}/review`,{decision,reason});
+    toast(decision==='approve'?'Payment approved — credits granted.':'Payment rejected.');
+    await loadPayments();renderContent();
+  }catch(e){toast(e?.message||'Could not review payment.')}
+}
 function renderPayments(el){
   const byStatus=payRev?.byStatus||{};
+  const pending=byStatus.pending||0;
   el.innerHTML=`
   <div class="grid-4" style="margin-bottom:16px">
     ${kpi('Total revenue','$'+fmtM(payRev?.totalRevenueUsd),'all time, paid','var(--success)')}
     ${kpi('This month','$'+fmtM(payRev?.thisMonthUsd),'last 30 days','var(--accent-blue)')}
     ${kpi('Paid',fmtN(byStatus.paid||0),`${fmtN(byStatus.failed||0)} failed`)}
-    ${kpi('Pending',fmtN(byStatus.pending||0),`${fmtN(byStatus.refunded||0)} refunded`)}
+    ${kpi('Pending review',fmtN(pending),'customer submissions','var(--warning)')}
   </div>
   <div class="filters" style="margin-bottom:16px">
     <input class="inp" style="max-width:260px" placeholder="Filter by email…" id="payEmailInp" value="${payEmail}">
@@ -600,16 +618,18 @@ function renderPayments(el){
   </div>
   <div class="card" style="overflow-x:auto">
     <table class="tbl">
-      <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Status</th><th>Reference</th></tr></thead>
+      <thead><tr><th>Date</th><th>Customer</th><th>Plan</th><th>Amount</th><th>Method</th><th>Status</th><th>Proof</th>${IS_OWNER?'<th>Actions</th>':''}</tr></thead>
       <tbody>${(payData.items||[]).map(p=>`<tr>
         <td style="color:var(--text-muted)">${fmtTime(p.createdAt)}</td>
-        <td class="primary">${p.email}</td>
+        <td class="primary">${p.email}<p class="text-xs" style="color:var(--text-muted)">${p.currentPlan?`on ${p.currentPlan}`:''}</p></td>
+        <td>${p.plan?planBadge(p.plan):'—'}</td>
         <td class="mono primary">${p.currency} ${fmtM(p.amount)}</td>
         <td style="color:var(--text-secondary)" class="capitalize">${p.method}</td>
-        <td>${payPill(p.status)}</td>
-        <td class="text-xs" style="color:var(--text-muted)">${p.providerRef||'—'}</td>
+        <td>${payPill(p.status)}${p.status==='failed'&&p.notes&&p.reviewedAt?`<p class="text-xs" style="color:var(--text-muted);margin-top:4px">${p.notes}</p>`:''}${p.transactionId||p.providerRef?`<p class="text-xs mono" style="color:var(--text-muted);margin-top:4px">TID: ${p.providerRef||''}</p>`:''}</td>
+        <td>${p.screenshotUrl?`<a href="${p.screenshotUrl}" target="_blank" rel="noopener" class="text-xs" style="color:var(--accent-blue)">View</a>`:'—'}</td>
+        ${IS_OWNER?`<td>${p.status==='pending'?`<div class="flex gap-2"><button class="btn btn-sm btn-primary" onclick="decidePayment('${p.id}','approve')">Approve</button><button class="btn btn-sm btn-danger" onclick="decidePayment('${p.id}','reject')">Reject</button></div>`:`<span class="text-xs" style="color:var(--text-muted)">${p.reviewedByEmail?`by ${p.reviewedByEmail}`:''}</span>`}</td>`:''}
       </tr>`).join('')}
-      ${!(payData.items||[]).length?'<tr><td colspan="6" class="empty">No payments match your filters.</td></tr>':''}</tbody>
+      ${!(payData.items||[]).length?'<tr><td colspan="${IS_OWNER?8:7}" class="empty">No payments match your filters.</td></tr>':''}</tbody>
     </table>
   </div>`;
   document.getElementById('payEmailInp').addEventListener('input',debounce(e=>{payEmail=e.target.value;loadPayments()},400));
@@ -927,8 +947,8 @@ function jobKindCard(kind,data){
 /* ================================================================
    SETTINGS
    ================================================================ */
-let settingsData=null,settDfc='',settBanner='';
-async function loadSettings(){try{settingsData=await api('GET','/api/admin/settings');settDfc=settingsData.defaultFreeCredits||'';settBanner=settingsData.maintenanceBanner||''}catch(e){toast('Could not load settings.')}}
+let settingsData=null,settDfc='',settBanner='',settEpNumber='',settEpName='';
+async function loadSettings(){try{settingsData=await api('GET','/api/admin/settings');settDfc=settingsData.defaultFreeCredits||'';settBanner=settingsData.maintenanceBanner||'';settEpNumber=settingsData.easypaisaNumber||'';settEpName=settingsData.easypaisaName||''}catch(e){toast('Could not load settings.')}}
 function renderSettings(el){
   const plats=settingsData?.platforms||{};
   const platRows=[{id:'youtube',name:'YouTube'},{id:'facebook',name:'Facebook'},{id:'instagram',name:'Instagram'},{id:'tiktok',name:'TikTok'}];
@@ -942,6 +962,14 @@ function renderSettings(el){
       </div>`}).join('')}</div>
     </div>
     <div class="card">
+      <div style="font-size:14px;font-weight:600">Manual payment details</div>
+      <p class="text-xs mt-2" style="color:var(--text-muted)">Shown to customers on the billing page when they subscribe via EasyPaisa.</p>
+      <div class="mt-4" style="display:flex;flex-direction:column;gap:16px">
+        <div><label class="section-title">EasyPaisa account number</label><input class="inp mono" id="settEpNumber" value="${settEpNumber}" placeholder="03XX-XXXXXXX"></div>
+        <div><label class="section-title">EasyPaisa account name</label><input class="inp" id="settEpName" value="${settEpName}" placeholder="Admart Support"></div>
+      </div>
+    </div>
+    <div class="card">
       <div style="font-size:14px;font-weight:600">Defaults & messages</div>
       <div class="mt-4" style="display:flex;flex-direction:column;gap:16px">
         <div><label class="section-title">Default free credits</label><input class="inp mono" type="number" id="settDfc" value="${settDfc}" style="max-width:140px"><p class="text-xs mt-2" style="color:var(--text-muted)">Grant for customers created manually.</p></div>
@@ -950,7 +978,7 @@ function renderSettings(el){
       </div>
     </div>
   </div>`}
-async function saveSettings(){document.getElementById('settBtn').disabled=true;try{const data=await api('PUT','/api/admin/settings',{defaultFreeCredits:document.getElementById('settDfc').value,maintenanceBanner:document.getElementById('settBanner').value});settDfc=data.defaultFreeCredits;settBanner=data.maintenanceBanner;toast('Settings saved.');await loadSettings();renderContent()}catch(e){toast('Could not save settings.')}finally{document.getElementById('settBtn').disabled=false}}
+async function saveSettings(){document.getElementById('settBtn').disabled=true;try{const data=await api('PUT','/api/admin/settings',{defaultFreeCredits:document.getElementById('settDfc').value,maintenanceBanner:document.getElementById('settBanner').value,easypaisaNumber:document.getElementById('settEpNumber').value,easypaisaName:document.getElementById('settEpName').value});settDfc=data.defaultFreeCredits;settBanner=data.maintenanceBanner;settEpNumber=data.easypaisaNumber;settEpName=data.easypaisaName;toast('Settings saved.');await loadSettings();renderContent()}catch(e){toast('Could not save settings.')}finally{document.getElementById('settBtn').disabled=false}}
 
 /* ================================================================
    INIT

@@ -15,6 +15,7 @@ class SubscriptionInline(admin.TabularInline):
 
 class PaymentInline(admin.TabularInline):
     model = Payment
+    fk_name = "user"
     extra = 0
     readonly_fields = ("id", "created_at", "updated_at")
     fields = ("amount", "currency", "method", "status", "provider_ref", "created_at")

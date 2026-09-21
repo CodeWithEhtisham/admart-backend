@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from itertools import chain
 
-from django.utils import timezone
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from admin_panel.models import Payment
+from admin_panel.services import get_setting
 from content.catalog import CAPABILITIES, DEFAULT_MODELS, resolve_model
 from content.models import ImageJob, VideoJob
 from content.pricing import (
@@ -24,6 +25,7 @@ from content.pricing import (
     quote_video_job,
     serialize_decimal,
 )
+from content.storage_utils import absolute_media_url
 from content.video_catalog import (
     DEFAULT_VIDEO_MODELS,
     VIDEO_CAPABILITIES,
@@ -31,6 +33,7 @@ from content.video_catalog import (
     resolve_video_model,
 )
 from users.plans import PUBLIC_PLAN_IDS, get_plan, serialize_plan
+from users.serializers import PaymentSubmitSerializer
 
 
 def balance_payload(user) -> dict:
@@ -69,44 +72,147 @@ class CreditsPlansView(APIView):
                 "currency": "USD",
                 "localCurrency": "PKR",
                 "items": [serialize_plan(plan_id) for plan_id in PUBLIC_PLAN_IDS],
-                "paymentConnected": False,
+                "paymentConnected": True,
             }
         )
 
 
-class CreditsPlanActivateView(APIView):
-    """POST /api/credits/plan - temporary plan activation until payments exist."""
+class CreditsTopupsView(APIView):
+    """GET /api/credits/topups - public on-demand credit top-up packs."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from users.packs import get_public_topup_packs
+
+        return Response(
+            {
+                "currency": "USD",
+                "localCurrency": "PKR",
+                "items": get_public_topup_packs(),
+            }
+        )
+
+
+def _serialize_payment(payment: Payment, *, request) -> dict:
+    """Client-facing manual payment representation."""
+    from users.packs import get_topup_pack
+
+    is_topup = getattr(payment, "payment_type", "subscription") == "topup"
+    plan = get_plan(payment.plan or None) if not is_topup else None
+    pack = get_topup_pack(payment.pack or None) if is_topup else None
+
+    if is_topup and pack:
+        display_name = pack["name"]
+    elif plan:
+        display_name = plan["name"]
+    else:
+        display_name = payment.plan or payment.pack or "Payment"
+
+    return {
+        "id": str(payment.id),
+        "paymentType": getattr(payment, "payment_type", "subscription"),
+        "plan": payment.plan,
+        "pack": getattr(payment, "pack", ""),
+        "planName": display_name,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "method": payment.method,
+        "status": payment.status,
+        "transactionId": payment.provider_ref,
+        "note": payment.notes,
+        "message": payment.notes if payment.status == "failed" else "",
+        "screenshotUrl": (
+            absolute_media_url(payment.screenshot.name, request=request)
+            if payment.screenshot
+            else None
+        ),
+        "createdAt": payment.created_at,
+        "reviewedAt": payment.reviewed_at,
+    }
+
+
+class CreditsPaymentMethodsView(APIView):
+    """GET /api/credits/payments/methods - manual payment instructions."""
 
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        plan_id = str(request.data.get("plan") or request.data.get("planId") or "").lower()
-        plan = get_plan(plan_id)
-        if plan["id"] not in PUBLIC_PLAN_IDS:
-            return Response({"message": "Choose Basic, Plus, or Pro."}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user
-        monthly_credits = plan["monthly_credits"]
-        user.plan = plan["id"]
-        user.credits_total = monthly_credits
-        user.credits_used = 0
-        user.credits_remaining = monthly_credits
-        user.credits_reset_at = timezone.now() + timedelta(days=30)
-        user.save(
-            update_fields=[
-                "plan",
-                "credits_total",
-                "credits_used",
-                "credits_remaining",
-                "credits_reset_at",
-                "updated_at",
-            ]
+    def get(self, request):
+        return Response(
+            {
+                "methods": [
+                    {
+                        "id": "easypaisa",
+                        "label": "EasyPaisa",
+                        "accountNumber": get_setting("easypaisa_number", ""),
+                        "accountName": get_setting("easypaisa_name", ""),
+                    }
+                ]
+            }
         )
 
-        payload = balance_payload(user)
-        payload["message"] = f"{plan['name']} plan activated for testing."
-        payload["paymentConnected"] = False
-        return Response(payload)
+
+class CreditsPaymentSubmitView(APIView):
+    """POST /api/credits/payments/submit - upload EasyPaisa payment proof."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        serializer = PaymentSubmitSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        payment_type = data.get("paymentType", "subscription")
+
+        if payment_type == "topup":
+            from users.packs import get_topup_pack
+
+            pack = get_topup_pack(data["pack"])
+            payment = Payment(
+                user=request.user,
+                payment_type="topup",
+                pack=pack["id"],
+                amount=pack["price_pkr"],
+                currency="PKR",
+                method="easypaisa",
+                status="pending",
+                provider_ref=data["transactionId"],
+                notes=data["note"],
+            )
+        else:
+            plan = get_plan(data["plan"])
+            payment = Payment(
+                user=request.user,
+                payment_type="subscription",
+                plan=plan["id"],
+                amount=plan["price_pkr"],
+                currency="PKR",
+                method="easypaisa",
+                status="pending",
+                provider_ref=data["transactionId"],
+                notes=data["note"],
+            )
+        payment.screenshot.save(data["screenshot"].name, data["screenshot"], save=True)
+        return Response(
+            _serialize_payment(payment, request=request),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CreditsMyPaymentsView(APIView):
+    """GET /api/credits/payments/mine - the user's submitted payments."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payments = (
+            Payment.objects.filter(user=request.user).order_by("-created_at")[:20]
+        )
+        return Response(
+            {"items": [_serialize_payment(p, request=request) for p in payments]}
+        )
 
 
 class CreditsCostsView(APIView):

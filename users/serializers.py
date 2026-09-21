@@ -223,3 +223,73 @@ class OnboardingCompleteSerializer(serializers.Serializer):
     brandColorHex = serializers.CharField(required=False, default="#2563eb")
     prompt = serializers.CharField(required=False, allow_blank=True, default="")
     template = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
+
+
+class PaymentSubmitSerializer(serializers.Serializer):
+    """Manual EasyPaisa payment proof submission (multipart)."""
+
+    PLAN_ERROR = "Choose a paid plan (Basic, Plus, or Pro)."
+    PACK_ERROR = "Choose a valid top-up pack."
+    SCREENSHOT_ERROR = "Screenshot must be a jpeg, png, or webp image up to 15 MB."
+    PENDING_ERROR = "You already have a payment under review."
+
+    paymentType = serializers.ChoiceField(
+        choices=["subscription", "topup"], required=False, default="subscription"
+    )
+    plan = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    pack = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    screenshot = serializers.FileField(required=True)
+    transactionId = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=128
+    )
+    note = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
+
+    def validate_plan(self, value: str | None) -> str:
+        if not value:
+            return ""
+        from users.plans import PUBLIC_PLAN_IDS
+
+        plan_id = str(value).lower()
+        if plan_id not in PUBLIC_PLAN_IDS or plan_id == "free":
+            raise serializers.ValidationError(self.PLAN_ERROR)
+        return plan_id
+
+    def validate_pack(self, value: str | None) -> str:
+        if not value:
+            return ""
+        from users.packs import get_topup_pack
+
+        pack_id = str(value).strip().lower()
+        if not get_topup_pack(pack_id):
+            raise serializers.ValidationError(self.PACK_ERROR)
+        return pack_id
+
+    def validate_screenshot(self, value):
+        allowed = {"image/jpeg", "image/png", "image/webp"}
+        if value.size > 15 * 1024 * 1024:
+            raise serializers.ValidationError(self.SCREENSHOT_ERROR)
+        if value.content_type not in allowed:
+            raise serializers.ValidationError(self.SCREENSHOT_ERROR)
+        return value
+
+    def validate(self, attrs):
+        from admin_panel.models import Payment
+
+        req = self.context.get("request")
+        if req and req.user and Payment.objects.filter(user=req.user, status="pending").exists():
+            raise serializers.ValidationError(self.PENDING_ERROR)
+
+        plan = attrs.get("plan")
+        pack = attrs.get("pack")
+        payment_type = attrs.get("paymentType")
+
+        if pack or payment_type == "topup":
+            if not pack:
+                raise serializers.ValidationError({"pack": self.PACK_ERROR})
+            attrs["paymentType"] = "topup"
+        else:
+            if not plan:
+                raise serializers.ValidationError({"plan": self.PLAN_ERROR})
+            attrs["paymentType"] = "subscription"
+
+        return attrs
