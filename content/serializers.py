@@ -346,6 +346,7 @@ class LibraryAssetSerializer(serializers.ModelSerializer):
 
 
 class TemplateSerializer(serializers.ModelSerializer):
+    category = serializers.SerializerMethodField()
     isVideo = serializers.BooleanField(source="is_video", read_only=True)
     previewUrl = serializers.CharField(source="preview_url", read_only=True)
     templateConfig = serializers.JSONField(source="template_config", read_only=True)
@@ -355,6 +356,7 @@ class TemplateSerializer(serializers.ModelSerializer):
     isActive = serializers.BooleanField(source="is_active", read_only=True)
     trending = serializers.SerializerMethodField()
     estimatedCredits = serializers.SerializerMethodField()
+    isFavorite = serializers.SerializerMethodField()
 
     class Meta:
         model = Template
@@ -372,11 +374,21 @@ class TemplateSerializer(serializers.ModelSerializer):
             "isActive",
             "trending",
             "estimatedCredits",
+            "isFavorite",
         ]
+
+    def get_category(self, obj) -> str:
+        # Rows created before the meigen-style category scheme still carry the
+        # legacy value in the DB; the list view annotates the mapped slug.
+        return getattr(obj, "current_category", None) or obj.category
 
     def get_trending(self, obj) -> bool:
         trending_ids = self.context.get("trending_ids") or set()
         return obj.id in trending_ids
+
+    def get_isFavorite(self, obj) -> bool:
+        favorite_ids = self.context.get("favorite_ids") or set()
+        return obj.id in favorite_ids
 
     def get_estimatedCredits(self, obj) -> str | None:
         config = obj.template_config or {}

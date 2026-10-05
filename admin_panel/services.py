@@ -3,14 +3,16 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
-from admin_panel.models import AdminSetting, Payment, Subscription
+from admin_panel.models import AdminSetting, CreditAdjustment, Payment, Subscription
 from content.models import ImageJob, VideoJob
 from projects.models import Project, SocialAccount
 from users.models import User
-from users.plans import _plans_dict
+from users.plans import _plans_dict, get_plan
 
 ACTIVE_DAYS = 30
 CHART_DAYS = 30
@@ -22,6 +24,8 @@ ZERO = Decimal("0")
 DEFAULT_SETTINGS = {
     "default_free_credits": "50",
     "maintenance_banner": "",
+    "easypaisa_number": "03XX-XXXXXXX",
+    "easypaisa_name": "Admart Support",
 }
 
 
@@ -399,3 +403,125 @@ def build_revenue() -> dict:
         "byPlan": per_plan,
         "subscriptionCounts": sub_counts,
     }
+
+
+@transaction.atomic
+def review_payment(payment_id, decision: str, admin, reason: str = "") -> Payment:
+    """Approve or reject a pending manual payment.
+
+    Approve: marks paid, upgrades the user's plan, adds the plan's monthly
+    credits on top of the current balance, extends the subscription 30 days,
+    and writes an audited CreditAdjustment. Reject: marks failed and stores
+    the reason for the client; no credit/plan changes.
+
+    Raises ValidationError when the payment is not pending (guards against
+    double-approve) or the decision is unknown.
+    """
+    payment = (
+        Payment.objects.select_for_update()
+        .select_related("user")
+        .filter(pk=payment_id)
+        .first()
+    )
+    if payment is None:
+        raise ValidationError({"paymentId": "Payment not found."})
+    if payment.status != "pending":
+        raise ValidationError(
+            {"paymentId": f"Payment already reviewed ({payment.status})."}
+        )
+    if decision not in ("approve", "reject"):
+        raise ValidationError({"decision": "Decision must be approve or reject."})
+
+    payment.reviewed_by = admin
+    payment.reviewed_at = timezone.now()
+
+    if decision == "reject":
+        payment.status = "failed"
+        reason = (reason or "").strip()
+        if reason:
+            payment.notes = reason
+        payment.save(
+            update_fields=["status", "reviewed_by", "reviewed_at", "notes", "updated_at"]
+        )
+        return payment
+
+    if getattr(payment, "payment_type", "subscription") == "topup":
+        from users.packs import get_topup_pack
+
+        pack = get_topup_pack(payment.pack or None)
+        if not pack:
+            raise ValidationError({"pack": f"Unknown top-up pack: {payment.pack}."})
+        added_credits = pack["credits"]
+        user = payment.user
+
+        payment.status = "paid"
+        user.credits_total += added_credits
+        user.credits_remaining += added_credits
+        user.save(
+            update_fields=[
+                "credits_total",
+                "credits_remaining",
+                "updated_at",
+            ]
+        )
+
+        CreditAdjustment.objects.create(
+            user=user,
+            performed_by=payment.reviewed_by,
+            amount=added_credits,
+            reason="topup",
+            notes=f"{pack['name']} purchased via {payment.method}",
+        )
+
+        payment.save(
+            update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"]
+        )
+        return payment
+
+    plan = get_plan(payment.plan or None)
+    monthly_credits = plan["monthly_credits"]
+    user = payment.user
+
+    payment.status = "paid"
+    user.plan = plan["id"]
+    user.credits_total += monthly_credits
+    user.credits_remaining += monthly_credits
+    user.credits_reset_at = timezone.now() + timedelta(days=30)
+    user.save(
+        update_fields=[
+            "plan",
+            "credits_total",
+            "credits_remaining",
+            "credits_reset_at",
+            "updated_at",
+        ]
+    )
+
+    sub = Subscription.objects.filter(user=user).order_by("-created_at").first()
+    if sub is None:
+        Subscription.objects.create(
+            user=user,
+            plan=plan["id"],
+            status="active",
+            auto_renew=True,
+            current_period_end=timezone.now() + timedelta(days=30),
+        )
+    else:
+        sub.plan = plan["id"]
+        sub.status = "active"
+        sub.auto_renew = True
+        sub.current_period_end = timezone.now() + timedelta(days=30)
+        sub.save(update_fields=["plan", "status", "auto_renew", "current_period_end", "updated_at"])
+
+    CreditAdjustment.objects.create(
+        user=user,
+        performed_by=payment.reviewed_by,
+        amount=monthly_credits,
+        reason="payment",
+        notes=f"{plan['name']} purchased via {payment.method}",
+    )
+
+    payment.save(
+        update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"]
+    )
+    return payment

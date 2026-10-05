@@ -4,6 +4,329 @@ info:
   version: 1.0.0
   description: Admart Authentication & Video Publishing Platform Backend API
 paths:
+  /api/admin/payments:
+    get:
+      operationId: admin_payments_retrieve
+      description: GET /api/admin/payments — payment list (staff); POST (superuser)
+        manual entry.
+      summary: List payments for admin
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: admin_payments_create
+      description: GET /api/admin/payments — payment list (staff); POST (superuser)
+        manual entry.
+      summary: Record a manual payment
+      tags:
+      - admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/payments/{payment_id}/review:
+    post:
+      operationId: admin_payments_review_create
+      description: POST /api/admin/payments/{id}/review — approve or reject a pending
+        payment.
+      summary: Approve or reject a pending manual payment
+      parameters:
+      - in: path
+        name: payment_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/plans:
+    get:
+      operationId: admin_plans_retrieve
+      description: GET /api/admin/plans — plan definitions with subscriber counts.
+      summary: Superadmin plan definitions
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/plans/{plan_id}:
+    put:
+      operationId: admin_plans_update
+      description: PUT/DELETE /api/admin/plans/<plan_id> — edit or delete a plan.
+      summary: Update a plan definition
+      parameters:
+      - in: path
+        name: plan_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: admin_plans_destroy
+      description: PUT/DELETE /api/admin/plans/<plan_id> — edit or delete a plan.
+      summary: Delete a plan definition
+      parameters:
+      - in: path
+        name: plan_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/admin/plans/create:
+    post:
+      operationId: admin_plans_create_create
+      description: POST /api/admin/plans — create a new plan.
+      summary: Create a new plan
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/revenue:
+    get:
+      operationId: admin_revenue_retrieve
+      description: GET /api/admin/revenue — payment and subscription revenue summary.
+      summary: Superadmin revenue summary
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/settings:
+    get:
+      operationId: admin_settings_retrieve
+      description: |-
+        GET /api/admin/settings — app settings + platform status (staff).
+
+        PUT (superuser) persists editable settings via the AdminSetting key/value store.
+      summary: Read admin settings and platform status
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: admin_settings_update
+      description: |-
+        GET /api/admin/settings — app settings + platform status (staff).
+
+        PUT (superuser) persists editable settings via the AdminSetting key/value store.
+      summary: Update admin settings
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/stats:
+    get:
+      operationId: admin_stats_retrieve
+      description: GET /api/admin/stats — overview KPIs, charts, and recent activity.
+      summary: Superadmin overview statistics
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/usage:
+    get:
+      operationId: admin_usage_retrieve
+      description: GET /api/admin/usage — detailed job/credit usage breakdown.
+      summary: Superadmin usage breakdown
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/users:
+    get:
+      operationId: admin_users_retrieve
+      description: |-
+        GET /api/admin/users — paginated, filterable customer list.
+
+        POST (superuser) creates a customer account manually.
+      summary: List customers for admin
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: admin_users_create
+      description: |-
+        GET /api/admin/users — paginated, filterable customer list.
+
+        POST (superuser) creates a customer account manually.
+      summary: Create a customer account manually
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/users/{user_id}:
+    get:
+      operationId: admin_users_retrieve_2
+      description: GET/PATCH/DELETE /api/admin/users/{id} — customer detail, support
+        actions, delete.
+      summary: Customer detail for admin
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: admin_users_partial_update
+      description: GET/PATCH/DELETE /api/admin/users/{id} — customer detail, support
+        actions, delete.
+      summary: Update customer support fields
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: admin_users_destroy
+      description: GET/PATCH/DELETE /api/admin/users/{id} — customer detail, support
+        actions, delete.
+      summary: Delete a customer account
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/admin/users/{user_id}/credits:
+    post:
+      operationId: admin_users_credits_create
+      description: POST /api/admin/users/{id}/credits — grant or deduct credits (audited).
+      summary: Adjust a customer's credits
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/admin/users/{user_id}/plan:
+    post:
+      operationId: admin_users_plan_create
+      description: POST /api/admin/users/{id}/plan — change plan + optional credit
+        reset/top-up.
+      summary: Change a customer's plan
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/ads/callback/{provider}:
+    get:
+      operationId: ads_callback_retrieve
+      parameters:
+      - in: path
+        name: provider
+        schema:
+          type: string
+        required: true
+      tags:
+      - ads
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
   /api/auth/forgot-password:
     post:
       operationId: auth_forgot_password_create
@@ -24,7 +347,6 @@ paths:
               $ref: '#/components/schemas/ForgotPassword'
         required: true
       security:
-      - jwtAuth: []
       - {}
       responses:
         '200':
@@ -36,7 +358,7 @@ paths:
   /api/auth/google:
     post:
       operationId: auth_google_create
-      description: Verify auth code and log in / register Google User.
+      description: Exchange a Google auth code (or id_token) for Admart JWT.
       summary: Google OAuth Callback Exchange
       tags:
       - auth
@@ -51,9 +373,7 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/GoogleAuth'
-        required: true
       security:
-      - jwtAuth: []
       - {}
       responses:
         '200':
@@ -96,7 +416,6 @@ paths:
       tags:
       - auth
       security:
-      - jwtAuth: []
       - {}
       responses:
         '200':
@@ -112,8 +431,6 @@ paths:
       summary: Get current user details
       tags:
       - auth
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -138,8 +455,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/User'
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -164,8 +479,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/PatchedUser'
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -191,8 +504,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/OnboardingComplete'
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -247,7 +558,6 @@ paths:
               $ref: '#/components/schemas/Register'
         required: true
       security:
-      - jwtAuth: []
       - {}
       responses:
         '201':
@@ -276,7 +586,6 @@ paths:
               $ref: '#/components/schemas/ResetPassword'
         required: true
       security:
-      - jwtAuth: []
       - {}
       responses:
         '200':
@@ -291,6 +600,96 @@ paths:
               schema:
                 $ref: '#/components/schemas/Message'
           description: ''
+  /api/credits:
+    get:
+      operationId: credits_retrieve
+      description: GET /api/credits - current decimal Admart credit balance.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/costs:
+    get:
+      operationId: credits_costs_retrieve
+      description: GET /api/credits/costs - default/base model costs.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/history:
+    get:
+      operationId: credits_history_retrieve
+      description: GET /api/credits/history - recent image and video credit spends.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/payments/methods:
+    get:
+      operationId: credits_payments_methods_retrieve
+      description: GET /api/credits/payments/methods - manual payment instructions.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/payments/mine:
+    get:
+      operationId: credits_payments_mine_retrieve
+      description: GET /api/credits/payments/mine - the user's submitted payments.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/payments/submit:
+    post:
+      operationId: credits_payments_submit_create
+      description: POST /api/credits/payments/submit - upload EasyPaisa payment proof.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/credits/plans:
+    get:
+      operationId: credits_plans_retrieve
+      description: GET /api/credits/plans - public Basic/Plus/Pro subscription plans.
+      tags:
+      - credits
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/credits/quote:
+    post:
+      operationId: credits_quote_create
+      description: POST /api/credits/quote - estimate decimal credits before submit.
+      tags:
+      - credits
+      responses:
+        '200':
+          description: No response body
+  /api/fal/models:
+    get:
+      operationId: fal_models_retrieve
+      tags:
+      - fal
+      responses:
+        '200':
+          description: No response body
+  /api/images/models:
+    get:
+      operationId: images_models_retrieve
+      tags:
+      - images
+      responses:
+        '200':
+          description: No response body
   /api/projects:
     get:
       operationId: projects_list
@@ -298,8 +697,6 @@ paths:
       summary: List the current user's projects
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -327,8 +724,6 @@ paths:
             schema:
               $ref: '#/components/schemas/Project'
         required: true
-      security:
-      - jwtAuth: []
       responses:
         '201':
           content:
@@ -350,8 +745,6 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -383,8 +776,6 @@ paths:
             schema:
               $ref: '#/components/schemas/Project'
         required: true
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -416,8 +807,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/PatchedProject'
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -438,8 +827,6 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '204':
           description: No response body
@@ -457,11 +844,328 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           description: '{ "activeProjectId": "<id>" }'
+  /api/projects/{project_id}/ads/accounts:
+    get:
+      operationId: projects_ads_accounts_retrieve
+      description: Resolve and authorize the parent project for social-account endpoints.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/ads/boost:
+    post:
+      operationId: projects_ads_boost_create
+      description: POST /api/projects/:id/ads/boost
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/ads/connect/{provider}/url:
+    get:
+      operationId: projects_ads_connect_url_retrieve
+      description: Resolve and authorize the parent project for social-account endpoints.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: provider
+        schema:
+          type: string
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/ads/disconnect/{provider}:
+    delete:
+      operationId: projects_ads_disconnect_destroy
+      description: Resolve and authorize the parent project for social-account endpoints.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: provider
+        schema:
+          type: string
+        required: true
+      tags:
+      - projects
+      responses:
+        '204':
+          description: No response body
+  /api/projects/{project_id}/images/jobs:
+    get:
+      operationId: projects_images_jobs_retrieve
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: projects_images_jobs_create
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/images/jobs/{job_id}:
+    get:
+      operationId: projects_images_jobs_retrieve_2
+      parameters:
+      - in: path
+        name: job_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/images/jobs/{job_id}/cancel:
+    post:
+      operationId: projects_images_jobs_cancel_create
+      parameters:
+      - in: path
+        name: job_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/images/models:
+    get:
+      operationId: projects_images_models_retrieve
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/images/uploads:
+    post:
+      operationId: projects_images_uploads_create
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/library:
+    get:
+      operationId: projects_library_retrieve
+      description: GET /api/projects/:id/library — images + videos, newest first.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/library/{asset_id}:
+    delete:
+      operationId: projects_library_destroy
+      description: DELETE /api/projects/:id/library/:assetId — soft delete.
+      parameters:
+      - in: path
+        name: asset_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '204':
+          description: No response body
+  /api/projects/{project_id}/library/uploads:
+    post:
+      operationId: projects_library_uploads_create
+      description: POST /api/projects/:id/library/uploads — user image or video into
+        library.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/publish:
+    post:
+      operationId: projects_publish_create
+      description: POST /api/projects/:id/publish — post a generated asset to connected
+        accounts.
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/publish/youtube/suggest:
+    post:
+      operationId: projects_publish_youtube_suggest_create
+      description: POST /api/projects/:id/publish/youtube/suggest
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SocialAccount'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
   /api/projects/{project_id}/social/accounts:
     get:
       operationId: projects_social_accounts_retrieve
@@ -476,8 +1180,6 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -508,8 +1210,6 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           content:
@@ -546,8 +1246,6 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
       responses:
         '200':
           description: '{ "authUrl": "...", "state": "..." }'
@@ -570,8 +1268,155 @@ paths:
         required: true
       tags:
       - projects
-      security:
-      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/social/facebook/pages:
+    get:
+      operationId: projects_social_facebook_pages_retrieve
+      description: GET /api/projects/:id/social/facebook/pages
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/social/youtube/playlists:
+    get:
+      operationId: projects_social_youtube_playlists_retrieve
+      description: GET /api/projects/:id/social/youtube/playlists
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+  /api/projects/{project_id}/videos/jobs:
+    get:
+      operationId: projects_videos_jobs_retrieve
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: projects_videos_jobs_create
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/videos/jobs/{job_id}:
+    get:
+      operationId: projects_videos_jobs_retrieve_2
+      parameters:
+      - in: path
+        name: job_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/videos/jobs/{job_id}/cancel:
+    post:
+      operationId: projects_videos_jobs_cancel_create
+      parameters:
+      - in: path
+        name: job_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/videos/models:
+    get:
+      operationId: projects_videos_models_retrieve
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/projects/{project_id}/videos/uploads:
+    post:
+      operationId: projects_videos_uploads_create
+      parameters:
+      - in: path
+        name: project_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - projects
+      responses:
+        '200':
+          description: No response body
+  /api/prompts/enhance:
+    post:
+      operationId: prompts_enhance_create
+      tags:
+      - prompts
       responses:
         '200':
           description: No response body
@@ -598,6 +1443,100 @@ paths:
       responses:
         '302':
           description: No response body
+  /api/templates:
+    get:
+      operationId: templates_retrieve
+      tags:
+      - templates
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/templates/{template_id}:
+    get:
+      operationId: templates_retrieve_2
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - templates
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/templates/{template_id}/favorite:
+    post:
+      operationId: templates_favorite_create
+      description: Add (POST) or remove (DELETE) a template from the user's favorites.
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - templates
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: templates_favorite_destroy
+      description: Add (POST) or remove (DELETE) a template from the user's favorites.
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - templates
+      responses:
+        '204':
+          description: No response body
+  /api/templates/{template_id}/use:
+    post:
+      operationId: templates_use_create
+      parameters:
+      - in: path
+        name: template_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - templates
+      responses:
+        '200':
+          description: No response body
+  /api/templates/favorites:
+    get:
+      operationId: templates_favorites_retrieve
+      description: |-
+        List the current user's favorited templates.
+
+        Includes templates deactivated by gallery refreshes so favorites never
+        disappear from the user's collection.
+      tags:
+      - templates
+      responses:
+        '200':
+          description: No response body
+  /api/videos/models:
+    get:
+      operationId: videos_models_retrieve
+      tags:
+      - videos
+      responses:
+        '200':
+          description: No response body
 components:
   schemas:
     AuthResponse:
@@ -621,12 +1560,14 @@ components:
       - youtube
       - instagram
       - facebook
+      - snapchat
       type: string
       description: |-
         * `tiktok` - tiktok
         * `youtube` - youtube
         * `instagram` - instagram
         * `facebook` - facebook
+        * `snapchat` - snapchat
     CustomTokenObtainPair:
       type: object
       description: Custom Token Obtain Pair Serializer that adds user profile to the
@@ -652,20 +1593,27 @@ components:
       - email
     GoogleAuth:
       type: object
-      description: Serializer for Google OAuth 2.0 code exchange (web) or id_token (mobile).
+      description: Serializer for Google OAuth 2.0 code exchange (web) or id_token
+        (mobile).
       properties:
         code:
           type: string
+          default: ''
         redirectUri:
           type: string
+          default: ''
         redirect_uri:
           type: string
+          default: ''
         idToken:
           type: string
+          default: ''
         id_token:
           type: string
+          default: ''
         intent:
           type: string
+          default: ''
         createAccount:
           type: boolean
           nullable: true
@@ -677,6 +1625,20 @@ components:
           type: string
       required:
       - message
+    MethodEnum:
+      enum:
+      - manual
+      - jazzcash
+      - easypaisa
+      - card
+      - other
+      type: string
+      description: |-
+        * `manual` - Manual
+        * `jazzcash` - JazzCash
+        * `easypaisa` - EasyPaisa
+        * `card` - Card
+        * `other` - Other
     OnboardingComplete:
       type: object
       description: Serializer for completing onboarding — saves platforms, brand info,
@@ -761,11 +1723,14 @@ components:
           writeOnly: true
           maxLength: 7
         brand_logo_url:
-          type: string
-          format: uri
           writeOnly: true
           nullable: true
-          maxLength: 1000
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
     PatchedUser:
       type: object
       description: |-
@@ -793,18 +1758,36 @@ components:
         googleId:
           type: string
           nullable: true
+        emailVerified:
+          type: boolean
+          readOnly: true
         plan:
           allOf:
           - $ref: '#/components/schemas/PlanEnum'
           readOnly: true
         creditsTotal:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsUsed:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsRemaining:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsResetAt:
           type: string
@@ -814,6 +1797,11 @@ components:
         onboardingCompleted:
           type: boolean
           default: false
+        planDetails:
+          type: object
+          additionalProperties: {}
+          description: Return the public business plan details for the user.
+          readOnly: true
         brandKit:
           type: object
           additionalProperties: {}
@@ -828,6 +1816,17 @@ components:
           nullable: true
           description: Resolved active project id (explicit selection or most recent).
           readOnly: true
+        isStaff:
+          type: boolean
+          readOnly: true
+        isSuperuser:
+          type: boolean
+          readOnly: true
+        lastActiveAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
         brand_name:
           type: string
           maxLength: 255
@@ -837,30 +1836,65 @@ components:
         brand_color_hex:
           type: string
           maxLength: 7
+    PaymentCreate:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+          writeOnly: true
+        email:
+          type: string
+          format: email
+          writeOnly: true
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        currency:
+          type: string
+          default: USD
+          maxLength: 8
+        method:
+          allOf:
+          - $ref: '#/components/schemas/MethodEnum'
+          default: manual
+        status:
+          allOf:
+          - $ref: '#/components/schemas/StatusEnum'
+          default: paid
+        providerRef:
+          type: string
+        notes:
+          type: string
+      required:
+      - amount
     PlanEnum:
       enum:
       - free
-      - starter
+      - basic
+      - plus
       - pro
-      - agency
       type: string
       description: |-
         * `free` - Free
-        * `starter` - Starter
+        * `basic` - Basic
+        * `plus` - Plus
         * `pro` - Pro
-        * `agency` - Agency
     PlatformEnum:
       enum:
       - tiktok
       - youtube
       - instagram
       - facebook
+      - snapchat
       type: string
       description: |-
         * `tiktok` - TikTok
         * `youtube` - YouTube
         * `instagram` - Instagram
         * `facebook` - Facebook
+        * `snapchat` - Snapchat
     Project:
       type: object
       description: |-
@@ -917,11 +1951,14 @@ components:
           writeOnly: true
           maxLength: 7
         brand_logo_url:
-          type: string
-          format: uri
           writeOnly: true
           nullable: true
-          maxLength: 1000
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
       required:
       - brandKit
       - createdAt
@@ -931,7 +1968,7 @@ components:
       - updatedAt
     Register:
       type: object
-      description: Serializer for registering a new user with 5 free credits.
+      description: Serializer for registering a new user on the free plan.
       properties:
         email:
           type: string
@@ -946,8 +1983,6 @@ components:
           type: string
       required:
       - email
-      - firstName
-      - lastName
       - password
     ResetPassword:
       type: object
@@ -1001,6 +2036,18 @@ components:
       - platform
       - projectId
       - tokenExpiresAt
+    StatusEnum:
+      enum:
+      - paid
+      - pending
+      - failed
+      - refunded
+      type: string
+      description: |-
+        * `paid` - Paid
+        * `pending` - Pending
+        * `failed` - Failed
+        * `refunded` - Refunded
     TokenRefresh:
       type: object
       properties:
@@ -1040,18 +2087,36 @@ components:
         googleId:
           type: string
           nullable: true
+        emailVerified:
+          type: boolean
+          readOnly: true
         plan:
           allOf:
           - $ref: '#/components/schemas/PlanEnum'
           readOnly: true
         creditsTotal:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsUsed:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsRemaining:
-          type: integer
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
           readOnly: true
         creditsResetAt:
           type: string
@@ -1061,6 +2126,11 @@ components:
         onboardingCompleted:
           type: boolean
           default: false
+        planDetails:
+          type: object
+          additionalProperties: {}
+          description: Return the public business plan details for the user.
+          readOnly: true
         brandKit:
           type: object
           additionalProperties: {}
@@ -1075,6 +2145,17 @@ components:
           nullable: true
           description: Resolved active project id (explicit selection or most recent).
           readOnly: true
+        isStaff:
+          type: boolean
+          readOnly: true
+        isSuperuser:
+          type: boolean
+          readOnly: true
+        lastActiveAt:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
         brand_name:
           type: string
           maxLength: 255
@@ -1092,11 +2173,16 @@ components:
       - creditsTotal
       - creditsUsed
       - email
+      - emailVerified
       - id
+      - isStaff
+      - isSuperuser
+      - lastActiveAt
       - plan
+      - planDetails
       - projectCount
   securitySchemes:
-    jwtAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid

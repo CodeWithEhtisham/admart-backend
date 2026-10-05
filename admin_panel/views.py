@@ -4,6 +4,7 @@ from urllib.parse import unquote
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -21,7 +22,14 @@ from admin_panel.serializers import (
     PaymentCreateSerializer,
     PaymentSerializer,
 )
-from admin_panel.services import all_settings, build_revenue, build_stats, build_usage, get_setting
+from admin_panel.services import (
+    all_settings,
+    build_revenue,
+    build_stats,
+    build_usage,
+    get_setting,
+    review_payment,
+)
 from users.authentication import CombinedJWTAuthentication
 from users.plans import get_plan, serialize_plan, _plans_dict
 
@@ -406,10 +414,13 @@ class AdminPaymentListView(AdminAPIView):
 
     @extend_schema(summary="List payments for admin")
     def get(self, request):
-        qs = Payment.objects.select_related("user")
+        qs = Payment.objects.select_related("user", "reviewed_by")
         status_flag = (request.query_params.get("status") or "").strip()
         if status_flag:
             qs = qs.filter(status=status_flag)
+        plan_flag = (request.query_params.get("plan") or "").strip()
+        if plan_flag:
+            qs = qs.filter(plan=plan_flag)
         email = (request.query_params.get("email") or "").strip()
         if email:
             qs = qs.filter(user__email__icontains=email)
@@ -419,16 +430,43 @@ class AdminPaymentListView(AdminAPIView):
         except (TypeError, ValueError):
             limit = 50
 
+        from users.packs import get_topup_pack
+        from users.plans import get_plan
+
         payments = qs.order_by("-created_at")[:limit]
-        items = [
-            {
-                **PaymentSerializer(p).data,
-                "email": p.user.email,
-                "firstName": p.user.first_name,
-                "lastName": p.user.last_name,
-            }
-            for p in payments
-        ]
+        items = []
+        for p in payments:
+            is_topup = getattr(p, "payment_type", "subscription") == "topup"
+            pack_obj = get_topup_pack(p.pack) if is_topup else None
+            plan_obj = get_plan(p.plan) if not is_topup else None
+            items.append(
+                {
+                    **PaymentSerializer(p).data,
+                    "paymentType": getattr(p, "payment_type", "subscription"),
+                    "plan": p.plan,
+                    "pack": getattr(p, "pack", ""),
+                    "planName": (
+                        pack_obj["name"]
+                        if is_topup and pack_obj
+                        else (plan_obj["name"] if plan_obj else p.plan or p.pack)
+                    ),
+                    "packName": pack_obj["name"] if pack_obj else "",
+                    "credits": (
+                        pack_obj["credits"]
+                        if is_topup and pack_obj
+                        else (plan_obj["monthly_credits"] if plan_obj else None)
+                    ),
+                    "email": p.user.email,
+                    "firstName": p.user.first_name,
+                    "lastName": p.user.last_name,
+                    "currentPlan": p.user.plan,
+                    "screenshotUrl": (
+                        request.build_absolute_uri(p.screenshot.url) if p.screenshot else None
+                    ),
+                    "reviewedAt": p.reviewed_at,
+                    "reviewedByEmail": p.reviewed_by.email if p.reviewed_by else None,
+                }
+            )
         return Response({"items": items})
 
     @extend_schema(summary="Record a manual payment", request=PaymentCreateSerializer)
@@ -437,6 +475,30 @@ class AdminPaymentListView(AdminAPIView):
         serializer.is_valid(raise_exception=True)
         payment = serializer.save()
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+
+class AdminPaymentReviewView(AdminAPIView):
+    """POST /api/admin/payments/{id}/review — approve or reject a pending payment."""
+
+    permission_classes = [IsOwnerAdmin]
+
+    @extend_schema(summary="Approve or reject a pending manual payment", request=None)
+    def post(self, request, payment_id):
+        data = request.data or {}
+        decision = str(data.get("decision") or "").strip().lower()
+        reason = str(data.get("reason") or "").strip()
+        try:
+            payment = review_payment(payment_id, decision, request.user, reason)
+        except ValidationError as exc:
+            return Response({"message": "; ".join(exc.messages)}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            {
+                **PaymentSerializer(payment).data,
+                "plan": payment.plan,
+                "reviewedAt": payment.reviewed_at,
+                "reviewedByEmail": request.user.email,
+            }
+        )
 
 
 class AdminSettingsView(AdminAPIView):
@@ -453,6 +515,8 @@ class AdminSettingsView(AdminAPIView):
         return {
             "defaultFreeCredits": values.get("default_free_credits", "50"),
             "maintenanceBanner": values.get("maintenance_banner", ""),
+            "easypaisaNumber": values.get("easypaisa_number", ""),
+            "easypaisaName": values.get("easypaisa_name", ""),
             "platforms": {
                 "youtube": {
                     "connectEnabled": bool(settings.GOOGLE_OAUTH_CLIENT_ID),
@@ -484,7 +548,12 @@ class AdminSettingsView(AdminAPIView):
     @extend_schema(summary="Update admin settings", request=None)
     def put(self, request):
         data = request.data or {}
-        editable = {"defaultFreeCredits": "default_free_credits", "maintenanceBanner": "maintenance_banner"}
+        editable = {
+            "defaultFreeCredits": "default_free_credits",
+            "maintenanceBanner": "maintenance_banner",
+            "easypaisaNumber": "easypaisa_number",
+            "easypaisaName": "easypaisa_name",
+        }
         for camel, key in editable.items():
             if camel in data:
                 AdminSetting.objects.update_or_create(key=key, defaults={"value": str(data[camel])})

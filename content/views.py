@@ -20,12 +20,13 @@ from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.fal_models import (
     FalModelSearchError,
     catalog_discovery_payload,
+    merged_image_catalog,
     search_fal_models,
 )
 from content.jobs import refresh_job
 from content.library import mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
-from content.models import ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
+from content.models import FavoriteTemplate, ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
 from content.pricing import attach_image_pricing, quote_image_job, quote_response
 from content.prompt_enhancer import enhance_prompt
 from content.serializers import (
@@ -242,8 +243,19 @@ class ImageModelCatalogView(APIView):
     def get(self, request, project_id=None):
         if project_id is not None:
             _owned_project(request.user, project_id)
-        payload = attach_image_pricing(MODEL_CATALOG)
-        if _truthy(request.query_params.get("discover")):
+        discover = _truthy(request.query_params.get("discover"))
+        # Merged (curated + live provider) by default; ?fal=0 opts back into curated-only.
+        include_discovery = discover or request.query_params.get("fal") != "0"
+        fal_error = None
+        try:
+            merged = merged_image_catalog(include_discovery=include_discovery)
+        except FalModelSearchError:
+            merged = {cap: list(models) for cap, models in MODEL_CATALOG.items()}
+            fal_error = "Could not fetch the latest model catalog"
+        payload = attach_image_pricing(merged)
+        if fal_error:
+            payload["_fal_error"] = fal_error
+        if discover:
             payload["_fal"] = catalog_discovery_payload("image")
         return Response(payload)
 
@@ -274,15 +286,78 @@ class PromptEnhanceView(APIView):
         return Response(result)
 
 
+# Categories used before the meigen-style scheme; mapped on read so old rows
+# keep showing up under the new tabs until the next gallery refresh rewrites them.
+_LEGACY_CATEGORY_MAP = {
+    "ad": "ads-product",
+    "ads": "ads-product",
+    "product": "ads-product",
+    "announce": "ads-product",
+    "announcement": "ads-product",
+    "carousel": "ads-product",
+    "story": "ads-product",
+    "reel": "video",
+}
+
+
+def _with_current_categories(queryset):
+    """Annotate legacy category values onto their new meigen-style slugs.
+
+    New rows are written with the new slugs directly; this only affects rows
+    created before the category migration until the gallery refresh updates them.
+    """
+    from django.db.models import Case, CharField, Value, When
+
+    whens = [
+        When(category=old, then=Value(new)) for old, new in _LEGACY_CATEGORY_MAP.items()
+    ]
+    return queryset.annotate(
+        current_category=Case(*whens, default=F("category"), output_field=CharField())
+    )
+
+
+def _category_stats():
+    """Per-category image/video counts for the frontend category pills."""
+    from django.db.models import Count, Q
+
+    stats = {
+        slug: {"images": 0, "videos": 0}
+        for slug, _label in Template.CATEGORY_CHOICES
+    }
+    rows = (
+        _with_current_categories(Template.objects.filter(is_active=True))
+        .values("current_category")
+        .annotate(
+            images=Count("id", filter=Q(is_video=False)),
+            videos=Count("id", filter=Q(is_video=True)),
+        )
+    )
+    for row in rows:
+        entry = stats.get(row["current_category"])
+        if entry is not None:
+            entry["images"] = row["images"]
+            entry["videos"] = row["videos"]
+    all_stats = {
+        "images": sum(entry["images"] for entry in stats.values()),
+        "videos": sum(entry["videos"] for entry in stats.values()),
+    }
+    stats["all"] = all_stats
+    return stats
+
+
+def _category(request):
+    return (request.query_params.get("category") or "").strip().lower()
+
+
 class TemplateListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Template.objects.filter(is_active=True)
+        qs = _with_current_categories(Template.objects.filter(is_active=True))
 
-        category = (request.query_params.get("category") or "").strip().lower()
+        category = _category(request)
         if category and category != "all":
-            qs = qs.filter(category=category)
+            qs = qs.filter(current_category=category)
 
         media = (request.query_params.get("media") or "").strip().lower()
         if media == "image":
@@ -292,18 +367,25 @@ class TemplateListView(APIView):
 
         search = (request.query_params.get("search") or "").strip()
         if search:
+            # Search titles plus the full prompt/description text stored in
+            # template_config (titles are often truncated or just "{").
             qs = qs.filter(
                 Q(title__icontains=search)
-                | Q(category__icontains=search)
-                | Q(format__icontains=search)
+                | Q(template_config__prompt__icontains=search)
+                | Q(template_config__description__icontains=search)
             )
 
         model_name = (request.query_params.get("model") or "").strip()
         if model_name and model_name != "all":
             qs = qs.filter(template_config__modelName__iexact=model_name)
 
-        sort = (request.query_params.get("sort") or "trending").strip().lower()
-        if sort in {"new", "newest"}:
+        sort = (request.query_params.get("sort") or "featured").strip().lower()
+        if sort == "trending":
+            # Real trending: only templates actually used in the rolling 7-day window.
+            qs = qs.filter(uses_last_7d__gt=0).order_by(
+                "-uses_last_7d", "-uses_count", "-created_at"
+            )
+        elif sort in {"new", "newest"}:
             qs = qs.order_by("-created_at", "title")
         elif sort in {"uses", "popular"}:
             qs = qs.order_by("-uses_count", "-uses_last_7d", "-created_at")
@@ -323,13 +405,17 @@ class TemplateListView(APIView):
         data = TemplateSerializer(
             items,
             many=True,
-            context={"trending_ids": _trending_template_ids()},
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": _favorite_template_ids(request.user),
+            },
         ).data
         return Response(
             {
                 "items": data,
                 "nextCursor": next_cursor,
                 "count": qs.count(),
+                "categoryStats": _category_stats(),
             }
         )
 
@@ -338,11 +424,20 @@ class TemplateDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, template_id):
-        template = get_object_or_404(Template, id=template_id, is_active=True)
+        template = _with_current_categories(
+            Template.objects.filter(id=template_id, is_active=True)
+        ).first()
+        if template is None:
+            return Response(
+                {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
+            )
         return Response(
             TemplateSerializer(
                 template,
-                context={"trending_ids": _trending_template_ids()},
+                context={
+                    "trending_ids": _trending_template_ids(),
+                    "favorite_ids": _favorite_template_ids(request.user),
+                },
             ).data
         )
 
@@ -352,11 +447,23 @@ class TemplateUseView(APIView):
 
     def post(self, request, template_id):
         with transaction.atomic():
-            template = get_object_or_404(
-                Template.objects.select_for_update(),
-                id=template_id,
-                is_active=True,
+            template = (
+                Template.objects.select_for_update().filter(id=template_id).first()
             )
+            if template is None:
+                return Response(
+                    {"detail": "Template not found."}, status=status.HTTP_404_NOT_FOUND
+                )
+            # Favorited templates stay usable even after a gallery refresh
+            # deactivates them (favorites outlive template refreshes).
+            is_favorite = FavoriteTemplate.objects.filter(
+                user=request.user, template=template
+            ).exists()
+            if not template.is_active and not is_favorite:
+                return Response(
+                    {"detail": "Template is no longer available."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             TemplateUseEvent.objects.create(template=template, user=request.user)
             Template.objects.filter(id=template.id).update(
                 uses_count=F("uses_count") + 1,
@@ -366,7 +473,10 @@ class TemplateUseView(APIView):
 
         serialized = TemplateSerializer(
             template,
-            context={"trending_ids": _trending_template_ids()},
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": _favorite_template_ids(request.user),
+            },
         ).data
         return Response(
             {
@@ -374,6 +484,65 @@ class TemplateUseView(APIView):
                 "templateConfig": template.template_config,
             }
         )
+
+
+class TemplateFavoriteListView(APIView):
+    """List the current user's favorited templates.
+
+    Includes templates deactivated by gallery refreshes so favorites never
+    disappear from the user's collection.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        favorite_ids = _favorite_template_ids(request.user)
+        templates = _with_current_categories(
+            Template.objects.filter(
+                id__in=favorite_ids,
+                favorited_by__user=request.user,
+            )
+        ).order_by("-favorited_by__created_at")
+        data = TemplateSerializer(
+            templates,
+            many=True,
+            context={
+                "trending_ids": _trending_template_ids(),
+                "favorite_ids": favorite_ids,
+            },
+        ).data
+        return Response({"items": data, "count": len(data)})
+
+
+class TemplateFavoriteView(APIView):
+    """Add (POST) or remove (DELETE) a template from the user's favorites."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, template_id):
+        template = Template.objects.filter(id=template_id).first()
+        if template is None:
+            return Response(
+                {"detail": "Template not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+        _, created = FavoriteTemplate.objects.get_or_create(
+            user=request.user, template=template
+        )
+        return Response(
+            {"templateId": str(template.id), "isFavorite": True, "created": created},
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, template_id):
+        deleted, _ = FavoriteTemplate.objects.filter(
+            user=request.user, template_id=template_id
+        ).delete()
+        if not deleted:
+            return Response(
+                {"detail": "Template is not in favorites."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({"templateId": str(template_id), "isFavorite": False})
 
 
 class FalModelSearchView(APIView):
@@ -572,4 +741,13 @@ def _trending_template_ids() -> set:
         Template.objects.filter(is_active=True, uses_last_7d__gt=0)
         .order_by("-uses_last_7d", "-uses_count")
         .values_list("id", flat=True)[:6]
+    )
+
+
+def _favorite_template_ids(user) -> set:
+    """Return the set of template ids the user has favorited (empty for anonymous)."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+    return set(
+        FavoriteTemplate.objects.filter(user=user).values_list("template_id", flat=True)
     )

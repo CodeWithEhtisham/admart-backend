@@ -23,6 +23,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
 class PaymentSerializer(serializers.ModelSerializer):
     userId = serializers.CharField(source="user_id", read_only=True)
+    paymentType = serializers.CharField(source="payment_type", read_only=True)
     providerRef = serializers.CharField(source="provider_ref", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
 
@@ -31,6 +32,9 @@ class PaymentSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "userId",
+            "paymentType",
+            "plan",
+            "pack",
             "amount",
             "currency",
             "method",

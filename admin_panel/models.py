@@ -8,8 +8,8 @@ from django.utils import timezone
 class Subscription(models.Model):
     """A customer's plan subscription.
 
-    Payment integration is not connected yet, so subscriptions are created
-    manually by admins (or seeded for demos) until a real gateway lands.
+    Created/extended automatically when a manual payment is approved; admins
+    can still manage subscriptions directly via the admin panel.
     """
 
     STATUS_CHOICES = [
@@ -51,8 +51,8 @@ class Subscription(models.Model):
 class Payment(models.Model):
     """A payment/charge record for a customer.
 
-    Manual entry for now; swap in real gateway transactions (JazzCash/EasyPaisa)
-    without changing this shape.
+    Manual review flow: clients submit an EasyPaisa screenshot (status
+    "pending"); superusers approve (credits granted automatically) or reject.
     """
 
     METHOD_CHOICES = [
@@ -69,17 +69,38 @@ class Payment(models.Model):
         ("refunded", "Refunded"),
     ]
 
+    PAYMENT_TYPE_CHOICES = [
+        ("subscription", "Subscription"),
+        ("topup", "Top-up"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="payments",
     )
+    payment_type = models.CharField(
+        max_length=20, choices=PAYMENT_TYPE_CHOICES, default="subscription"
+    )
+    plan = models.CharField(max_length=20, blank=True, default="")
+    pack = models.CharField(max_length=50, blank=True, default="")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=8, default="USD")
     method = models.CharField(max_length=20, choices=METHOD_CHOICES, default="manual")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="paid")
     provider_ref = models.CharField(max_length=128, blank=True, default="")
+    screenshot = models.FileField(
+        upload_to="payments/screenshots/%Y/%m/", null=True, blank=True
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -102,6 +123,8 @@ class CreditAdjustment(models.Model):
         ("grant", "Manual grant"),
         ("reset", "Manual reset"),
         ("adjust", "Adjustment"),
+        ("payment", "Payment approval"),
+        ("topup", "Top-up"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

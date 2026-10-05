@@ -4,7 +4,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "premium-product-hero",
         "title": "Premium Product Hero",
-        "category": "product",
+        "category": "ads-product",
         "format": "1:1 image",
         "is_video": False,
         "preview_url": "/template-media/product-hero.png",
@@ -32,7 +32,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "pakistani-shirt-edit",
         "title": "Pakistani Shirt Jersey Edit",
-        "category": "product",
+        "category": "ads-product",
         "format": "image edit",
         "is_video": False,
         "preview_url": "/template-media/pakistani-shirt-edit.png",
@@ -60,7 +60,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "burger-deal-poster",
         "title": "Burger Deal Poster",
-        "category": "ad",
+        "category": "ads-product",
         "format": "1:1 image",
         "is_video": False,
         "preview_url": "/template-media/burger-deal.png",
@@ -87,7 +87,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "training-admissions-open",
         "title": "Training Admissions Poster",
-        "category": "announce",
+        "category": "ads-product",
         "format": "4:5 image",
         "is_video": False,
         "preview_url": "/template-media/training-admissions.png",
@@ -115,7 +115,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "restaurant-menu-board",
         "title": "Restaurant Menu Board",
-        "category": "ad",
+        "category": "ads-product",
         "format": "4:5 image",
         "is_video": False,
         "preview_url": "/template-media/menu-board.png",
@@ -144,7 +144,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "achievement-certificate-post",
         "title": "Certificate Achievement Post",
-        "category": "announce",
+        "category": "ads-product",
         "format": "1:1 image",
         "is_video": False,
         "preview_url": "/template-media/certificate-post.png",
@@ -172,7 +172,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "profile-headshot-refresh",
         "title": "Profile Headshot Refresh",
-        "category": "story",
+        "category": "posters-visuals",
         "format": "image edit",
         "is_video": False,
         "preview_url": "/template-media/profile-headshot-edit.png",
@@ -200,7 +200,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "product-hand-demo",
         "title": "Product In Hand Demo",
-        "category": "product",
+        "category": "ads-product",
         "format": "image edit",
         "is_video": False,
         "preview_url": "/template-media/product-hand-demo.png",
@@ -227,7 +227,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "fashion-drop-flat-lay",
         "title": "Fashion Drop Flat Lay",
-        "category": "product",
+        "category": "ads-product",
         "format": "4:5 image",
         "is_video": False,
         "preview_url": "",
@@ -253,7 +253,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "real-estate-open-house",
         "title": "Real Estate Open House",
-        "category": "ad",
+        "category": "ads-product",
         "format": "4:5 image",
         "is_video": False,
         "preview_url": "",
@@ -281,7 +281,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "skincare-product-hero",
         "title": "Skincare Product Hero",
-        "category": "product",
+        "category": "ads-product",
         "format": "1:1 image",
         "is_video": False,
         "preview_url": "",
@@ -307,7 +307,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "tech-gadget-minimal-ad",
         "title": "Tech Gadget Minimal Ad",
-        "category": "product",
+        "category": "ads-product",
         "format": "16:9 image",
         "is_video": False,
         "preview_url": "",
@@ -332,7 +332,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "eid-sale-poster",
         "title": "Eid Sale Poster",
-        "category": "ad",
+        "category": "ads-product",
         "format": "4:5 image",
         "is_video": False,
         "preview_url": "/template-media/offer-poster.png",
@@ -359,7 +359,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "fitness-challenge-poster",
         "title": "Fitness Challenge Poster",
-        "category": "announce",
+        "category": "ads-product",
         "format": "9:16 image",
         "is_video": False,
         "preview_url": "",
@@ -386,7 +386,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "restaurant-story-combo",
         "title": "Restaurant Story Combo",
-        "category": "story",
+        "category": "posters-visuals",
         "format": "9:16 image",
         "is_video": False,
         "preview_url": "",
@@ -413,7 +413,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "product-launch-reel",
         "title": "Product Launch Reel",
-        "category": "reel",
+        "category": "video",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "/template-media/launch-reel.png",
@@ -440,7 +440,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "food-deal-motion",
         "title": "Food Deal Motion",
-        "category": "reel",
+        "category": "video",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "/template-media/food-deal-motion.png",
@@ -467,7 +467,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "course-intro-reel",
         "title": "Course Intro Reel",
-        "category": "reel",
+        "category": "video",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "/template-media/course-intro.png",
@@ -495,7 +495,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "countdown-teaser-video",
         "title": "Countdown Teaser Video",
-        "category": "story",
+        "category": "posters-visuals",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "/template-media/countdown-video.png",
@@ -521,7 +521,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "person-dance-video",
         "title": "Person Dance Video",
-        "category": "reel",
+        "category": "video",
         "format": "image to video",
         "is_video": True,
         "preview_url": "/template-media/dance-video-template.png",
@@ -548,7 +548,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "cinematic-cafe-sequence",
         "title": "Cinematic Cafe Sequence",
-        "category": "reel",
+        "category": "video",
         "format": "16:9 video",
         "is_video": True,
         "preview_url": "",
@@ -574,7 +574,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "clothing-spin-i2v",
         "title": "Clothing Try-On Spin",
-        "category": "reel",
+        "category": "video",
         "format": "image to video",
         "is_video": True,
         "preview_url": "",
@@ -601,7 +601,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "before-after-reveal",
         "title": "Before After Reveal",
-        "category": "reel",
+        "category": "video",
         "format": "image to video",
         "is_video": True,
         "preview_url": "",
@@ -629,7 +629,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "product-unboxing-reel",
         "title": "Product Unboxing Reel",
-        "category": "reel",
+        "category": "video",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "",
@@ -652,7 +652,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "event-invitation-story",
         "title": "Event Invitation Story",
-        "category": "story",
+        "category": "posters-visuals",
         "format": "9:16 video",
         "is_video": True,
         "preview_url": "",
@@ -680,7 +680,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "brand-explainer-carousel",
         "title": "Brand Explainer Carousel",
-        "category": "carousel",
+        "category": "ads-product",
         "format": "carousel image",
         "is_video": False,
         "preview_url": "",
@@ -706,7 +706,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "product-benefits-carousel",
         "title": "Product Benefits Carousel",
-        "category": "carousel",
+        "category": "ads-product",
         "format": "carousel image",
         "is_video": False,
         "preview_url": "",
@@ -734,7 +734,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "client-testimonial-carousel",
         "title": "Client Testimonial Carousel",
-        "category": "carousel",
+        "category": "ads-product",
         "format": "carousel image",
         "is_video": False,
         "preview_url": "",
@@ -760,7 +760,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "menu-carousel",
         "title": "Menu Carousel",
-        "category": "carousel",
+        "category": "ads-product",
         "format": "carousel image",
         "is_video": False,
         "preview_url": "",
@@ -785,7 +785,7 @@ TEMPLATE_SEEDS = [
     {
         "id": "real-estate-carousel",
         "title": "Real Estate Listing Carousel",
-        "category": "carousel",
+        "category": "ads-product",
         "format": "carousel image",
         "is_video": False,
         "preview_url": "",

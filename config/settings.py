@@ -297,7 +297,7 @@ GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
 # derived from SECRET_KEY (fine for dev; set an explicit key in production).
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
 
-# fal.ai image generation
+# Image generation provider
 FAL_KEY = os.getenv("FAL_KEY", "")
 FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
 FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")

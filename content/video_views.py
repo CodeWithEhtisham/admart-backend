@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 
 from content import fal_client
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
-from content.fal_models import catalog_discovery_payload
+from content.fal_models import catalog_discovery_payload, merged_video_catalog
 from content.library import mark_library_generating_video, sync_library_from_video_job
 from content.models import VideoJob
 from content.pricing import attach_video_pricing, quote_response, quote_video_job
@@ -177,8 +177,19 @@ class VideoModelCatalogView(APIView):
     def get(self, request, project_id=None):
         if project_id is not None:
             _owned_project(request.user, project_id)
-        payload = attach_video_pricing(VIDEO_MODEL_CATALOG)
-        if _truthy(request.query_params.get("discover")):
+        discover = _truthy(request.query_params.get("discover"))
+        # Merged (curated + live provider) by default; ?fal=0 opts back into curated-only.
+        include_discovery = discover or request.query_params.get("fal") != "0"
+        fal_error = None
+        try:
+            merged = merged_video_catalog(include_discovery=include_discovery)
+        except FalModelSearchError:
+            merged = {cap: list(models) for cap, models in VIDEO_MODEL_CATALOG.items()}
+            fal_error = "Could not fetch the latest model catalog"
+        payload = attach_video_pricing(merged)
+        if fal_error:
+            payload["_fal_error"] = fal_error
+        if discover:
             payload["_fal"] = catalog_discovery_payload("video")
         return Response(payload)
 

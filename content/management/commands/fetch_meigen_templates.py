@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import difflib
 import re
 import time
 
@@ -25,6 +26,25 @@ PAGE_SIZE = 24
 REQUEST_TIMEOUT = 30
 REQUEST_RETRIES = 3
 REQUEST_DELAY = 0.35  # seconds between API calls (rate limiting courtesy)
+
+# Meigen's API only honours a couple of its category slugs (verified: ``logo``
+# and ``wallpaper`` return different items, every other slug returns the plain
+# featured feed). We still request the working ones so those sections fill up
+# properly; the rest of the gallery is classified locally by keyword score.
+# (meigen slug -> category override). Only these slugs actually filter on the
+# API; everything else is filled from the default feed + local classification.
+CATEGORY_HARVEST_SOURCES = (
+    ("logo", "brand-logo"),
+    ("wallpaper", "wallpaper"),
+    ("product", "ads-product"),
+    ("poster", "posters-visuals"),
+)
+CATEGORY_HARVEST_LIMIT = 40  # per category source
+
+# Near-duplicate titles collapse: meigen often lists the same prompt as several
+# items (tiny wording/spacing differences). Similarity threshold for treating
+# two normalized titles as the same template.
+DUP_TITLE_RATIO = 0.93
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -49,6 +69,51 @@ VULGAR_CONTENT_RE = re.compile(
     r"|\b(?:nude|naked|topless)\s+(?:woman|women|girl|model|body|torso|figure)\b",
     re.IGNORECASE,
 )
+
+# Keyword scoring used to mirror meigen.ai's own category sections
+# (?category=logo, ?category=ads-product, …). Their public API ignores the
+# category param, so we classify with the same signals their site uses.
+MEIGEN_CATEGORY_KEYWORDS = {
+    "brand-logo": (
+        (("brand", 3), ("logo", 4), ("monogram", 4), ("wordmark", 4), ("letterhead", 3),
+         ("business card", 3), ("stationery", 2), ("emblem", 3), ("mascot logo", 4),
+         ("branding", 3), ("identity design", 3), ("badge", 1)),
+    ),
+    "illustration-3d": (
+        (("3d", 3), ("3d render", 4), ("illustration", 3), ("vector", 2), ("claymorphism", 4),
+         ("clay style", 4), ("isometric", 3), ("blender", 3), ("octane render", 3),
+         ("cartoon", 2), ("flat design", 2), ("low poly", 4), ("cgi", 3)),
+    ),
+    "posters-visuals": (
+        (("poster", 4), ("flyer", 3), ("billboard", 3), ("typography", 2), ("album cover", 3),
+         ("book cover", 3), ("event promo", 3), ("print ad", 3), ("movie poster", 4),
+         ("visual identity", 2), ("packaging", 2), ("label design", 2)),
+    ),
+    "portraits": (
+        (("portrait", 4), ("headshot", 4), ("profile picture", 3), ("selfie", 3),
+         ("face closeup", 4), ("facial", 3), ("professional photo of a woman", 2),
+         ("professional photo of a man", 2), ("studio portrait", 4), ("head shot", 4)),
+    ),
+    "storyboard-characters": (
+        (("storyboard", 5), ("character sheet", 5), ("character design", 5), ("character concept", 4),
+         ("turnaround", 4), ("mascot character", 4), ("comic panel", 4), ("sequential art", 4),
+         ("expression sheet", 5), ("anime character", 4)),
+    ),
+    "wallpaper": (
+        (("wallpaper", 5), ("desktop background", 5), ("phone wallpaper", 5), ("4k background", 4),
+         ("seamless pattern", 3), ("abstract background", 3), ("minimal background", 3),
+         ("texture background", 3)),
+    ),
+    # Default bucket: promo/ads/product/marketing content — matches meigen's
+    # "Ads & Product" section, the largest one on the site.
+    "ads-product": (
+        (("ad", 2), ("advert", 3), ("advertisement", 3), ("commercial", 2), ("product", 2),
+         ("promo", 3), ("sale", 2), ("discount", 2), ("offer", 2), ("campaign", 2),
+         ("marketing", 2), ("cta", 2), ("instagram", 1), ("social media post", 3),
+         ("product photography", 4), ("product shot", 4), ("ecommerce", 3), ("landing page", 2),
+         ("banner", 2), ("restaurant", 1), ("menu", 1), ("gym", 1), ("real estate", 2)),
+    ),
+}
 
 # meigen display name -> fal model id used for actual generation
 IMAGE_MODEL_MAP = {
@@ -153,7 +218,67 @@ def normalize_video_aspect(aspect: str) -> str:
     return best[0]
 
 
-def build_seed(item: dict) -> dict | None:
+def normalize_title(raw: str) -> str:
+    """Lowercase and strip every non-letter/digit (Unicode-aware, keeps CJK)."""
+    return re.sub(r"[\W_]+", "", (raw or "").lower())
+
+
+def titles_similar(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if min(la, lb) / max(la, lb) < 0.85:
+        return False
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    return matcher.real_quick_ratio() >= DUP_TITLE_RATIO and matcher.ratio() >= DUP_TITLE_RATIO
+
+
+def dedupe_seeds_by_title(seeds: list[dict]) -> tuple[list[dict], int]:
+    """Drop seeds whose title is (near-)identical to one already kept."""
+    kept: list[dict] = []
+    kept_titles: list[str] = []
+    dropped = 0
+    for seed in seeds:
+        norm = normalize_title(seed["title"])
+        if any(titles_similar(norm, existing) for existing in kept_titles):
+            dropped += 1
+            continue
+        kept_titles.append(norm)
+        kept.append(seed)
+    return kept, dropped
+
+
+def infer_meigen_category(item: dict, is_video: bool) -> str:
+    """Map a meigen item onto one of meigen's own site category slugs.
+
+    The meigen API ignores its ``category`` query param (verified: the same
+    items come back for every category), so their site classifies client-side.
+    We mirror that with a keyword score over title + prompt. Videos always go
+    to the "Videos" section, like the meigen site does.
+    """
+    if is_video:
+        return "video"
+    haystack = f"{(item.get('title') or '')}\n{(item.get('prompt') or '')}".lower()
+    scores = {}
+    for slug, groups in MEIGEN_CATEGORY_KEYWORDS.items():
+        score = 0
+        for group in groups:
+            # Tolerate either a flat ((kw, w), …) tuple or a nested one.
+            pairs = group if group and isinstance(group[0], tuple) else (group,)
+            for keyword, weight in pairs:
+                if keyword in haystack:
+                    score += weight
+        if score:
+            scores[slug] = score
+    if not scores:
+        return "ads-product"
+    best = max(scores.items(), key=lambda pair: (pair[1], pair[0]))
+    return best[0]
+
+
+def build_seed(item: dict, category_override: str | None = None) -> dict | None:
     """Convert a meigen API item into a Template seed payload (or None to skip)."""
     is_video = (item.get("mediaType") or "").lower() == "video"
     prompt = (item.get("prompt") or "").strip()
@@ -236,10 +361,12 @@ def build_seed(item: dict) -> dict | None:
     if is_video and (item.get("videoUrl") or "").strip():
         config["videoUrl"] = (item.get("videoUrl") or "").strip()
 
+    category = category_override or infer_meigen_category(item, is_video)
+
     return {
         "id": f"meigen-{meigen_id}",
         "title": title,
-        "category": "reel" if is_video else "ad",
+        "category": category,
         "format": f"{aspect} {'video' if is_video else 'image'}",
         "is_video": is_video,
         "preview_url": preview_url,
@@ -253,7 +380,7 @@ class Command(BaseCommand):
     help = "Fetch featured meigen.ai templates and seed/update the Template gallery."
 
     def add_arguments(self, parser):
-        parser.add_argument("--images", type=int, default=200)
+        parser.add_argument("--images", type=int, default=300)
         parser.add_argument("--videos", type=int, default=100)
         parser.add_argument("--keep-owned", action="store_true")
         parser.add_argument("--dry-run", action="store_true")
@@ -268,12 +395,30 @@ class Command(BaseCommand):
 
         seeds: list[dict] = []
         skipped = 0
+        seen_ids: set[str] = set()
+
+        # Note: all videos are forced into the "video" category by the
+        # classifier, so category harvests only make sense for images.
+        sources: list[tuple[str, str | None, int]] = [
+            (MEIGEN_IMAGES_URL, None, image_count),
+            (MEIGEN_VIDEOS_URL, None, video_count),
+        ]
         if image_count:
-            seeds, skipped = self._fetch(MEIGEN_IMAGES_URL, image_count)
-        if video_count:
-            video_seeds, video_skipped = self._fetch(MEIGEN_VIDEOS_URL, video_count)
-            seeds.extend(video_seeds)
-            skipped += video_skipped
+            sources.extend(
+                (MEIGEN_IMAGES_URL, override, CATEGORY_HARVEST_LIMIT)
+                for _slug, override in CATEGORY_HARVEST_SOURCES
+            )
+        for url, category, limit in sources:
+            if not limit:
+                continue
+            source_seeds, source_skipped = self._fetch(
+                url, limit, category=category, seen_ids=seen_ids
+            )
+            seeds.extend(source_seeds)
+            skipped += source_skipped
+
+        seeds, title_dupes = dedupe_seeds_by_title(seeds)
+        skipped += title_dupes
 
         if not seeds:
             raise CommandError("No usable templates were fetched from meigen.ai.")
@@ -296,26 +441,44 @@ class Command(BaseCommand):
             return
 
         created, updated, deactivated = self._store(seeds, keep_owned=keep_owned)
+        by_category: dict[str, int] = {}
+        for seed in seeds:
+            by_category[seed["category"]] = by_category.get(seed["category"], 0) + 1
+        breakdown = ", ".join(f"{slug}={n}" for slug, n in sorted(by_category.items()))
         self.stdout.write(
             self.style.SUCCESS(
                 f"Meigen templates: {created} created, {updated} updated, "
-                f"{len(seeds)} active, {skipped} skipped, {deactivated} deactivated."
+                f"{len(seeds)} active, {skipped} skipped, {deactivated} deactivated. "
+                f"Categories: {breakdown}"
             )
         )
 
-    def _fetch(self, url: str, limit: int) -> tuple[list[dict], int]:
+    def _fetch(
+        self,
+        url: str,
+        limit: int,
+        *,
+        category: str | None = None,
+        seen_ids: set[str] | None = None,
+    ) -> tuple[list[dict], int]:
         seeds: list[dict] = []
         skipped = 0
         offset = 0
         while len(seeds) < limit:
-            page = self._get_json(url, offset)
+            page = self._get_json(url, offset, category=category)
             items = page.get("images") or []
             if not items:
                 break
             for item in items:
                 if len(seeds) >= limit:
                     break
-                seed = build_seed(item)
+                meigen_id = str(item.get("id") or "")
+                if meigen_id and seen_ids is not None:
+                    if meigen_id in seen_ids:
+                        skipped += 1
+                        continue
+                    seen_ids.add(meigen_id)
+                seed = build_seed(item, category_override=category)
                 if seed is None:
                     skipped += 1
                     continue
@@ -326,8 +489,10 @@ class Command(BaseCommand):
                 break
         return seeds, skipped
 
-    def _get_json(self, url: str, offset: int) -> dict:
+    def _get_json(self, url: str, offset: int, *, category: str | None = None) -> dict:
         params = {"sort": "featured", "limit": PAGE_SIZE, "offset": offset}
+        if category:
+            params["category"] = category
         last_error: Exception | None = None
         for attempt in range(1, REQUEST_RETRIES + 1):
             try:
@@ -364,15 +529,17 @@ class Command(BaseCommand):
                     "is_video": seed["is_video"],
                     "preview_url": seed["preview_url"],
                     "template_config": config,
-                    "uses_count": seed.get("uses_count") or 0,
-                    "uses_last_7d": seed.get("uses_last_7d") or 0,
                     "is_active": True,
                 }
                 existing = Template.objects.filter(template_config__seedKey=seed_key).first()
                 if existing is None:
+                    defaults["uses_count"] = seed.get("uses_count") or 0
+                    defaults["uses_last_7d"] = seed.get("uses_last_7d") or 0
                     Template.objects.create(**defaults)
                     created += 1
                 else:
+                    # Never clobber real usage counters with the (always zero)
+                    # values meigen reports — only set them on create.
                     Template.objects.filter(id=existing.id).update(**defaults)
                     updated += 1
                 active_keys.add(seed_key)

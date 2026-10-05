@@ -22,9 +22,11 @@ PRICING_URL = "https://api.fal.ai/v1/models/pricing"
 PRICING_TTL_SECONDS = 30 * 60
 CREDIT_QUANT = Decimal("0.0001")
 ADMART_CREDIT_CURRENCY = "Admart credits"
-FAL_COST_BASIS_CURRENCY = "fal credits"
+FAL_COST_BASIS_CURRENCY = "provider credits"
 MIN_MARKUP = Decimal("0.25")
 MARKUP_CURVE_NUMERATOR = Decimal("1.2")
+# Guaranteed gross margin on the cheapest plan (e.g. 0.10 = 10%).
+MIN_PLAN_MARGIN = Decimal(str(getattr(settings, "MIN_PLAN_MARGIN", "0.10")))
 
 # Last known values from fal's /v1/models/pricing endpoint for the current
 # supported catalog. Used only when FAL_KEY/network is unavailable.
@@ -49,7 +51,7 @@ FALLBACK_PRICES: dict[str, dict[str, str]] = {
     "fal-ai/birefnet": {"unit_price": "0.0008", "unit": "compute seconds", "currency": "USD"},
     "fal-ai/bria/background/remove": {"unit_price": "0.018", "unit": "generations", "currency": "USD"},
     "fal-ai/veo3.1": {"unit_price": "0.4", "unit": "seconds", "currency": "USD"},
-    "bytedance/seedance-2.0/text-to-video": {"unit_price": "0.014", "unit": "units", "currency": "USD"},
+    "bytedance/seedance-2.0/text-to-video": {"unit_price": "0.014", "unit": "1000 tokens", "currency": "USD"},
     "fal-ai/kling-video/v2.5-turbo/pro/text-to-video": {"unit_price": "0.07", "unit": "seconds", "currency": "USD"},
     "fal-ai/kling-video/v2.1/master/text-to-video": {"unit_price": "0.28", "unit": "seconds", "currency": "USD"},
     "fal-ai/minimax/hailuo-02/standard/text-to-video": {"unit_price": "0.045", "unit": "seconds", "currency": "USD"},
@@ -57,7 +59,7 @@ FALLBACK_PRICES: dict[str, dict[str, str]] = {
     "fal-ai/pixverse/v5/text-to-video": {"unit_price": "0.05", "unit": "video segments", "currency": "USD"},
     "fal-ai/ltx-video-13b-distilled": {"unit_price": "0.04", "unit": "videos", "currency": "USD"},
     "fal-ai/veo3.1/image-to-video": {"unit_price": "0.4", "unit": "seconds", "currency": "USD"},
-    "bytedance/seedance-2.0/image-to-video": {"unit_price": "0.014", "unit": "units", "currency": "USD"},
+    "bytedance/seedance-2.0/image-to-video": {"unit_price": "0.014", "unit": "1000 tokens", "currency": "USD"},
     "fal-ai/kling-video/v2.5-turbo/pro/image-to-video": {"unit_price": "0.07", "unit": "seconds", "currency": "USD"},
     "fal-ai/kling-video/v2.1/master/image-to-video": {"unit_price": "0.28", "unit": "seconds", "currency": "USD"},
     "fal-ai/minimax/hailuo-02/standard/image-to-video": {"unit_price": "0.045", "unit": "seconds", "currency": "USD"},
@@ -85,10 +87,38 @@ def admart_markup_multiplier(fal_cost: Decimal | int | float | str) -> Decimal:
     """Return the Admart price multiplier for a raw fal job cost.
 
     Formula: price = cost * (1 + max(0.25, 1.2 / (cost + 1))).
+    A floor is applied so the cheapest plan's credit value never erodes margin
+    on expensive jobs (e.g. long videos on the Pro plan).
     """
     cost = quantize_credits(fal_cost)
-    markup = max(MIN_MARKUP, MARKUP_CURVE_NUMERATOR / (cost + Decimal("1")))
+    markup = max(MIN_MARKUP, _minimum_viable_markup(), MARKUP_CURVE_NUMERATOR / (cost + Decimal("1")))
     return Decimal("1") + markup
+
+
+def _minimum_viable_markup() -> Decimal:
+    """The smallest markup extra that keeps Admart margin >= 0 on the cheapest plan.
+
+    The cheapest plan gives the user the most credits per dollar (e.g. Pro at
+    $0.658/credit). For a fal job costing ``c``, the user pays ``c*m`` credits
+    which are worth ``c*m*v`` dollars (v = credit value). To not lose money we
+    need ``c*m*v >= c`` → ``m >= 1/v``. We use the worst plan to bound it.
+    """
+    try:
+        from users.plans import get_plan, get_public_plan_ids
+
+        worst_value = Decimal("1")
+        for plan_id in get_public_plan_ids():
+            plan = get_plan(plan_id)
+            price = Decimal(str(plan.get("price_usd") or 0))
+            credits = Decimal(str(plan.get("monthly_credits") or 0))
+            if price > 0 and credits > 0:
+                value = price / credits
+                if value < worst_value:
+                    worst_value = value
+        # Floor so that even the cheapest plan keeps >= MIN_PLAN_MARGIN margin.
+        return ((Decimal("1") + MIN_PLAN_MARGIN) / worst_value) - Decimal("1")
+    except Exception:
+        return Decimal("0.25")
 
 
 def all_priced_endpoint_ids() -> list[str]:
@@ -207,7 +237,7 @@ def _attach_pricing(catalog: dict[str, list[dict[str, Any]]]) -> dict[str, list[
                     "unitPrice": serialize_decimal(raw_unit_price),
                     "unit": row.get("unit", "units"),
                     "currency": row.get("currency", "USD"),
-                    "source": "fal.ai",
+                    "source": "provider",
                     "admartUnitPrice": serialize_decimal(raw_unit_price * multiplier),
                     "admartCurrency": ADMART_CREDIT_CURRENCY,
                     "markupMultiplier": serialize_decimal(multiplier),
@@ -236,7 +266,7 @@ def _quote(*, capability: str, model: str, data: dict[str, Any], quantity: Decim
         "fal_cost_decimal": fal_cost,
         "markup_multiplier_decimal": multiplier,
         "credits_decimal": credits,
-        "source": "fal.ai",
+        "source": "provider",
     }
 
 
@@ -283,7 +313,33 @@ def _video_quantity(capability: str, model: str, data: dict[str, Any]) -> Decima
     unit = str(row.get("unit", "")).lower()
     if unit in {"seconds", "compute seconds", "units"}:
         return Decimal(_parse_duration_seconds(data.get("duration")) or 5)
+    if unit == "1000 tokens":
+        # Seedance family: fal bills per 1000 tokens.
+        # tokens ≈ (width * height * duration * 24) / 1024
+        quantity = _seedance_tokens(data) / Decimal("1000")
+        # fal charges 4k at $0.008/1000 tokens (vs $0.014 for 480p/720p/1080p).
+        if "4k" in str(data.get("resolution") or "").lower():
+            quantity = quantity * Decimal("0.008") / Decimal("0.014")
+        return quantity
     return Decimal("1")
+
+
+def _seedance_tokens(data: dict[str, Any]) -> Decimal:
+    """Estimate Seedance token count: (width * height * duration * 24) / 1024.
+
+    Dimensions are inferred from the output resolution with a 16:9 basis,
+    matching fal's published per-second estimates (0.3034 USD/s at 720p).
+    """
+    resolution = str(data.get("resolution") or "720p").lower()
+    dims = {
+        "480p": (854, 480),
+        "720p": (1280, 720),
+        "1080p": (1920, 1080),
+        "4k": (3840, 2160),
+    }
+    width, height = dims.get(resolution, (1280, 720))
+    seconds = Decimal(_parse_duration_seconds(data.get("duration")) or 5)
+    return Decimal(max(1, width * height)) * seconds * Decimal("24") / Decimal("1024")
 
 
 def _image_megapixels(data: dict[str, Any]) -> Decimal:

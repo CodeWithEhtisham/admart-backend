@@ -1,6 +1,7 @@
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
+import requests
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework import status
@@ -8,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from content.fal_client import FalSubmission
 from content.mapping import build_fal_input
-from content.models import ImageJob, LibraryAsset, Template, TemplateUseEvent
+from content.models import FavoriteTemplate, ImageJob, LibraryAsset, Template, TemplateUseEvent
 from content.video_catalog import VIDEO_ALLOW_LISTS
 from content.video_mapping import build_video_fal_input
 from projects.models import Project
@@ -109,7 +110,7 @@ class TemplateApiTests(APITestCase):
         )
         self.image_template = Template.objects.create(
             title="Burger Deal Poster",
-            category="ad",
+            category="ads-product",
             format="1:1 image",
             is_video=False,
             preview_url="/template-media/burger-deal.png",
@@ -125,7 +126,7 @@ class TemplateApiTests(APITestCase):
         )
         self.video_template = Template.objects.create(
             title="Launch Reel",
-            category="reel",
+            category="video",
             format="9:16 video",
             is_video=True,
             uses_count=10,
@@ -142,14 +143,14 @@ class TemplateApiTests(APITestCase):
     def test_template_list_is_public_and_filters_server_side(self):
         response = self.client.get(
             "/api/templates",
-            {"category": "ad", "search": "burger", "sort": "trending"},
+            {"category": "ads-product", "search": "burger", "sort": "trending"},
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         item = response.data["items"][0]
         self.assertEqual(item["id"], str(self.image_template.id))
-        self.assertEqual(item["category"], "ad")
+        self.assertEqual(item["category"], "ads-product")
         self.assertEqual(item["isVideo"], False)
         self.assertIn("estimatedCredits", item)
 
@@ -197,9 +198,36 @@ class PricingFormulaTests(APITestCase):
         self.assertEqual(nano["fal_cost_decimal"], Decimal("0.0800"))
         self.assertEqual(nano["credits_decimal"], Decimal("0.1689"))
         self.assertEqual(gpt["fal_cost_decimal"], Decimal("1.0000"))
-        self.assertEqual(gpt["credits_decimal"], Decimal("1.6000"))
+        self.assertEqual(gpt["credits_decimal"], Decimal("1.6709"))
         self.assertEqual(veo["fal_cost_decimal"], Decimal("3.2000"))
-        self.assertEqual(veo["credits_decimal"], Decimal("4.1143"))
+        self.assertEqual(veo["credits_decimal"], Decimal("5.3468"))
+
+    @override_settings(FAL_KEY="")
+    def test_seedance_token_based_pricing(self):
+        """Seedance bills per 1000 tokens; a 5s 720p video is ~108k tokens (~$1.51)."""
+        from content import pricing
+
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+
+        video = pricing.quote_video_job(
+            "textToVideo",
+            "bytedance/seedance-2.0/text-to-video",
+            {"resolution": "720p", "duration": "5s"},
+        )
+        # tokens = 1280*720*5*24/1024 = 108_000; quantity = 108 (thousands)
+        self.assertEqual(video["quantity_decimal"], Decimal("108"))
+        self.assertEqual(video["fal_cost_decimal"], Decimal("1.5120"))
+        # ~2.5264 credits per video (margin-floor markup 1.6709), matching plan math
+        self.assertEqual(video["credits_decimal"], Decimal("2.5264"))
+
+        video_1080 = pricing.quote_video_job(
+            "textToVideo",
+            "bytedance/seedance-2.0/text-to-video",
+            {"resolution": "1080p", "duration": "5s"},
+        )
+        self.assertEqual(video_1080["quantity_decimal"], Decimal("243"))
+        self.assertGreater(video_1080["credits_decimal"], video["credits_decimal"])
 
 
 class FalModelSearchApiTests(APITestCase):
@@ -296,6 +324,124 @@ class FalModelSearchApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("_fal", response.data)
         self.assertIn("textToImage", response.data["_fal"]["discoverable"])
+
+
+class MergedCatalogApiTests(APITestCase):
+    """Curated + live provider discovery merge served by the model catalog endpoints."""
+
+    def setUp(self) -> None:
+        from content import fal_models, pricing
+
+        fal_models._CACHE.clear()
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+        self.user = User.objects.create_user(
+            email="mergedcat@example.com",
+            password="pass12345",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def tearDown(self) -> None:
+        from content import fal_models, pricing
+
+        fal_models._CACHE.clear()
+        pricing._CACHE["prices"] = None
+        pricing._CACHE["expires_at"] = 0
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_image_catalog_merges_discovered_models(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/new-image-model",
+                        "metadata": {
+                            "display_name": "New Image Model",
+                            "category": "text-to-image",
+                            "status": "active",
+                        },
+                    }
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {
+            "fal-ai/new-image-model": {
+                "unit_price": "0.03",
+                "unit": "images",
+                "currency": "USD",
+            }
+        }
+
+        response = self.client.get("/api/images/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        curated = [m for m in response.data["textToImage"] if m.get("source") != "provider"]
+        discovered = [m for m in response.data["textToImage"] if m.get("source") == "provider"]
+        self.assertTrue(curated)
+        self.assertEqual(len(discovered), 1)
+        self.assertEqual(discovered[0]["id"], "fal-ai/new-image-model")
+        self.assertFalse(discovered[0]["enabled"])
+        self.assertEqual(discovered[0]["pricing"]["unitPrice"], "0.03")
+        self.assertIn("admartUnitPrice", discovered[0]["pricing"])
+
+    @override_settings(FAL_KEY="test-fal-key")
+    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.requests.get")
+    def test_video_catalog_merges_discovered_models(self, mock_models, mock_prices):
+        mock_models.return_value = _json_response(
+            {
+                "models": [
+                    {
+                        "endpoint_id": "fal-ai/new-video-model",
+                        "metadata": {
+                            "display_name": "New Video Model",
+                            "category": "text-to-video",
+                            "status": "active",
+                        },
+                    }
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
+        )
+        mock_prices.return_value = {}
+
+        response = self.client.get("/api/videos/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        discovered = [m for m in response.data["textToVideo"] if m.get("source") == "provider"]
+        self.assertEqual(len(discovered), 1)
+        self.assertEqual(discovered[0]["id"], "fal-ai/new-video-model")
+        self.assertFalse(discovered[0]["enabled"])
+        self.assertNotIn("pricing", discovered[0])
+
+    @override_settings(FAL_KEY="")
+    @patch("content.fal_models.requests.get")
+    def test_catalog_falls_back_to_curated_when_provider_unreachable(self, mock_models):
+        mock_models.side_effect = requests.RequestException("network down")
+
+        response = self.client.get("/api/images/models")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("_fal_error", response.data)
+        self.assertTrue(response.data["textToImage"])
+        self.assertFalse(
+            any(m.get("source") == "provider" for m in response.data["textToImage"])
+        )
+
+    def test_discovered_model_ids_are_not_generatable(self):
+        """Allow-lists stay curated; discovery entries must never enable jobs."""
+        from content.catalog import resolve_model
+        from content.video_catalog import resolve_video_model
+
+        with self.assertRaises(ValueError):
+            resolve_model("textToImage", "fal-ai/flux-2-pro")
+        with self.assertRaises(ValueError):
+            resolve_video_model("textToVideo", "bytedance/seedance-2.5/text-to-video")
 
 
 class UrlResolveTests(APITestCase):
@@ -677,4 +823,69 @@ class LibraryApiTests(APITestCase):
         other = User.objects.create_user(email="lib-other@example.com", password="pass12345")
         other_project = Project.objects.create(owner=other, name="Other")
         response = self.client.get(f"/api/projects/{other_project.id}/library")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class TemplateFavoriteTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="fav@example.com", password="pass12345")
+        self.other = User.objects.create_user(email="fav-other@example.com", password="pass12345")
+        self.template = Template.objects.create(
+            title="Favorite Me",
+            category="ads-product",
+            format="1:1 image",
+            is_video=False,
+            template_config={"kind": "image", "prompt": "Test prompt"},
+        )
+        self.list_url = "/api/templates/favorites"
+        self.detail_url = f"/api/templates/{self.template.id}/favorite"
+
+    def test_favorite_requires_auth(self) -> None:
+        self.assertEqual(self.client.post(self.detail_url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.get(self.list_url).status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_add_list_remove_favorite(self) -> None:
+        self.client.force_authenticate(user=self.user)
+
+        added = self.client.post(self.detail_url)
+        self.assertEqual(added.status_code, status.HTTP_200_OK)
+        self.assertTrue(added.data["isFavorite"])
+
+        listed = self.client.get(self.list_url)
+        self.assertEqual(listed.data["count"], 1)
+        self.assertEqual(listed.data["items"][0]["id"], str(self.template.id))
+        self.assertTrue(listed.data["items"][0]["isFavorite"])
+
+        removed = self.client.delete(self.detail_url)
+        self.assertEqual(removed.status_code, status.HTTP_200_OK)
+        self.assertFalse(removed.data["isFavorite"])
+        self.assertEqual(self.client.get(self.list_url).data["count"], 0)
+
+    def test_favorites_are_per_user(self) -> None:
+        self.client.force_authenticate(user=self.other)
+        self.client.post(self.detail_url)
+
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(self.client.get(self.list_url).data["count"], 0)
+
+    def test_template_serializer_exposes_is_favorite(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        self.client.post(self.detail_url)
+        listed = self.client.get("/api/templates")
+        match = [i for i in listed.data["items"] if i["id"] == str(self.template.id)]
+        self.assertTrue(match[0]["isFavorite"])
+
+    def test_favorited_inactive_template_stays_usable(self) -> None:
+        """Favorites outlive gallery refreshes: deactivated favorites remain usable."""
+        self.template.is_active = False
+        self.template.save()
+        FavoriteTemplate.objects.create(user=self.user, template=self.template)
+
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(f"/api/templates/{self.template.id}/use")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Non-favorited users cannot use the deactivated template.
+        self.client.force_authenticate(user=self.other)
+        response = self.client.post(f"/api/templates/{self.template.id}/use")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

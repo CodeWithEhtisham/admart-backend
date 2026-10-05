@@ -57,6 +57,8 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
             "2 social media connections per project",
             "Manual publishing",
             "All templates",
+            "≈47 Nano Banana images per month",
+            "≈3 Seedance videos (5s, 720p) per month",
         ],
         "limits": {
             "max_projects": 2,
@@ -87,6 +89,8 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
             "5 social media connections per project",
             "Scheduled and manual publishing",
             "Email support",
+            "≈207 Nano Banana images per month",
+            "≈13 Seedance videos (5s, 720p) per month",
         ],
         "limits": {
             "max_projects": 4,
@@ -119,6 +123,8 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
             "Team-ready campaign workflow",
             "Priority support",
             "Priority generation queue",
+            "≈710 Nano Banana images per month",
+            "≈47 Seedance videos (5s, 720p) per month",
         ],
         "limits": {
             "max_projects": 10,

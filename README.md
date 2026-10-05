@@ -1,6 +1,6 @@
 # Admart
 
-AI social-media platform: create images and videos via fal.ai, manage a per-project library, connect social accounts, and publish.
+AI social-media platform: create images and videos with the latest AI models, manage a per-project library, connect social accounts, and publish.
 
 This README is the **single project doc** for both repos. The same file lives in:
 
@@ -35,8 +35,8 @@ Django apps: `config`, `users`, `projects`, `content`.
 | Onboarding → create first project | ✅ projects API | ✅ `/onboarding` |
 | Projects CRUD + activate + active project | ✅ | ✅ Project dropdown |
 | Credits balance / costs / history | ✅ | ✅ Billing + sidebar |
-| Image jobs (fal.ai): create, poll, cancel, upload, model catalog | ✅ | ✅ `/image-gen` |
-| Video jobs (fal.ai): create, poll, cancel, frame upload, model catalog | ✅ | ✅ `/video-gen` (also `/create`) |
+| Image jobs: create, poll, cancel, upload, model catalog | ✅ | ✅ `/image-gen` |
+| Video jobs: create, poll, cancel, frame upload, model catalog | ✅ | ✅ `/video-gen` (also `/create`) |
 | Library list/detail + soft-delete + user upload | ✅ | ✅ `/library` (images + videos) |
 | Social accounts list / OAuth connect URL / disconnect / callback | ✅ YouTube (+ Meta stubs) | ✅ `/social` |
 | Analytics from publish jobs | ✅ `GET /api/projects/:id/analytics` | ✅ `/analytics` |

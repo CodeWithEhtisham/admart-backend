@@ -319,19 +319,141 @@ class CreditsApiTests(APITestCase):
         ids = [item["id"] for item in response.data["items"]]
         self.assertEqual(ids, ["basic", "plus", "pro"])
         self.assertEqual(response.data["items"][0]["monthlyCredits"], "8")
-        self.assertFalse(response.data["paymentConnected"])
+        self.assertTrue(response.data["paymentConnected"])
 
-    def test_activate_plan_for_testing(self) -> None:
-        response = self.client.post("/api/credits/plan", {"plan": "plus"}, format="json")
+    def test_payment_methods_requires_auth(self) -> None:
+        self.client.force_authenticate(user=None)
+        self.assertEqual(
+            self.client.get("/api/credits/payments/methods").status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_payment_methods_returns_settings(self) -> None:
+        from admin_panel.models import AdminSetting
+
+        AdminSetting.objects.update_or_create(
+            key="easypaisa_number", defaults={"value": "0300-1234567"}
+        )
+        response = self.client.get("/api/credits/payments/methods")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["plan"], "plus")
-        self.assertEqual(response.data["creditsTotal"], 35)
-        self.assertEqual(response.data["creditsRemaining"], 35)
-        self.assertEqual(response.data["creditsUsed"], 0)
-        self.assertEqual(response.data["planDetails"]["priceUsd"], "29")
+        self.assertEqual(response.data["methods"][0]["id"], "easypaisa")
+        self.assertEqual(response.data["methods"][0]["accountNumber"], "0300-1234567")
 
-        self.user.refresh_from_db()
-        self.assertEqual(self.user.plan, "plus")
+    def _screenshot(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(
+            "proof.png", b"filedata", content_type="image/png"
+        )
+
+    def test_submit_payment_creates_pending(self) -> None:
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "plus", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "pending")
+        self.assertEqual(response.data["plan"], "plus")
+        self.assertEqual(response.data["currency"], "PKR")
+        self.assertEqual(response.data["amount"], 7999)
+
+        from admin_panel.models import Payment
+
+        payment = Payment.objects.get(user=self.user)
+        self.assertEqual(payment.status, "pending")
+        self.assertTrue(payment.screenshot)
+
+    def test_submit_payment_rejects_free_plan(self) -> None:
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "free", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_submit_payment_requires_screenshot(self) -> None:
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "basic"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_submit_payment_rejects_bad_content_type(self) -> None:
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        bad = SimpleUploadedFile("proof.txt", b"data", content_type="text/plain")
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "basic", "screenshot": bad},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_submit_payment_blocked_while_pending(self) -> None:
+        first = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "basic", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        second = self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "plus", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("under review", str(second.data))
+
+    def test_my_payments_lists_own(self) -> None:
+        from admin_panel.models import Payment
+
+        Payment.objects.create(
+            user=self.user, plan="basic", amount=2499, currency="PKR",
+            method="easypaisa", status="pending",
+        )
+        response = self.client.get("/api/credits/payments/mine")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["items"]), 1)
+        self.assertEqual(response.data["items"][0]["status"], "pending")
+        self.assertEqual(response.data["items"][0]["planName"], "Basic")
+
+    def test_topups_list(self) -> None:
+        response = self.client.get("/api/credits/topups")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["items"]), 3)
+        ids = [item["id"] for item in response.data["items"]]
+        self.assertEqual(ids, ["pack_small", "pack_medium", "pack_large"])
+        self.assertEqual(response.data["items"][0]["credits"], "5")
+
+    def test_submit_topup_payment_creates_pending(self) -> None:
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"pack": "pack_medium", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "pending")
+        self.assertEqual(response.data["paymentType"], "topup")
+        self.assertEqual(response.data["pack"], "pack_medium")
+        self.assertEqual(response.data["planName"], "Creator Booster")
+        self.assertEqual(response.data["amount"], 4199)
+
+        from admin_panel.models import Payment
+
+        payment = Payment.objects.get(user=self.user)
+        self.assertEqual(payment.status, "pending")
+        self.assertEqual(payment.payment_type, "topup")
+        self.assertEqual(payment.pack, "pack_medium")
+
+    def test_submit_topup_payment_rejects_invalid_pack(self) -> None:
+        response = self.client.post(
+            "/api/credits/payments/submit",
+            {"pack": "fake_pack", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_unauthenticated(self) -> None:
         self.client.force_authenticate(user=None)

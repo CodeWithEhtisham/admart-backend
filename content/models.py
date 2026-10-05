@@ -228,17 +228,27 @@ class Template(models.Model):
     """Owned prompt/template catalog item shown on the public template page."""
 
     CATEGORY_CHOICES = [
-        ("ad", "Ad"),
-        ("reel", "Reel"),
-        ("carousel", "Carousel"),
-        ("story", "Story"),
-        ("product", "Product"),
-        ("announce", "Announcement"),
+        ("ads-product", "Ads & Product"),
+        ("brand-logo", "Brand & Logo"),
+        ("video", "Video"),
+        ("illustration-3d", "Illustration & 3D"),
+        ("posters-visuals", "Posters & Visuals"),
+        ("portraits", "Portraits"),
+        ("storyboard-characters", "Storyboard & Characters"),
+        ("wallpaper", "Wallpaper"),
     ]
+
+    # Mirrors meigen.ai's site category slugs (the ?category=… URLs) so filters
+    # agree with the gallery we sync from.
+    CATEGORY_SLUGS = {slug for slug, _label in CATEGORY_CHOICES}
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=180)
-    category = models.CharField(max_length=24, choices=CATEGORY_CHOICES)
+    category = models.CharField(
+        max_length=32,
+        choices=CATEGORY_CHOICES,
+        help_text="Gallery section this template belongs to (meigen category slugs).",
+    )
     format = models.CharField(max_length=40)
     is_video = models.BooleanField(default=False)
     preview_url = models.CharField(max_length=2000, blank=True, default="")
@@ -288,3 +298,37 @@ class TemplateUseEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.template_id} used at {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class FavoriteTemplate(models.Model):
+    """A user's saved (favorited) template.
+
+    Favorites intentionally outlive template refreshes: when the meigen
+    gallery refresh deactivates a template, favorited rows keep working so
+    users never lose access to templates they saved.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="favorite_templates",
+    )
+    template = models.ForeignKey(
+        Template,
+        on_delete=models.CASCADE,
+        related_name="favorited_by",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "template"], name="unique_user_template_favorite"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} ♥ {self.template_id}"
