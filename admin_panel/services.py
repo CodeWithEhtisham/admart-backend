@@ -22,7 +22,7 @@ PAID_PLANS = ("basic", "plus", "pro")
 ZERO = Decimal("0")
 
 DEFAULT_SETTINGS = {
-    "default_free_credits": "50",
+    "default_free_credits": "0",
     "maintenance_banner": "",
     "easypaisa_number": "03XX-XXXXXXX",
     "easypaisa_name": "Admart Support",
@@ -39,6 +39,52 @@ def all_settings() -> dict:
 
 def get_setting(key: str, default: str | None = None):
     return all_settings().get(key, default)
+
+
+def free_signup_credits() -> Decimal:
+    """Credits granted to a new Free-plan account (admin-editable setting)."""
+    return Decimal(get_setting("default_free_credits", "0"))
+
+
+def expire_subscription_if_due(user):
+    """Downgrade a lapsed paid user to Free and forfeit unused plan credits.
+
+    Runs on every authenticated request; the fast path is a field comparison.
+    Top-up credits (``topup_credits``) are kept; everything else is forfeited.
+    """
+    if user.plan == "free" or not user.credits_reset_at or user.credits_reset_at > timezone.now():
+        return user
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=user.pk)
+        if user.plan == "free" or not user.credits_reset_at or user.credits_reset_at > timezone.now():
+            return user
+        plan = get_plan(user.plan)
+        forfeit = max(ZERO, user.credits_remaining - user.topup_credits)
+        user.plan = "free"
+        user.credits_remaining -= forfeit
+        user.credits_total -= forfeit
+        user.credits_reset_at = None
+        user.save(
+            update_fields=["plan", "credits_remaining", "credits_total", "credits_reset_at", "updated_at"]
+        )
+        Subscription.objects.filter(user=user, status__in=["active", "trialing"]).update(
+            status="expired", updated_at=timezone.now()
+        )
+        CreditAdjustment.objects.create(
+            user=user,
+            amount=-forfeit,
+            reason="plan_change",
+            notes=f"{plan['name']} subscription expired; unused plan credits forfeited",
+        )
+    return user
+
+
+def _sum_by_currency(payments) -> dict:
+    """Paid amounts per currency, e.g. {"PKR": 7999.0, "USD": 9.0}; never mixed."""
+    return {
+        currency: float(total)
+        for currency, total in payments.values_list("currency").annotate(total=Sum("amount"))
+    }
 
 
 def _days_ago(days: int):
@@ -120,7 +166,6 @@ def build_stats() -> dict:
             mrr_pkr += plan.get("price_pkr", 0)
 
     payments_month = Payment.objects.filter(status="paid", created_at__gte=since_active)
-    revenue_month = payments_month.aggregate(total=Sum("amount"))["total"] or 0
     failed_payments = Payment.objects.filter(
         created_at__gte=since_active, status__in=["failed", "pending"]
     ).count()
@@ -156,7 +201,7 @@ def build_stats() -> dict:
         "revenue": {
             "mrrUsd": float(mrr_usd),
             "mrrPkr": mrr_pkr,
-            "revenueThisMonthUsd": float(revenue_month),
+            "revenueThisMonth": _sum_by_currency(payments_month),
             "paymentsThisMonth": payments_month.count(),
             "failedPayments": failed_payments,
         },
@@ -164,8 +209,11 @@ def build_stats() -> dict:
             "signups": _bucketed_daily(
                 ((dt, 1) for dt in users.filter(created_at__gte=since_chart).values_list("created_at", flat=True))
             ),
+            # ponytail: chart is PKR-only (EasyPaisa); per-currency series if USD sales grow
             "revenue": _bucketed_daily(
-                Payment.objects.filter(status="paid", created_at__gte=since_chart).values_list(
+                Payment.objects.filter(
+                    status="paid", currency="PKR", created_at__gte=since_chart
+                ).values_list(
                     "created_at", "amount"
                 )
             ),
@@ -371,15 +419,16 @@ def build_revenue() -> dict:
     by_method = dict(payments.values_list("method").annotate(c=Count("id")))
 
     plan_revenue = (
-        payments.filter(status="paid")
-        .values_list("user__plan")
+        payments.filter(status="paid", payment_type="subscription")
+        .exclude(plan="")
+        .values_list("plan", "currency")
         .annotate(total=Sum("amount"))
     )
-    per_plan = [
-        {"plan": plan_id, "totalUsd": float(total), "count": 0}
-        for plan_id, total in plan_revenue
-    ]
-    per_plan_by_key = {item["plan"]: item for item in per_plan}
+    per_plan_by_key = {}
+    for plan_id, currency, total in plan_revenue:
+        item = per_plan_by_key.setdefault(plan_id, {"plan": plan_id, "totals": {}, "count": 0})
+        item["totals"][currency] = float(total)
+    per_plan = list(per_plan_by_key.values())
 
     active_subs = Subscription.objects.filter(status="active").values_list("plan")
     sub_counts = {}
@@ -389,15 +438,10 @@ def build_revenue() -> dict:
         if plan_id in per_plan_by_key:
             per_plan_by_key[plan_id]["count"] = sub_counts[plan_id]
 
-    total_revenue = payments.filter(status="paid").aggregate(total=Sum("amount"))["total"] or 0
-    month_revenue = (
-        payments.filter(status="paid", created_at__gte=since_active).aggregate(total=Sum("amount"))["total"]
-        or 0
-    )
 
     return {
-        "totalRevenueUsd": float(total_revenue),
-        "thisMonthUsd": float(month_revenue),
+        "totalRevenue": _sum_by_currency(payments.filter(status="paid")),
+        "thisMonth": _sum_by_currency(payments.filter(status="paid", created_at__gte=since_active)),
         "byStatus": by_status,
         "byMethod": by_method,
         "byPlan": per_plan,
@@ -410,7 +454,8 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
     """Approve or reject a pending manual payment.
 
     Approve: marks paid, upgrades the user's plan, adds the plan's monthly
-    credits on top of the current balance, extends the subscription 30 days,
+    credits on top of the current balance, extends the subscription 30 days
+    (from the current period end when renewing the same active plan),
     and writes an audited CreditAdjustment. Reject: marks failed and stores
     the reason for the client; no credit/plan changes.
 
@@ -457,10 +502,12 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
         payment.status = "paid"
         user.credits_total += added_credits
         user.credits_remaining += added_credits
+        user.topup_credits += added_credits
         user.save(
             update_fields=[
                 "credits_total",
                 "credits_remaining",
+                "topup_credits",
                 "updated_at",
             ]
         )
@@ -482,11 +529,17 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
     monthly_credits = plan["monthly_credits"]
     user = payment.user
 
+    # Renewing the same active plan extends from the current end (no lost days);
+    # a new or switched plan starts now. Credits stack: leftovers stay until expiry.
+    now = timezone.now()
+    renewing = user.plan == plan["id"] and user.credits_reset_at and user.credits_reset_at > now
+    period_end = (user.credits_reset_at if renewing else now) + timedelta(days=30)
+
     payment.status = "paid"
     user.plan = plan["id"]
     user.credits_total += monthly_credits
     user.credits_remaining += monthly_credits
-    user.credits_reset_at = timezone.now() + timedelta(days=30)
+    user.credits_reset_at = period_end
     user.save(
         update_fields=[
             "plan",
@@ -504,13 +557,13 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
             plan=plan["id"],
             status="active",
             auto_renew=True,
-            current_period_end=timezone.now() + timedelta(days=30),
+            current_period_end=period_end,
         )
     else:
         sub.plan = plan["id"]
         sub.status = "active"
         sub.auto_renew = True
-        sub.current_period_end = timezone.now() + timedelta(days=30)
+        sub.current_period_end = period_end
         sub.save(update_fields=["plan", "status", "auto_renew", "current_period_end", "updated_at"])
 
     CreditAdjustment.objects.create(

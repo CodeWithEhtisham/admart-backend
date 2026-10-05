@@ -140,13 +140,6 @@ PLAN_TIERS: dict[str, dict[str, Any]] = {
     },
 }
 
-PUBLIC_PLAN_IDS = tuple(
-    plan_id
-    for plan_id, plan in sorted(PLAN_TIERS.items(), key=lambda item: item[1]["sort"])
-    if plan.get("public")
-)
-
-
 def _load_db_plans() -> dict[str, dict[str, Any]] | None:
     """Try to load plans from the database. Returns None if table doesn't exist yet."""
     try:

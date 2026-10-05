@@ -18,6 +18,7 @@ from projects.models import PublishJob, SocialAccount
 from projects.publish import PUBLISHERS, PublishUnavailable, list_facebook_pages, list_youtube_playlists
 from projects.serializers import PublishJobSerializer
 from projects.views import ProjectScopedSocialMixin
+from users.plans import get_plan
 from projects.youtube_suggest import (
     YoutubeSuggestConfigError,
     YoutubeSuggestProviderError,
@@ -109,6 +110,21 @@ def _parse_scheduled_at(raw) -> datetime | None:
 NATIVE_SCHEDULE = frozenset({"youtube", "facebook"})
 
 
+def _plan_feature_locked(user, flag: str, label: str) -> Response | None:
+    """403 response when the user's plan lacks a boolean ``limits`` flag."""
+    plan = get_plan(user.plan)
+    if plan.get("limits", {}).get(flag):
+        return None
+    return Response(
+        {
+            "message": f"{label} is not included in your {plan['name']} plan. Upgrade to use it.",
+            "code": "PLAN_FEATURE_LOCKED",
+            "feature": flag,
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
 class ProjectPublishView(ProjectScopedSocialMixin, APIView):
     """POST /api/projects/:id/publish — post a generated asset to connected accounts."""
 
@@ -147,6 +163,10 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
         action = (request.data.get("action") or "publish").strip().lower()
         if action not in ("publish", "draft", "schedule"):
             return Response({"message": "action must be publish, draft, or schedule."}, status=status.HTTP_400_BAD_REQUEST)
+        if action == "schedule":
+            locked = _plan_feature_locked(request.user, "can_schedule_publishing", "Scheduled publishing")
+            if locked:
+                return locked
         scheduled_at = _parse_scheduled_at(request.data.get("scheduledAt"))
         if action == "schedule":
             if scheduled_at is None:
@@ -289,6 +309,9 @@ class ProjectAnalyticsView(ProjectScopedSocialMixin, APIView):
 
     def get(self, request: Request, project_id: str, *args, **kwargs) -> Response:
         project = self.get_project(request, project_id)
+        locked = _plan_feature_locked(request.user, "has_analytics", "Analytics")
+        if locked:
+            return locked
         payload = build_project_analytics(
             project,
             range_key=(request.query_params.get("range") or "30d").strip(),

@@ -27,7 +27,7 @@ from admin_panel.services import (
     build_revenue,
     build_stats,
     build_usage,
-    get_setting,
+    free_signup_credits,
     review_payment,
 )
 from users.authentication import CombinedJWTAuthentication
@@ -239,7 +239,7 @@ class AdminUserListView(AdminAPIView):
         plan_id = (data.get("plan") or "free").lower()
         plan = get_plan(plan_id)
         monthly_credits = (
-            Decimal(get_setting("default_free_credits", "50"))
+            free_signup_credits()
             if plan["id"] == "free"
             else plan["monthly_credits"]
         )
@@ -334,6 +334,7 @@ class AdminUserPlanView(AdminAPIView):
             user.credits_total = plan["monthly_credits"]
             user.credits_used = 0
             user.credits_remaining = plan["monthly_credits"]
+            user.topup_credits = 0
             user.credits_reset_at = timezone.now() + timedelta(days=30)
         elif credits_mode == "topup":
             try:
@@ -348,7 +349,7 @@ class AdminUserPlanView(AdminAPIView):
         user.save(
             update_fields=[
                 "plan", "credits_total", "credits_used", "credits_remaining",
-                "credits_reset_at", "updated_at",
+                "topup_credits", "credits_reset_at", "updated_at",
             ]
         )
 
@@ -399,7 +400,8 @@ class AdminUserCreditsView(AdminAPIView):
 
         user.credits_total = max(0, user.credits_total + amount)
         user.credits_remaining = max(0, user.credits_remaining + amount)
-        user.save(update_fields=["credits_total", "credits_remaining", "updated_at"])
+        user.topup_credits = min(user.topup_credits, user.credits_remaining)
+        user.save(update_fields=["credits_total", "credits_remaining", "topup_credits", "updated_at"])
         CreditAdjustment.objects.create(
             user=user, performed_by=request.user, amount=amount, reason=reason, notes=notes
         )
@@ -513,7 +515,7 @@ class AdminSettingsView(AdminAPIView):
     def _payload(self) -> dict:
         values = all_settings()
         return {
-            "defaultFreeCredits": values.get("default_free_credits", "50"),
+            "defaultFreeCredits": values.get("default_free_credits", "0"),
             "maintenanceBanner": values.get("maintenance_banner", ""),
             "easypaisaNumber": values.get("easypaisa_number", ""),
             "easypaisaName": values.get("easypaisa_name", ""),

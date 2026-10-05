@@ -88,7 +88,7 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=8, default="USD")
     method = models.CharField(max_length=20, choices=METHOD_CHOICES, default="manual")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="paid")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     provider_ref = models.CharField(max_length=128, blank=True, default="")
     screenshot = models.FileField(
         upload_to="payments/screenshots/%Y/%m/", null=True, blank=True

@@ -9,6 +9,8 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.authentication import JWTAuthentication as SimpleJWTAuthentication
 
+from admin_panel.services import expire_subscription_if_due, free_signup_credits
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -136,8 +138,8 @@ class ClerkJWTAuthentication(BaseAuthentication):
                     last_name=last_name,
                     avatar_url=avatar_url,
                     plan="free",
-                    credits_total=50,
-                    credits_remaining=50,
+                    credits_total=free_signup_credits(),
+                    credits_remaining=free_signup_credits(),
                 )
 
         return (user, raw_token)
@@ -150,13 +152,14 @@ class CombinedJWTAuthentication(BaseAuthentication):
         return 'Bearer realm="api"'
 
     def authenticate(self, request):
-        simple_jwt_auth = SimpleJWTAuthentication()
+        res = None
         try:
-            res = simple_jwt_auth.authenticate(request)
-            if res is not None:
-                return res
+            res = SimpleJWTAuthentication().authenticate(request)
         except Exception:
             pass
-
-        clerk_auth = ClerkJWTAuthentication()
-        return clerk_auth.authenticate(request)
+        if res is None:
+            res = ClerkJWTAuthentication().authenticate(request)
+        if res is None:
+            return None
+        user, token = res
+        return (expire_subscription_if_due(user), token)

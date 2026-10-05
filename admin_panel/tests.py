@@ -381,7 +381,7 @@ class AdminStatsTests(APITestCase):
         self.assertEqual(data["jobs"]["combined"]["total"], 1)
         self.assertEqual(data["jobs"]["combined"]["successRate"], 100)
         self.assertEqual(float(data["revenue"]["mrrUsd"]), 79.0)
-        self.assertEqual(float(data["revenue"]["revenueThisMonthUsd"]), 79.0)
+        self.assertEqual(data["revenue"]["revenueThisMonth"], {"USD": 79.0})
         self.assertEqual(len(data["charts"]["signups"]), 30)
         self.assertEqual(data["charts"]["signups"][-1]["value"], 2)  # staff + customer today
 
@@ -395,8 +395,23 @@ class AdminStatsTests(APITestCase):
     def test_revenue_summary(self) -> None:
         response = self.client.get(reverse("admin_revenue"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(float(response.data["totalRevenueUsd"]), 79.0)
+        self.assertEqual(response.data["totalRevenue"], {"USD": 79.0})
         self.assertEqual(response.data["subscriptionCounts"].get("pro"), 1)
+
+    def test_revenue_split_by_currency_and_paid_plan(self) -> None:
+        # Customer is now on Pro, but this payment bought Basic; top-ups aren't plan revenue.
+        Payment.objects.create(
+            user=self.customer, payment_type="subscription", plan="basic",
+            amount=2499, currency="PKR", status="paid",
+        )
+        Payment.objects.create(
+            user=self.customer, payment_type="topup", pack="pack_small",
+            amount=1699, currency="PKR", status="paid",
+        )
+        data = self.client.get(reverse("admin_revenue")).data
+        self.assertEqual(data["totalRevenue"], {"USD": 79.0, "PKR": 4198.0})
+        by_plan = {item["plan"]: item["totals"] for item in data["byPlan"]}
+        self.assertEqual(by_plan, {"basic": {"PKR": 2499.0}})
 
     def test_plans_endpoint(self) -> None:
         response = self.client.get(reverse("admin_plans"))
@@ -422,7 +437,7 @@ class AdminSettingsTests(APITestCase):
         self.client.force_authenticate(user=self.staff)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["defaultFreeCredits"], "50")
+        self.assertEqual(response.data["defaultFreeCredits"], "0")
         self.assertIn("youtube", response.data["platforms"])
         self.assertIn("tiktok", response.data["platforms"])
 
@@ -464,3 +479,121 @@ class AdminSettingsTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         user = User.objects.get(email="free@example.com")
         self.assertEqual(float(user.credits_remaining), 75.0)
+
+
+class SubscriptionExpiryTests(APITestCase):
+    def _user(self, *, reset_in_days: int, remaining: str):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        user = User.objects.create_user(
+            email=f"exp{reset_in_days}{remaining}@example.com",
+            password="Password123!",
+            plan="plus",
+            credits_total=Decimal(remaining) + 5,
+            credits_used=5,
+            credits_remaining=Decimal(remaining),
+            credits_reset_at=timezone.now() + timedelta(days=reset_in_days),
+            topup_credits=min(Decimal("5"), Decimal(remaining)),
+        )
+        Subscription.objects.create(user=user, plan="plus", status="active")
+        return user
+
+    def _get_balance(self, user):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        token = RefreshToken.for_user(user).access_token
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        return self.client.get("/api/credits")
+
+    def test_lapsed_plan_downgrades_and_keeps_topup_credits(self) -> None:
+        # 5 of the 40 remaining came from a top-up.
+        user = self._get_balance(self._user(reset_in_days=-1, remaining="40")).wsgi_request.user
+        user.refresh_from_db()
+        self.assertEqual(user.plan, "free")
+        self.assertEqual(user.credits_remaining, 5)
+        self.assertEqual(user.credits_total, 10)
+        self.assertIsNone(user.credits_reset_at)
+        self.assertTrue(Subscription.objects.filter(user=user, status="expired").exists())
+        adj = CreditAdjustment.objects.get(user=user, reason="plan_change")
+        self.assertEqual(adj.amount, -35)
+
+    def test_lapsed_plan_never_goes_negative(self) -> None:
+        user = self._user(reset_in_days=-1, remaining="3")
+        User.objects.filter(pk=user.pk).update(topup_credits=0)
+        self._get_balance(user)
+        user.refresh_from_db()
+        self.assertEqual(user.plan, "free")
+        self.assertEqual(user.credits_remaining, 0)
+
+    def test_active_plan_untouched(self) -> None:
+        user = self._user(reset_in_days=5, remaining="40")
+        response = self._get_balance(user)
+        self.assertEqual(response.data["plan"], "plus")
+        self.assertEqual(response.data["creditsRemaining"], 40)
+
+
+class RenewalAndTopupTrackingTests(APITestCase):
+    def setUp(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.admin = User.objects.create_superuser(email="boss@example.com", password="Password123!")
+        self.end = timezone.now() + timedelta(days=10)
+        self.user = User.objects.create_user(
+            email="renew@example.com", password="Password123!", plan="plus",
+            credits_total=20, credits_remaining=20, credits_reset_at=self.end,
+        )
+
+    def _approve(self, **payment):
+        from admin_panel.services import review_payment
+
+        p = Payment.objects.create(user=self.user, amount=1, status="pending", **payment)
+        review_payment(p.pk, "approve", self.admin)
+        self.user.refresh_from_db()
+
+    def test_same_plan_renewal_extends_from_current_end(self) -> None:
+        from datetime import timedelta
+
+        self._approve(plan="plus")
+        self.assertEqual(self.user.credits_reset_at, self.end + timedelta(days=30))
+        self.assertEqual(self.user.credits_remaining, 55)
+        sub = Subscription.objects.get(user=self.user)
+        self.assertEqual(sub.current_period_end, self.end + timedelta(days=30))
+
+    def test_plan_switch_starts_new_period_now(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self._approve(plan="pro")
+        self.assertEqual(self.user.plan, "pro")
+        self.assertLess(self.user.credits_reset_at - timezone.now(), timedelta(days=30, seconds=5))
+        self.assertEqual(self.user.credits_remaining, 140)
+
+    def test_topups_survive_spending_plan_credits_first(self) -> None:
+        from content.credits import reserve_credits
+
+        self._approve(payment_type="topup", pack="pack_small")  # +5 top-up -> 25
+        self.assertEqual(self.user.topup_credits, 5)
+        reserve_credits(self.user, "18")  # 7 left: plan credits spent first
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.topup_credits, 5)
+        reserve_credits(self.user, "4")  # 3 left: now eating top-ups
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.topup_credits, 3)
+
+    def test_new_payments_default_to_pending(self) -> None:
+        p = Payment.objects.create(user=self.user, amount=1)
+        self.assertEqual(p.status, "pending")
+
+
+class SeededPlansMatchCodeTests(APITestCase):
+    def test_migrated_plan_features_match_plan_tiers(self) -> None:
+        from admin_panel.models import PlanDefinition
+        from users.plans import PLAN_TIERS
+
+        for plan in PlanDefinition.objects.all():
+            self.assertEqual(plan.features, PLAN_TIERS[plan.plan_id]["features"], plan.plan_id)

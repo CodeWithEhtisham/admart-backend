@@ -47,7 +47,9 @@ def reserve_credits(user, amount: Decimal | int | float | str) -> None:
     # Reserve by debiting immediately; refund on failure.
     user.credits_remaining -= amount
     user.credits_used += amount
-    user.save(update_fields=["credits_remaining", "credits_used"])
+    # Plan credits are spent first; top-ups only shrink once the rest is gone.
+    user.topup_credits = min(user.topup_credits, user.credits_remaining)
+    user.save(update_fields=["credits_remaining", "credits_used", "topup_credits"])
 
 
 @transaction.atomic

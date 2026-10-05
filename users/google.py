@@ -11,6 +11,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from jwt import PyJWKClient
 
+from admin_panel.services import free_signup_credits
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -194,8 +196,8 @@ def create_google_user(claims: dict):
         google_id=claims["sub"],
         email_verified=True,
         plan="free",
-        credits_total=50,
-        credits_remaining=50,
+        credits_total=free_signup_credits(),
+        credits_remaining=free_signup_credits(),
     )
 
 

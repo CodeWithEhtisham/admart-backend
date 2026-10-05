@@ -49,7 +49,7 @@ class UserAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["email"], self.user_data["email"])
         self.assertEqual(response.data["user"]["firstName"], self.user_data["firstName"])
         self.assertEqual(response.data["user"]["plan"], "free")
-        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
 
     def test_user_registration_allows_blank_names(self) -> None:
         """Registration does not require first/last name fields."""
@@ -349,7 +349,7 @@ class CreditsApiTests(APITestCase):
     def test_submit_payment_creates_pending(self) -> None:
         response = self.client.post(
             "/api/credits/payments/submit",
-            {"plan": "plus", "screenshot": self._screenshot()},
+            {"plan": "plus", "screenshot": self._screenshot(), "transactionId": "EP-1"},
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -363,6 +363,28 @@ class CreditsApiTests(APITestCase):
         payment = Payment.objects.get(user=self.user)
         self.assertEqual(payment.status, "pending")
         self.assertTrue(payment.screenshot)
+
+    def test_submit_payment_requires_transaction_id(self) -> None:
+        response = self.client.post(
+            reverse("credits_payment_submit"),
+            {"plan": "plus", "screenshot": self._screenshot()},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("transactionId", response.data)
+
+    def test_submit_payment_rejects_reused_transaction_id(self) -> None:
+        from admin_panel.models import Payment
+
+        other = User.objects.create_user(email="other@example.com", password="Password123!")
+        Payment.objects.create(user=other, amount=1, status="paid", provider_ref="EP-DUP")
+        response = self.client.post(
+            reverse("credits_payment_submit"),
+            {"plan": "plus", "screenshot": self._screenshot(), "transactionId": "ep-dup"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("transactionId", response.data)
 
     def test_submit_payment_rejects_free_plan(self) -> None:
         response = self.client.post(
@@ -394,13 +416,13 @@ class CreditsApiTests(APITestCase):
     def test_submit_payment_blocked_while_pending(self) -> None:
         first = self.client.post(
             "/api/credits/payments/submit",
-            {"plan": "basic", "screenshot": self._screenshot()},
+            {"plan": "basic", "screenshot": self._screenshot(), "transactionId": "EP-2"},
             format="multipart",
         )
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
         second = self.client.post(
             "/api/credits/payments/submit",
-            {"plan": "plus", "screenshot": self._screenshot()},
+            {"plan": "plus", "screenshot": self._screenshot(), "transactionId": "EP-3"},
             format="multipart",
         )
         self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
@@ -430,7 +452,7 @@ class CreditsApiTests(APITestCase):
     def test_submit_topup_payment_creates_pending(self) -> None:
         response = self.client.post(
             "/api/credits/payments/submit",
-            {"pack": "pack_medium", "screenshot": self._screenshot()},
+            {"pack": "pack_medium", "screenshot": self._screenshot(), "transactionId": "EP-4"},
             format="multipart",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -490,7 +512,7 @@ class ClerkAuthenticationTests(APITestCase):
                 self.assertIsNotNone(user)
                 self.assertEqual(user.email, "clerk_test@example.com")
                 self.assertEqual(user.google_id, "user_2test123456789")
-                self.assertEqual(user.credits_remaining, 50)
+                self.assertEqual(user.credits_remaining, 0)
                 self.assertEqual(token, "fake.clerk.jwt.token")
 
     def test_clerk_auth_returns_existing_user(self) -> None:
@@ -592,7 +614,7 @@ class GoogleAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["lastName"], "Lovelace")
         self.assertEqual(response.data["user"]["googleId"], "google-sub-123")
         self.assertTrue(response.data["user"]["emailVerified"])
-        self.assertEqual(response.data["user"]["creditsRemaining"], 50)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
         mock_ex.assert_called_once_with(
             "4/0AX4XfWh-test-code", "http://localhost:5173/auth-callback"
         )
@@ -683,3 +705,28 @@ class GoogleAuthTests(APITestCase):
         mock_ex.assert_not_called()
         self.assertEqual(response.data["user"]["email"], "ada@example.com")
 
+
+
+class PublicPlansFromDatabaseTests(APITestCase):
+    def setUp(self) -> None:
+        from admin_panel.models import PlanDefinition
+
+        # Plans are seeded by migration; the admin hides everything except Plus.
+        PlanDefinition.objects.exclude(plan_id="plus").update(is_public=False)
+        PlanDefinition.objects.filter(plan_id="plus").update(is_public=True)
+        self.user = User.objects.create_user(email="dbplans@example.com", password="Password123!")
+        self.client.force_authenticate(user=self.user)
+
+    def test_plans_endpoint_follows_database(self) -> None:
+        response = self.client.get("/api/credits/plans")
+        self.assertEqual([p["id"] for p in response.data["items"]], ["plus"])
+
+    def test_hidden_plan_cannot_be_purchased(self) -> None:
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        shot = SimpleUploadedFile("proof.png", b"\x89PNG\r\n", content_type="image/png")
+        response = self.client.post(
+            "/api/credits/payments/submit", {"plan": "basic", "screenshot": shot}, format="multipart"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("plan", response.data)

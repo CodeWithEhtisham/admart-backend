@@ -70,6 +70,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     credits_remaining = models.DecimalField(max_digits=10, decimal_places=4, default=50)
     credits_reset_at = models.DateTimeField(null=True, blank=True)
+    # Part of credits_remaining bought as top-ups; survives plan expiry. Plan credits are spent first.
+    topup_credits = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     onboarding_completed = models.BooleanField(default=False)
 
     # Explicit pointer to the user's currently selected project. Nulled when the

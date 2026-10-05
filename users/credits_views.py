@@ -32,7 +32,7 @@ from content.video_catalog import (
     VIDEO_MODEL_CATALOG,
     resolve_video_model,
 )
-from users.plans import PUBLIC_PLAN_IDS, get_plan, serialize_plan
+from users.plans import get_plan, get_public_plan_ids, serialize_plan
 from users.serializers import PaymentSubmitSerializer
 
 
@@ -71,7 +71,7 @@ class CreditsPlansView(APIView):
             {
                 "currency": "USD",
                 "localCurrency": "PKR",
-                "items": [serialize_plan(plan_id) for plan_id in PUBLIC_PLAN_IDS],
+                "items": [serialize_plan(plan_id) for plan_id in get_public_plan_ids()],
                 "paymentConnected": True,
             }
         )

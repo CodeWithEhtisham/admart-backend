@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from admin_panel.services import free_signup_credits
 from users.plans import serialize_plan
 
 User = get_user_model()
@@ -121,8 +122,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             first_name=validated_data.get("first_name", ""),
             last_name=validated_data.get("last_name", ""),
             plan="free",
-            credits_total=50,
-            credits_remaining=50,
+            credits_total=free_signup_credits(),
+            credits_remaining=free_signup_credits(),
         )
         return user
 
@@ -232,6 +233,7 @@ class PaymentSubmitSerializer(serializers.Serializer):
     PACK_ERROR = "Choose a valid top-up pack."
     SCREENSHOT_ERROR = "Screenshot must be a jpeg, png, or webp image up to 15 MB."
     PENDING_ERROR = "You already have a payment under review."
+    DUPLICATE_TXN_ERROR = "This transaction ID has already been submitted."
 
     paymentType = serializers.ChoiceField(
         choices=["subscription", "topup"], required=False, default="subscription"
@@ -239,18 +241,16 @@ class PaymentSubmitSerializer(serializers.Serializer):
     plan = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     pack = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     screenshot = serializers.FileField(required=True)
-    transactionId = serializers.CharField(
-        required=False, allow_blank=True, default="", max_length=128
-    )
+    transactionId = serializers.CharField(required=True, allow_blank=False, max_length=128)
     note = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
 
     def validate_plan(self, value: str | None) -> str:
         if not value:
             return ""
-        from users.plans import PUBLIC_PLAN_IDS
+        from users.plans import get_public_plan_ids
 
         plan_id = str(value).lower()
-        if plan_id not in PUBLIC_PLAN_IDS or plan_id == "free":
+        if plan_id not in get_public_plan_ids() or plan_id == "free":
             raise serializers.ValidationError(self.PLAN_ERROR)
         return plan_id
 
@@ -263,6 +263,15 @@ class PaymentSubmitSerializer(serializers.Serializer):
         if not get_topup_pack(pack_id):
             raise serializers.ValidationError(self.PACK_ERROR)
         return pack_id
+
+    def validate_transactionId(self, value: str) -> str:
+        from admin_panel.models import Payment
+
+        if Payment.objects.filter(
+            provider_ref__iexact=value, status__in=["pending", "paid"]
+        ).exists():
+            raise serializers.ValidationError(self.DUPLICATE_TXN_ERROR)
+        return value
 
     def validate_screenshot(self, value):
         allowed = {"image/jpeg", "image/png", "image/webp"}

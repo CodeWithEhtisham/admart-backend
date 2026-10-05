@@ -754,11 +754,23 @@ def _youtube_ok(*_args, **_kwargs):
 class OrganicPublishTests(APITestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(
-            email="pub@example.com", password="Password123!", first_name="P", last_name="U"
+            email="pub@example.com", password="Password123!", first_name="P", last_name="U", plan="plus"
         )
         self.client.force_authenticate(user=self.user)
         self.project = Project.objects.create(owner=self.user, name="Brand")
         self.url = reverse("project_publish", kwargs={"project_id": self.project.id})
+
+    def test_schedule_requires_plan_feature(self) -> None:
+        self.user.plan = "basic"
+        self.user.save(update_fields=["plan"])
+        response = self.client.post(
+            self.url,
+            {"kind": "video", "platforms": ["youtube"], "sourceUrl": "https://example.com/v.mp4",
+             "action": "schedule", "scheduledAt": "2999-01-01T00:00:00Z"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["code"], "PLAN_FEATURE_LOCKED")
 
     def test_image_youtube_returns_400(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
@@ -1505,11 +1517,18 @@ class AdsAccountTests(APITestCase):
 class ProjectAnalyticsTests(APITestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(
-            email="an@example.com", password="Password123!", first_name="A", last_name="N"
+            email="an@example.com", password="Password123!", first_name="A", last_name="N", plan="pro"
         )
         self.client.force_authenticate(user=self.user)
         self.project = Project.objects.create(owner=self.user, name="Brand")
         self.url = reverse("project_analytics", kwargs={"project_id": self.project.id})
+
+    def test_plan_without_analytics_is_forbidden(self) -> None:
+        self.user.plan = "plus"
+        self.user.save(update_fields=["plan"])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["code"], "PLAN_FEATURE_LOCKED")
 
     def test_empty_project_zeros(self) -> None:
         response = self.client.get(self.url)
