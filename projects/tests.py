@@ -1682,6 +1682,13 @@ class ProjectCalendarTests(APITestCase):
         response = self.client.get(self.url, {"year": 2026, "month": 9})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["events"], [])
+        self.assertEqual(response.data["connectedPlatforms"], [])
+
+    def test_connected_platforms_only_organic(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=False)
+        response = self.client.get(self.url, {"year": 2026, "month": 9})
+        self.assertEqual(response.data["connectedPlatforms"], ["youtube"])
 
     def test_scheduled_publish_and_generating_video(self) -> None:
         from datetime import timedelta
