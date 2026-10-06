@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",  # logout + rotation revoke refresh tokens
     "drf_spectacular",
     # Local apps
     "users.apps.UsersConfig",
@@ -109,6 +110,21 @@ DATABASES = {
 }
 
 
+# Email (password reset). Local DEBUG prints emails to the console; production
+# needs real SMTP credentials (any provider: SES, Postmark, Mailgun, Gmail SMTP...).
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+EMAIL_TIMEOUT = 20
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Admart <no-reply@localhost>")
+PASSWORD_RESET_TIMEOUT = 3600  # reset links expire after one hour
+
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
@@ -148,6 +164,8 @@ STATIC_URL = "static/"
 # Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+# Never served by the web server (payment proofs); keep it outside MEDIA_ROOT.
+PRIVATE_MEDIA_ROOT = Path(os.getenv("PRIVATE_MEDIA_ROOT", BASE_DIR / "private_media"))
 # Allow library video uploads up to ~200 MB (view enforces per-type limits).
 DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
@@ -183,8 +201,10 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": False,
-    "BLACKLIST_AFTER_ROTATION": False,
+    # Each refresh returns a new refresh token and revokes the old one, so a stolen
+    # refresh token stops working as soon as the real user refreshes (or logs out).
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",
     "SIGNING_KEY": SECRET_KEY,
@@ -207,6 +227,22 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# Origins allowed to POST forms with the session cookie (Django admin + dashboard).
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+
+# HTTPS hardening (production runs behind nginx terminating TLS).
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
+    # nginx already redirects http->https; enable here too if it doesn't.
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("true", "1", "yes")
+    # Start short; raise to 31536000 once HTTPS is confirmed working everywhere.
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "86400"))
 
 # Frontend base URL (where OAuth callbacks redirect back to).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -294,9 +330,16 @@ GOOGLE_ADS_OAUTH_REDIRECT_URI = os.getenv(
 )
 GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
 
-# Fernet key for encrypting social OAuth tokens at rest. If unset, a stable key is
-# derived from SECRET_KEY (fine for dev; set an explicit key in production).
+# Fernet key(s) for encrypting social OAuth tokens at rest. Comma-separated to rotate:
+# the first key encrypts, every listed key can decrypt. Required in production so
+# changing SECRET_KEY can't silently break every connected account. In local DEBUG a
+# key derived from SECRET_KEY is used when unset.
 SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
+if not DEBUG and not SOCIAL_TOKEN_ENCRYPTION_KEY:
+    raise ImproperlyConfigured(
+        "SOCIAL_TOKEN_ENCRYPTION_KEY must be set when DEBUG is off "
+        '(generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").'
+    )
 
 # Image generation provider
 FAL_KEY = os.getenv("FAL_KEY", "")

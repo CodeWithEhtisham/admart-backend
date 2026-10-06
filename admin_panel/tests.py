@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from admin_panel.models import CreditAdjustment, Payment, Subscription
@@ -599,6 +600,7 @@ class SeededPlansMatchCodeTests(APITestCase):
             self.assertEqual(plan.features, PLAN_TIERS[plan.plan_id]["features"], plan.plan_id)
 
 
+@override_settings(PRIVATE_MEDIA_ROOT=__import__("tempfile").mkdtemp(prefix="admart-test-private-"))
 class TopupPacksFromDatabaseTests(APITestCase):
     def setUp(self) -> None:
         from admin_panel.models import TopupPack
@@ -613,7 +615,7 @@ class TopupPacksFromDatabaseTests(APITestCase):
     def _submit(self, pack: str, txn: str):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
-        shot = SimpleUploadedFile("proof.png", b"filedata", content_type="image/png")
+        shot = SimpleUploadedFile("proof.png", b"\x89PNG\r\n\x1a\nfake-png-body", content_type="image/png")
         return self.client.post(
             "/api/credits/payments/submit",
             {"pack": pack, "screenshot": shot, "transactionId": txn},

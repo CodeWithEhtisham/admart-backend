@@ -1,7 +1,12 @@
 import logging
 from typing import Any
 from django.contrib.auth import get_user_model
-from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, extend_schema
 from rest_framework import generics, status
@@ -35,7 +40,22 @@ from users.serializers import (
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
-signer = TimestampSigner()
+
+
+def password_reset_token(user) -> str:
+    """One-time reset token: invalid once the password changes or after
+    PASSWORD_RESET_TIMEOUT. Format ``<uidb64>.<token>`` (single query param)."""
+    return f"{urlsafe_base64_encode(force_bytes(user.pk))}.{default_token_generator.make_token(user)}"
+
+
+def user_for_reset_token(token: str):
+    """The user a reset token is valid for, or None."""
+    uidb64, _, raw = (token or "").partition(".")
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uidb64)))
+    except (ValueError, TypeError, OverflowError, ValidationError, User.DoesNotExist):
+        return None
+    return user if default_token_generator.check_token(user, raw) else None
 
 
 class RegisterView(APIView):
@@ -126,25 +146,28 @@ class ForgotPasswordView(APIView):
         },
     )
     def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        """Find user, generate secure signed token, and simulate email delivery."""
+        """Email a one-time reset link; same response whether or not the email exists."""
         serializer = ForgotPasswordSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
-            try:
-                user = User.objects.get(email=email)
-                # Generate signed token valid for 1 hour (3600 seconds)
-                token = signer.sign(str(user.id))
-
-                # Simulate sending email by printing details to the terminal/logs
-                reset_link = f"http://localhost:5173/auth/reset-password?token={token}"
-                logger.info(f"--- Password Reset Requested ---")
-                logger.info(f"User: {user.email}")
-                logger.info(f"Reset Link: {reset_link}")
-                logger.info(f"--------------------------------")
-
-            except User.DoesNotExist:
-                # Silently succeed to prevent user enumeration
-                pass
+            user = User.objects.filter(email__iexact=email, is_active=True).first()
+            if user is not None:
+                reset_link = (
+                    f"{settings.FRONTEND_URL.rstrip('/')}/auth/reset-password"
+                    f"?token={password_reset_token(user)}"
+                )
+                try:
+                    send_mail(
+                        "Reset your Admart password",
+                        "We received a request to reset your Admart password.\n\n"
+                        f"Open this link within an hour to choose a new one:\n{reset_link}\n\n"
+                        "If you didn't ask for this, you can ignore this email.",
+                        None,
+                        [user.email],
+                    )
+                except Exception:  # noqa: BLE001 — never reveal delivery problems to the requester
+                    # The link itself is never logged: it is a credential.
+                    logger.exception("Password reset email failed to send")
 
             return Response(
                 {"message": "If the email is registered, a password reset link has been sent."},
@@ -174,23 +197,19 @@ class ResetPasswordView(APIView):
             token = serializer.validated_data["token"]
             new_password = serializer.validated_data["newPassword"]
 
-            try:
-                # Verify signature and expiration (max age = 1 hour)
-                user_id = signer.unsign(token, max_age=3600)
-                user = User.objects.get(id=user_id)
-                user.set_password(new_password)
-                user.save()
-
-                return Response(
-                    {"message": "Password has been reset successfully."},
-                    status=status.HTTP_200_OK,
-                )
-
-            except (SignatureExpired, BadSignature, User.DoesNotExist):
+            user = user_for_reset_token(token)
+            if user is None:
                 return Response(
                     {"non_field_errors": ["The reset link is invalid or has expired."]},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # Changing the password invalidates this token (and any other issued ones).
+            user.set_password(new_password)
+            user.save()
+            return Response(
+                {"message": "Password has been reset successfully."},
+                status=status.HTTP_200_OK,
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

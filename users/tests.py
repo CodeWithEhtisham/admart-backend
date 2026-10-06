@@ -2,14 +2,12 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.core.signing import TimestampSigner
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 User = get_user_model()
-signer = TimestampSigner()
 
 
 class UserAuthTests(APITestCase):
@@ -142,7 +140,9 @@ class UserAuthTests(APITestCase):
 
     def test_reset_password_success(self) -> None:
         """Test resetting password with a valid signed token."""
-        token = signer.sign(str(self.user.id))
+        from users.views import password_reset_token
+
+        token = password_reset_token(self.user)
         reset_data = {"token": token, "newPassword": "NewPassword123!"}
         response = self.client.post(self.reset_password_url, reset_data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -237,6 +237,7 @@ class OnboardingTests(APITestCase):
 
 
 @override_settings(FAL_KEY="")
+@override_settings(PRIVATE_MEDIA_ROOT=__import__("tempfile").mkdtemp(prefix="admart-test-private-"))
 class CreditsApiTests(APITestCase):
     """Credits balance / costs / history endpoints."""
 
@@ -343,7 +344,7 @@ class CreditsApiTests(APITestCase):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
         return SimpleUploadedFile(
-            "proof.png", b"filedata", content_type="image/png"
+            "proof.png", b"\x89PNG\r\n\x1a\nfake-png-body", content_type="image/png"
         )
 
     def test_submit_payment_creates_pending(self) -> None:
@@ -694,14 +695,16 @@ class ForgedTokenTests(APITestCase):
 class ProductionSettingsTests(APITestCase):
     """#4: production must not boot without a real SECRET_KEY, and DEBUG is off by default."""
 
-    def _load_settings(self, **env) -> "subprocess.CompletedProcess":
+    FERNET_KEY = "Y2ktb25seS1kdW1teS1rZXktMzItYnl0ZXMtbG9uZyE="
+
+    def _load_settings(self, expr: str = "s.DEBUG, s.SECRET_KEY", **env) -> "subprocess.CompletedProcess":
         import os
         import subprocess
         import sys
 
         clean = {k: v for k, v in os.environ.items() if k not in ("DEBUG", "SECRET_KEY")}
         clean.update(env)
-        code = "import config.settings as s; print(s.DEBUG, s.SECRET_KEY)"
+        code = f"import config.settings as s; print({expr})"
         # dotenv must not refill the vars from a local .env, so point it at an empty dir.
         return subprocess.run(
             [sys.executable, "-c", f"import dotenv; dotenv.load_dotenv = lambda *a, **k: None; {code}"],
@@ -713,7 +716,162 @@ class ProductionSettingsTests(APITestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SECRET_KEY must be set", result.stderr)
 
+    def test_production_cookies_and_proxy_are_https_only(self) -> None:
+        result = self._load_settings(
+            "s.SESSION_COOKIE_SECURE, s.CSRF_COOKIE_SECURE, s.SECURE_PROXY_SSL_HEADER[0], s.SECURE_HSTS_SECONDS > 0",
+            SECRET_KEY="prod-secret",
+            SOCIAL_TOKEN_ENCRYPTION_KEY=self.FERNET_KEY,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["True", "True", "HTTP_X_FORWARDED_PROTO", "True"])
+
     def test_secret_key_from_env_and_debug_off_by_default(self) -> None:
-        result = self._load_settings(SECRET_KEY="prod-secret")
+        result = self._load_settings(SECRET_KEY="prod-secret", SOCIAL_TOKEN_ENCRYPTION_KEY=self.FERNET_KEY)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.split(), ["False", "prod-secret"])
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-body"
+
+
+class UploadedFileSafetyTests(APITestCase):
+    """A: uploads keep neither the client's filename nor a fake type; B: payment proofs are private."""
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.override = override_settings(MEDIA_ROOT=str(self.tmp / "media"), PRIVATE_MEDIA_ROOT=self.tmp / "private")
+        self.override.enable()
+        self.user = User.objects.create_user(email="payer@example.com", password="Password123!")
+        self.client.force_authenticate(user=self.user)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        self.override.disable()
+        shutil.rmtree(self.tmp)
+
+    def _submit(self, name: str, data: bytes, txn: str):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return self.client.post(
+            "/api/credits/payments/submit",
+            {"plan": "plus", "transactionId": txn, "screenshot": SimpleUploadedFile(name, data, content_type="image/png")},
+            format="multipart",
+        )
+
+    def test_html_disguised_as_png_is_rejected(self) -> None:
+        response = self._submit("evil.html", b"<script>alert(document.cookie)</script>", "EP-XSS")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("screenshot", response.data)
+
+    def test_proof_is_private_with_server_name_and_signed_link(self) -> None:
+        from admin_panel.models import Payment
+
+        response = self._submit("evil.html", PNG_BYTES, "EP-OK")  # real PNG, hostile name
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        payment = Payment.objects.get(pk=response.data["id"])
+        stored = self.tmp / "private" / payment.screenshot.name
+        self.assertTrue(stored.is_file())
+        self.assertTrue(payment.screenshot.name.endswith(".png"))
+        self.assertNotIn("evil", payment.screenshot.name)
+        self.assertFalse(any((self.tmp / "media").rglob("*")))  # nothing in public media
+
+        link = response.data["screenshotUrl"]
+        self.client.force_authenticate(user=None)
+        self.assertEqual(b"".join(self.client.get(link).streaming_content), PNG_BYTES)
+        unsigned = link.split("?")[0]
+        self.assertEqual(self.client.get(unsigned).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.get(unsigned + "?sig=forged").status_code, status.HTTP_404_NOT_FOUND)
+
+
+@override_settings(FRONTEND_URL="https://app.example", EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class PasswordResetSafetyTests(APITestCase):
+    """C: reset links are emailed (never logged), point at the real frontend, and work once."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="forgetful@example.com", password="OldPassword123!")
+
+    def _request_link(self) -> str:
+        import re
+
+        from django.core import mail
+
+        with patch("users.views.logger") as mock_logger:
+            response = self.client.post(reverse("auth_forgot_password"), {"email": "forgetful@example.com"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        link = re.search(r"https://app\.example/auth/reset-password\?token=\S+", mail.outbox[0].body).group(0)
+        token = link.split("token=")[1]
+        logged = " ".join(str(c) for c in mock_logger.mock_calls)
+        self.assertNotIn(token, logged)
+        return token
+
+    def test_link_is_one_time(self) -> None:
+        token = self._request_link()
+        url = reverse("auth_reset_password")
+        first = self.client.post(url, {"token": token, "newPassword": "NewPassword123!"}, format="json")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        again = self.client.post(url, {"token": token, "newPassword": "Hijack123!pass"}, format="json")
+        self.assertEqual(again.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NewPassword123!"))
+
+    def test_unknown_email_sends_nothing_but_same_answer(self) -> None:
+        from django.core import mail
+
+        response = self.client.post(reverse("auth_forgot_password"), {"email": "nobody@example.com"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 0)
+
+
+class RefreshTokenRotationTests(APITestCase):
+    """F: refresh tokens rotate and are revoked after use or logout."""
+
+    def setUp(self) -> None:
+        User.objects.create_user(email="rotate@example.com", password="Password123!")
+        login = self.client.post(reverse("auth_login"), {"email": "rotate@example.com", "password": "Password123!"}, format="json")
+        self.refresh = login.data["refreshToken"]
+
+    def test_old_refresh_token_stops_working_after_rotation(self) -> None:
+        url = reverse("auth_refresh")
+        first = self.client.post(url, {"refresh": self.refresh}, format="json")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertIn("refresh", first.data)
+        self.assertNotEqual(first.data["refresh"], self.refresh)
+        replay = self.client.post(url, {"refresh": self.refresh}, format="json")
+        self.assertEqual(replay.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_logout_revokes_refresh_token(self) -> None:
+        self.client.post(reverse("auth_logout"), {"refreshToken": self.refresh}, format="json")
+        replay = self.client.post(reverse("auth_refresh"), {"refresh": self.refresh}, format="json")
+        self.assertEqual(replay.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class TokenEncryptionKeyTests(APITestCase):
+    """D: social tokens survive key rotation; production refuses to start without a key."""
+
+    def test_rotation_keeps_old_tokens_readable(self) -> None:
+        from cryptography.fernet import Fernet
+
+        from projects import crypto
+
+        old, new = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+        try:
+            with override_settings(SOCIAL_TOKEN_ENCRYPTION_KEY=old):
+                crypto._fernet.cache_clear()
+                stored = crypto.encrypt("ya29.secret")
+            with override_settings(SOCIAL_TOKEN_ENCRYPTION_KEY=f"{new},{old}"):
+                crypto._fernet.cache_clear()
+                self.assertEqual(crypto.decrypt(stored), "ya29.secret")
+                self.assertEqual(Fernet(new.encode()).decrypt(crypto.encrypt("x").encode()), b"x")
+        finally:
+            crypto._fernet.cache_clear()
+
+    def test_production_requires_encryption_key_and_hardens_cookies(self) -> None:
+        settings_test = ProductionSettingsTests()
+        missing = settings_test._load_settings(SECRET_KEY="prod-secret")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("SOCIAL_TOKEN_ENCRYPTION_KEY must be set", missing.stderr)

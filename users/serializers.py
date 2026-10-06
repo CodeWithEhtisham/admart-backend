@@ -274,10 +274,12 @@ class PaymentSubmitSerializer(serializers.Serializer):
         return value
 
     def validate_screenshot(self, value):
-        allowed = {"image/jpeg", "image/png", "image/webp"}
+        from content.storage_utils import verified_image_name
+
         if value.size > 15 * 1024 * 1024:
             raise serializers.ValidationError(self.SCREENSHOT_ERROR)
-        if value.content_type not in allowed:
+        # Checks the real bytes, not just the client-declared type.
+        if verified_image_name(value, value.content_type) is None:
             raise serializers.ValidationError(self.SCREENSHOT_ERROR)
         return value
 
@@ -301,4 +303,8 @@ class PaymentSubmitSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"plan": self.PLAN_ERROR})
             attrs["paymentType"] = "subscription"
 
+        # Server-chosen filename: never store the client's name/extension.
+        from content.storage_utils import verified_image_name
+
+        attrs["screenshotName"] = verified_image_name(attrs["screenshot"], attrs["screenshot"].content_type)
         return attrs

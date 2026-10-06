@@ -28,6 +28,7 @@ from admin_panel.services import (
     build_stats,
     build_usage,
     free_signup_credits,
+    payment_screenshot_url,
     review_payment,
 )
 from users.authentication import AdmartJWTAuthentication
@@ -574,7 +575,7 @@ class AdminPaymentListView(AdminAPIView):
                     "lastName": p.user.last_name,
                     "currentPlan": p.user.plan,
                     "screenshotUrl": (
-                        request.build_absolute_uri(p.screenshot.url) if p.screenshot else None
+                        payment_screenshot_url(p, request) if p.screenshot else None
                     ),
                     "reviewedAt": p.reviewed_at,
                     "reviewedByEmail": p.reviewed_by.email if p.reviewed_by else None,

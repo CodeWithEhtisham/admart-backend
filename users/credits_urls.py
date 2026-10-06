@@ -6,6 +6,7 @@ from users.credits_views import (
     CreditsMyPaymentsView,
     CreditsPaymentMethodsView,
     CreditsPaymentSubmitView,
+    PaymentScreenshotView,
     CreditsPlansView,
     CreditsQuoteView,
     CreditsTopupsView,
@@ -21,4 +22,9 @@ urlpatterns = [
     path("payments/methods", CreditsPaymentMethodsView.as_view(), name="credits_payment_methods"),
     path("payments/submit", CreditsPaymentSubmitView.as_view(), name="credits_payment_submit"),
     path("payments/mine", CreditsMyPaymentsView.as_view(), name="credits_my_payments"),
+    path(
+        "payments/<uuid:payment_id>/screenshot",
+        PaymentScreenshotView.as_view(),
+        name="credits_payment_screenshot",
+    ),
 ]

@@ -1,6 +1,8 @@
+import os
 import uuid
 
 from django.conf import settings
+from django.core.files.storage import FileSystemStorage
 from django.db import models
 from django.utils import timezone
 
@@ -48,6 +50,27 @@ class Subscription(models.Model):
         return f"{self.user_id} — {self.plan} ({self.status})"
 
 
+class PrivateStorage(FileSystemStorage):
+    """FileSystemStorage rooted at PRIVATE_MEDIA_ROOT, read when used (not at import)."""
+
+    @property
+    def base_location(self):
+        return settings.PRIVATE_MEDIA_ROOT
+
+    @property
+    def location(self):
+        return os.path.abspath(self.base_location)
+
+
+def private_storage():
+    """Storage outside MEDIA_ROOT for files that must never be publicly served.
+
+    Payment proofs contain customers' financial details; they are only served via
+    short-lived signed links (see admin_panel.services.payment_screenshot_url).
+    """
+    return PrivateStorage()
+
+
 class Payment(models.Model):
     """A payment/charge record for a customer.
 
@@ -91,7 +114,7 @@ class Payment(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     provider_ref = models.CharField(max_length=128, blank=True, default="")
     screenshot = models.FileField(
-        upload_to="payments/screenshots/%Y/%m/", null=True, blank=True
+        upload_to="payments/screenshots/%Y/%m/", storage=private_storage, null=True, blank=True
     )
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

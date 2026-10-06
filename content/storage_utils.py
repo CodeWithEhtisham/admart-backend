@@ -13,6 +13,27 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# Leading bytes of each accepted image type. The client-declared Content-Type and
+# filename are never trusted: a stored "image" must really be one, and its name and
+# extension come from us, so an uploaded .html/.svg can never be served as a page.
+IMAGE_SIGNATURES = {
+    "image/jpeg": (".jpg", lambda head: head.startswith(b"\xff\xd8\xff")),
+    "image/png": (".png", lambda head: head.startswith(b"\x89PNG\r\n\x1a\n")),
+    "image/webp": (".webp", lambda head: head[:4] == b"RIFF" and head[8:12] == b"WEBP"),
+}
+
+
+def verified_image_name(upload, content_type: str) -> str | None:
+    """Random server-side filename for an uploaded image, or None if its bytes
+    don't match the declared jpeg/png/webp type."""
+    entry = IMAGE_SIGNATURES.get((content_type or "").split(";")[0].strip().lower())
+    if entry is None:
+        return None
+    head = upload.read(12)
+    upload.seek(0)
+    ext, matches = entry
+    return f"{uuid.uuid4().hex}{ext}" if matches(head) else None
+
 
 def absolute_media_url(relative_path: str, request=None) -> str:
     """Build a public HTTPS/HTTP URL fal (and FE) can fetch."""

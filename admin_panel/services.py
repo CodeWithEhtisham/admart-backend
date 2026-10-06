@@ -41,6 +41,23 @@ def get_setting(key: str, default: str | None = None):
     return all_settings().get(key, default)
 
 
+SCREENSHOT_LINK_SALT = "payment-screenshot"
+SCREENSHOT_LINK_MAX_AGE = 3600
+
+
+def payment_screenshot_url(payment, request) -> str | None:
+    """Short-lived signed link to a payment proof. Only hand it to the payment's
+    owner or staff; whoever holds the link can view the image until it expires."""
+    if not payment.screenshot:
+        return None
+    from django.core import signing
+    from django.urls import reverse
+
+    sig = signing.dumps(str(payment.pk), salt=SCREENSHOT_LINK_SALT)
+    path = reverse("credits_payment_screenshot", kwargs={"payment_id": payment.pk})
+    return request.build_absolute_uri(f"{path}?sig={sig}")
+
+
 def free_signup_credits() -> Decimal:
     """Credits granted to a new Free-plan account (admin-editable setting)."""
     return Decimal(get_setting("default_free_credits", "0"))

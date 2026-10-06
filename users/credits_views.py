@@ -11,7 +11,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from admin_panel.models import Payment
-from admin_panel.services import get_setting
+from admin_panel.services import (
+    SCREENSHOT_LINK_MAX_AGE,
+    SCREENSHOT_LINK_SALT,
+    get_setting,
+    payment_screenshot_url,
+)
 from content.catalog import CAPABILITIES, DEFAULT_MODELS, resolve_model
 from content.models import ImageJob, VideoJob
 from content.pricing import (
@@ -25,7 +30,6 @@ from content.pricing import (
     quote_video_job,
     serialize_decimal,
 )
-from content.storage_utils import absolute_media_url
 from content.video_catalog import (
     DEFAULT_VIDEO_MODELS,
     VIDEO_CAPABILITIES,
@@ -122,11 +126,7 @@ def _serialize_payment(payment: Payment, *, request) -> dict:
         "transactionId": payment.provider_ref,
         "note": payment.notes,
         "message": payment.notes if payment.status == "failed" else "",
-        "screenshotUrl": (
-            absolute_media_url(payment.screenshot.name, request=request)
-            if payment.screenshot
-            else None
-        ),
+        "screenshotUrl": payment_screenshot_url(payment, request),
         "createdAt": payment.created_at,
         "reviewedAt": payment.reviewed_at,
     }
@@ -194,11 +194,39 @@ class CreditsPaymentSubmitView(APIView):
                 provider_ref=data["transactionId"],
                 notes=data["note"],
             )
-        payment.screenshot.save(data["screenshot"].name, data["screenshot"], save=True)
+        payment.screenshot.save(data["screenshotName"], data["screenshot"], save=True)
         return Response(
             _serialize_payment(payment, request=request),
             status=status.HTTP_201_CREATED,
         )
+
+
+class PaymentScreenshotView(APIView):
+    """GET /api/credits/payments/<id>/screenshot?sig=... — serve a private payment proof.
+
+    Authorized by the signed, expiring ``sig`` issued to the owner/staff (plain links
+    work in <img>/<a> without a bearer token).
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def get(self, request, payment_id):
+        from django.core import signing
+        from django.http import FileResponse, Http404
+
+        try:
+            signed_id = signing.loads(
+                request.query_params.get("sig", ""), salt=SCREENSHOT_LINK_SALT, max_age=SCREENSHOT_LINK_MAX_AGE
+            )
+        except signing.BadSignature:
+            raise Http404
+        payment = Payment.objects.filter(pk=payment_id).first()
+        if payment is None or signed_id != str(payment.pk) or not payment.screenshot:
+            raise Http404
+        response = FileResponse(payment.screenshot.open("rb"))
+        response["Cache-Control"] = "private, max-age=300"
+        return response
 
 
 class CreditsMyPaymentsView(APIView):

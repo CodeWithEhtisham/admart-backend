@@ -36,7 +36,7 @@ from content.serializers import (
     PromptEnhanceSerializer,
     TemplateSerializer,
 )
-from content.storage_utils import absolute_media_url
+from content.storage_utils import absolute_media_url, verified_image_name
 from content.url_resolve import resolve_urls_for_fal
 from projects.models import Project
 
@@ -219,13 +219,20 @@ class ImageUploadView(APIView):
         if upload.size > MAX_UPLOAD_BYTES:
             return Response({"message": "File too large"}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
+        filename = verified_image_name(upload, content_type)
+        if filename is None:
+            return Response(
+                {"message": "File is not a valid jpeg, png, or webp image", "field": "file"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         record = ImageUpload(
             project=project,
             user=request.user,
             content_type=content_type,
             byte_size=upload.size,
         )
-        record.file.save(upload.name, upload, save=True)
+        record.file.save(filename, upload, save=True)
         url = absolute_media_url(record.file.name, request=request)
         return Response(
             {

@@ -47,6 +47,7 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: config.settings
           SECRET_KEY: dummy-ci-secret-key-not-for-production-use
+          SOCIAL_TOKEN_ENCRYPTION_KEY: Y2ktb25seS1kdW1teS1rZXktMzItYnl0ZXMtbG9uZyE=
           DEBUG: "False"
         run: pytest || [ $? -eq 5 ]
 
