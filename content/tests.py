@@ -928,3 +928,95 @@ class MediaPathContainmentTests(APITestCase):
         from content.url_resolve import resolve_url_for_fal
 
         self.assertTrue(resolve_url_for_fal("http://localhost:8000/media/projects/ok.png").startswith("data:image/png;base64,"))
+
+
+class CreditSafetyTests(APITestCase):
+    """#6, #7, #10: credits are never lost, refunded twice, or used for free."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="credits@example.com", password="pass12345",
+            credits_total=10, credits_remaining=10, credits_used=0,
+        )
+        self.project = Project.objects.create(owner=self.user, name="Ads")
+        self.client.force_authenticate(user=self.user)
+
+    def _job(self, reserved="5", topup="0", status_="running") -> ImageJob:
+        return ImageJob.objects.create(
+            project=self.project, user=self.user, capability="textToImage", model="fal-ai/flux/dev",
+            status=status_, credits_reserved=Decimal(reserved), topup_credits_reserved=Decimal(topup),
+        )
+
+    @patch("content.views.fal_client.submit")
+    def test_bad_image_url_costs_nothing(self, mock_submit) -> None:
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/images/jobs",
+            {"capability": "edit", "prompt": "make it blue", "imageUrls": ["http://localhost:8000/media/missing.png"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_submit.assert_not_called()
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, 10)
+        self.assertFalse(ImageJob.objects.exists())
+
+    def test_concurrent_failures_refund_once(self) -> None:
+        from content.credits import fail_open_job, reserve_credits
+
+        reserve_credits(self.user, "5")
+        job = self._job()
+        poll_a, poll_b = ImageJob.objects.get(pk=job.pk), ImageJob.objects.get(pk=job.pk)  # both saw it running
+        self.assertTrue(fail_open_job(poll_a, "fal FAILED"))
+        self.assertFalse(fail_open_job(poll_b, "fal FAILED"))
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, 10)  # refunded once, not 15
+
+    def test_result_after_cancel_is_not_delivered(self) -> None:
+        from content.credits import fail_open_job, reserve_credits, succeed_open_job
+
+        reserve_credits(self.user, "5")
+        job = self._job()
+        downloading = ImageJob.objects.get(pk=job.pk)
+        self.client.post(f"/api/projects/{self.project.id}/images/jobs/{job.pk}/cancel")
+        self.assertFalse(succeed_open_job(downloading, images=[{"url": "x"}]))
+        self.assertEqual(downloading.status, "failed")
+        self.assertEqual(downloading.images, [])
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, 10)
+        self.assertFalse(fail_open_job(downloading, "again"))  # cancel twice: still one refund
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, 10)
+
+    def test_poll_cannot_resurrect_cancelled_job(self) -> None:
+        from content.credits import fail_open_job, mark_open_job
+
+        job = self._job(reserved="0")
+        stale = ImageJob.objects.get(pk=job.pk)
+        fail_open_job(job, "Cancelled")
+        stale.status = "queued"  # stale in-memory view from a concurrent poll
+        mark_open_job(stale, "running")
+        self.assertEqual(stale.status, "failed")
+
+    def test_refunded_topups_stay_topups_and_survive_expiry(self) -> None:
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from admin_panel.services import expire_subscription_if_due
+        from content.credits import fail_open_job, reserve_credits
+
+        # Paid user whose plan credits are spent: 5 top-up credits left.
+        User.objects.filter(pk=self.user.pk).update(
+            plan="plus", credits_remaining=5, topup_credits=5, credits_reset_at=timezone.now() + timedelta(days=1)
+        )
+        self.user.refresh_from_db()
+        topup_used = reserve_credits(self.user, "5")
+        self.assertEqual(topup_used, 5)
+        fail_open_job(self._job(reserved="5", topup=topup_used), "fal FAILED")
+        self.user.refresh_from_db()
+        self.assertEqual((self.user.credits_remaining, self.user.topup_credits), (5, 5))
+        User.objects.filter(pk=self.user.pk).update(credits_reset_at=timezone.now() - timedelta(minutes=1))
+        self.user.refresh_from_db()
+        expired = expire_subscription_if_due(self.user)
+        self.assertEqual(expired.plan, "free")
+        self.assertEqual(expired.credits_remaining, 5)  # paid-for top-ups kept

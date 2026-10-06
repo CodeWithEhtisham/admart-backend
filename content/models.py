@@ -42,6 +42,8 @@ class ImageJob(models.Model):
     mask_image = models.JSONField(null=True, blank=True)
     error = models.TextField(null=True, blank=True)
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    # Part of credits_reserved taken from top-ups; refunded back as top-ups.
+    topup_credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     fal_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     seed = models.BigIntegerField(null=True, blank=True)
@@ -124,6 +126,8 @@ class VideoJob(models.Model):
     video = models.JSONField(null=True, blank=True)
     error = models.TextField(null=True, blank=True)
     credits_used = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    # Part of credits_reserved taken from top-ups; refunded back as top-ups.
+    topup_credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     fal_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     seed = models.BigIntegerField(null=True, blank=True)

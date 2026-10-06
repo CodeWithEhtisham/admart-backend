@@ -514,7 +514,8 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
         if not pack:
             raise ValidationError({"pack": f"Unknown top-up pack: {payment.pack}."})
         added_credits = pack["credits"]
-        user = payment.user
+        # Lock the row: a concurrent reserve/refund must not be overwritten (lost update).
+        user = User.objects.select_for_update().get(pk=payment.user_id)
 
         payment.status = "paid"
         user.credits_total += added_credits
@@ -544,7 +545,8 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
 
     plan = get_plan(payment.plan or None)
     monthly_credits = plan["monthly_credits"]
-    user = payment.user
+    # Lock the row: a concurrent reserve/refund must not be overwritten (lost update).
+    user = User.objects.select_for_update().get(pk=payment.user_id)
 
     # Renewing the same active plan extends from the current end (no lost days);
     # a new or switched plan starts now. Credits stack: leftovers stay until expiry.

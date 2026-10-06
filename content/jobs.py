@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from django.db import transaction
 
 from content import fal_client
-from content.credits import refund_credits
+from content.credits import fail_open_job, mark_open_job, succeed_open_job
 from content.library import sync_library_from_image_job
 from content.models import ImageJob
 from content.storage_utils import normalize_fal_images, persist_remote_image
@@ -32,14 +31,10 @@ def refresh_job(job: ImageJob, *, request=None) -> ImageJob:
 
     status_raw = (st.get("status") or "").upper()
     if status_raw in ("IN_QUEUE", "QUEUED"):
-        if job.status != "queued":
-            job.status = "queued"
-            job.save(update_fields=["status", "updated_at"])
+        mark_open_job(job, "queued")
         return job
     if status_raw in ("IN_PROGRESS", "PROCESSING"):
-        if job.status != "running":
-            job.status = "running"
-            job.save(update_fields=["status", "updated_at"])
+        mark_open_job(job, "running")
         return job
     if status_raw in ("FAILED", "ERROR", "CANCELLED"):
         _fail_job(job, st.get("error") or "Generation failed")
@@ -108,35 +103,13 @@ def refresh_job(job: ImageJob, *, request=None) -> ImageJob:
                 "fileName": raw_mask.get("file_name"),
             }
 
-    with transaction.atomic():
-        job.status = "succeeded"
-        job.images = durable
-        job.mask_image = mask_asset
-        job.seed = seed
-        job.credits_used = job.credits_reserved
-        job.error = None
-        job.save(
-            update_fields=[
-                "status",
-                "images",
-                "mask_image",
-                "seed",
-                "credits_used",
-                "error",
-                "updated_at",
-            ]
-        )
+    # Only the first finisher wins; if the job was cancelled (and refunded) meanwhile,
+    # the result is discarded rather than delivered for free.
+    if succeed_open_job(job, images=durable, mask_image=mask_asset, seed=seed):
         sync_library_from_image_job(job)
     return job
 
 
-def _fail_job(job: ImageJob, message: str) -> None:
-    with transaction.atomic():
-        job.status = "failed"
-        job.error = message
-        job.save(update_fields=["status", "error", "updated_at"])
-        if job.credits_reserved and job.credits_used is None:
-            refund_credits(job.user, job.credits_reserved)
-            job.credits_reserved = 0
-            job.save(update_fields=["credits_reserved", "updated_at"])
-        sync_library_from_image_job(job)
+def _fail_job(job, message: str) -> None:
+    fail_open_job(job, message)
+    sync_library_from_image_job(job)

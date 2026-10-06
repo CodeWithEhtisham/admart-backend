@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content import fal_client
-from content.credits import InsufficientCredits, refund_credits, reserve_credits
+from content.credits import InsufficientCredits, fail_open_job, reserve_credits
 from content.fal_models import catalog_discovery_payload, merged_video_catalog
 from content.library import mark_library_generating_video, sync_library_from_video_job
 from content.models import VideoJob
@@ -64,8 +64,23 @@ class VideoJobListCreateView(APIView):
         quote = quote_video_job(capability, model, data)
         amount = quote["credits_decimal"]
 
+        # Resolve inputs before charging anything, so a bad URL costs nothing.
+        fal_data = dict(data)
         try:
-            reserve_credits(request.user, amount)
+            if fal_data.get("startImageUrl"):
+                fal_data["startImageUrl"] = resolve_urls_for_fal([fal_data["startImageUrl"]])[0]
+            if fal_data.get("endImageUrl"):
+                fal_data["endImageUrl"] = resolve_urls_for_fal([fal_data["endImageUrl"]])[0]
+            if fal_data.get("imageUrls"):
+                fal_data["imageUrls"] = resolve_urls_for_fal(fal_data["imageUrls"])
+        except ValueError as exc:
+            return Response(
+                {"message": str(exc), "field": "startImageUrl"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            topup_used = reserve_credits(request.user, amount)
         except InsufficientCredits:
             request.user.refresh_from_db()
             return Response(
@@ -79,21 +94,6 @@ class VideoJobListCreateView(APIView):
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        fal_data = dict(data)
-        try:
-            if fal_data.get("startImageUrl"):
-                fal_data["startImageUrl"] = resolve_urls_for_fal([fal_data["startImageUrl"]])[0]
-            if fal_data.get("endImageUrl"):
-                fal_data["endImageUrl"] = resolve_urls_for_fal([fal_data["endImageUrl"]])[0]
-            if fal_data.get("imageUrls"):
-                fal_data["imageUrls"] = resolve_urls_for_fal(fal_data["imageUrls"])
-        except ValueError as exc:
-            refund_credits(request.user, amount)
-            return Response(
-                {"message": str(exc), "field": "startImageUrl"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         fal_input = build_video_fal_input(capability, model, fal_data)
         job = VideoJob.objects.create(
             project=project,
@@ -104,17 +104,14 @@ class VideoJobListCreateView(APIView):
             prompt=data.get("prompt"),
             request={k: v for k, v in data.items() if k != "prompt" or v},
             credits_reserved=amount,
+            topup_credits_reserved=topup_used,
             fal_cost_usd=quote.get("fal_cost_decimal", 0),
         )
 
         try:
             submission = fal_client.submit(model, fal_input)
         except fal_client.FalError as exc:
-            refund_credits(request.user, amount)
-            job.status = "failed"
-            job.error = str(exc) if settings.DEBUG else "Provider error"
-            job.credits_reserved = 0
-            job.save(update_fields=["status", "error", "credits_reserved", "updated_at"])
+            fail_open_job(job, str(exc) if settings.DEBUG else "Provider error")
             code = (
                 status.HTTP_503_SERVICE_UNAVAILABLE
                 if exc.status_code == 503
@@ -158,16 +155,8 @@ class VideoJobCancelView(APIView):
     def post(self, request, project_id, job_id):
         project = _owned_project(request.user, project_id)
         job = get_object_or_404(VideoJob, id=job_id, project=project)
-        if job.status in ("succeeded", "failed"):
-            return Response(VideoJobSerializer(job).data)
-        job.status = "failed"
-        job.error = "Cancelled"
-        job.save(update_fields=["status", "error", "updated_at"])
-        if job.credits_reserved and job.credits_used is None:
-            refund_credits(request.user, job.credits_reserved)
-            job.credits_reserved = 0
-            job.save(update_fields=["credits_reserved", "updated_at"])
-        sync_library_from_video_job(job)
+        if fail_open_job(job, "Cancelled"):
+            sync_library_from_video_job(job)
         return Response(VideoJobSerializer(job).data)
 
 

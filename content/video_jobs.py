@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 import re
 
-from django.db import transaction
 
 from content import fal_client
-from content.credits import refund_credits
+from content.credits import fail_open_job, mark_open_job, succeed_open_job
 from content.library import sync_library_from_video_job
 from content.models import VideoJob
 from content.storage_utils import normalize_fal_video, persist_remote_video
@@ -44,14 +43,10 @@ def refresh_video_job(job: VideoJob, *, request=None) -> VideoJob:
 
     status_raw = (st.get("status") or "").upper()
     if status_raw in ("IN_QUEUE", "QUEUED"):
-        if job.status != "queued":
-            job.status = "queued"
-            job.save(update_fields=["status", "updated_at"])
+        mark_open_job(job, "queued")
         return job
     if status_raw in ("IN_PROGRESS", "PROCESSING"):
-        if job.status != "running":
-            job.status = "running"
-            job.save(update_fields=["status", "updated_at"])
+        mark_open_job(job, "running")
         return job
     if status_raw in ("FAILED", "ERROR", "CANCELLED"):
         _fail_job(job, st.get("error") or "Generation failed")
@@ -94,35 +89,12 @@ def refresh_video_job(job: VideoJob, *, request=None) -> VideoJob:
         (job.request or {}).get("duration")
     ) or _parse_duration_seconds(payload.get("duration"))
 
-    with transaction.atomic():
-        job.status = "succeeded"
-        job.video = durable
-        job.seed = seed
-        job.duration_seconds = duration
-        job.credits_used = job.credits_reserved
-        job.error = None
-        job.save(
-            update_fields=[
-                "status",
-                "video",
-                "seed",
-                "duration_seconds",
-                "credits_used",
-                "error",
-                "updated_at",
-            ]
-        )
+    # Only the first finisher wins; see content/jobs.py.
+    if succeed_open_job(job, video=durable, seed=seed, duration_seconds=duration):
         sync_library_from_video_job(job)
     return job
 
 
-def _fail_job(job: VideoJob, message: str) -> None:
-    with transaction.atomic():
-        job.status = "failed"
-        job.error = message
-        job.save(update_fields=["status", "error", "updated_at"])
-        if job.credits_reserved and job.credits_used is None:
-            refund_credits(job.user, job.credits_reserved)
-            job.credits_reserved = 0
-            job.save(update_fields=["credits_reserved", "updated_at"])
-        sync_library_from_video_job(job)
+def _fail_job(job, message: str) -> None:
+    fail_open_job(job, message)
+    sync_library_from_video_job(job)

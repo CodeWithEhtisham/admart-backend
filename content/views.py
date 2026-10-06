@@ -16,7 +16,7 @@ from rest_framework.views import APIView
 
 from content import fal_client
 from content.catalog import MODEL_CATALOG
-from content.credits import InsufficientCredits, refund_credits, reserve_credits
+from content.credits import InsufficientCredits, fail_open_job, reserve_credits
 from content.fal_models import (
     FalModelSearchError,
     catalog_discovery_payload,
@@ -97,8 +97,19 @@ class ImageJobListCreateView(APIView):
         quote = quote_image_job(capability, model, data)
         amount = quote["credits_decimal"]
 
+        # Resolve inputs before charging anything, so a bad URL costs nothing (#6).
+        fal_data = dict(data)
         try:
-            reserve_credits(request.user, amount)
+            if fal_data.get("imageUrls"):
+                fal_data["imageUrls"] = resolve_urls_for_fal(fal_data["imageUrls"])
+        except ValueError as exc:
+            return Response(
+                {"message": str(exc), "field": "imageUrls"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            topup_used = reserve_credits(request.user, amount)
         except InsufficientCredits:
             request.user.refresh_from_db()
             return Response(
@@ -113,17 +124,7 @@ class ImageJobListCreateView(APIView):
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
-        # Keep original FE URLs in the stored request; rewrite for fal only.
-        fal_data = dict(data)
-        try:
-            if fal_data.get("imageUrls"):
-                fal_data["imageUrls"] = resolve_urls_for_fal(fal_data["imageUrls"])
-        except ValueError as exc:
-            return Response(
-                {"message": str(exc), "field": "imageUrls"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+        # The stored request keeps the original FE URLs; fal_data has them rewritten.
         fal_input = build_fal_input(capability, model, fal_data)
         job = ImageJob.objects.create(
             project=project,
@@ -134,17 +135,14 @@ class ImageJobListCreateView(APIView):
             prompt=data.get("prompt"),
             request={k: v for k, v in data.items() if k != "prompt" or v},
             credits_reserved=amount,
+            topup_credits_reserved=topup_used,
             fal_cost_usd=quote.get("fal_cost_decimal", 0),
         )
 
         try:
             submission = fal_client.submit(model, fal_input)
         except fal_client.FalError as exc:
-            refund_credits(request.user, amount)
-            job.status = "failed"
-            job.error = str(exc) if settings.DEBUG else "Provider error"
-            job.credits_reserved = 0
-            job.save(update_fields=["status", "error", "credits_reserved", "updated_at"])
+            fail_open_job(job, str(exc) if settings.DEBUG else "Provider error")
             code = status.HTTP_503_SERVICE_UNAVAILABLE if exc.status_code == 503 else status.HTTP_502_BAD_GATEWAY
             return Response({"message": job.error}, status=code)
 
@@ -185,16 +183,8 @@ class ImageJobCancelView(APIView):
     def post(self, request, project_id, job_id):
         project = _owned_project(request.user, project_id)
         job = get_object_or_404(ImageJob, id=job_id, project=project)
-        if job.status in ("succeeded", "failed"):
-            return Response(ImageJobSerializer(job).data)
-        job.status = "failed"
-        job.error = "Cancelled"
-        job.save(update_fields=["status", "error", "updated_at"])
-        if job.credits_reserved and job.credits_used is None:
-            refund_credits(request.user, job.credits_reserved)
-            job.credits_reserved = 0
-            job.save(update_fields=["credits_reserved", "updated_at"])
-        sync_library_from_image_job(job)
+        if fail_open_job(job, "Cancelled"):
+            sync_library_from_image_job(job)
         return Response(ImageJobSerializer(job).data)
 
 
