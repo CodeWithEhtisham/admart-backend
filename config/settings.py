@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -24,13 +25,23 @@ load_dotenv(BASE_DIR / ".env")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-548$eoapdux5ros4czno60f93yz+pvs+$3$2p$!i8m(0%r=vd$")
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+# Safe by default: local development opts in with DEBUG=True in .env.
+DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "*").split(",") if host.strip()]
+# SECURITY WARNING: keep the secret key used in production secret!
+# It signs JWTs, OAuth state and password-reset tokens, so it must come from the environment.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is off.")
+    SECRET_KEY = "django-insecure-local-development-only"
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
+    if host.strip()
+]
 
 
 # Application definition
@@ -151,7 +162,7 @@ AUTH_USER_MODEL = "users.User"
 # Django REST Framework Settings
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "users.authentication.CombinedJWTAuthentication",
+        "users.authentication.AdmartJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -180,16 +191,6 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
-
-# Clerk Authentication Settings
-CLERK_PUBLISHABLE_KEY = os.getenv(
-    "CLERK_PUBLISHABLE_KEY",
-    os.getenv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_Y2FsbS1zZWFsLTgxLmNsZXJrLmFjY291bnRzLmRldiQ"),
-)
-CLERK_SECRET_KEY = os.getenv(
-    "CLERK_SECRET_KEY", "sk_test_5ucViuk9qbITYiQtUvWjjYjY2BLQSsgDyPrX9rEyI6"
-)
-CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 
 # Spectacular Schema settings
 SPECTACULAR_SETTINGS = {

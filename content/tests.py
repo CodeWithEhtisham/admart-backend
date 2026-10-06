@@ -889,3 +889,42 @@ class TemplateFavoriteTests(APITestCase):
         self.client.force_authenticate(user=self.other)
         response = self.client.post(f"/api/templates/{self.template.id}/use")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MediaPathContainmentTests(APITestCase):
+    """#2: media URLs can only read files inside MEDIA_ROOT, never payment proofs."""
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "media" / "projects").mkdir(parents=True)
+        (self.tmp / "media" / "payments").mkdir()
+        (self.tmp / "media" / "projects" / "ok.png").write_bytes(b"png")
+        (self.tmp / "media" / "payments" / "proof.png").write_bytes(b"secret-proof")
+        (self.tmp / ".env").write_text("FAL_KEY=secret")
+        self.override = override_settings(MEDIA_ROOT=str(self.tmp / "media"), MEDIA_URL="/media/")
+        self.override.enable()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        self.override.disable()
+        shutil.rmtree(self.tmp)
+
+    def test_traversal_and_payment_proofs_are_refused(self) -> None:
+        from content.url_resolve import resolve_url_for_fal
+
+        for url in (
+            "http://localhost/media/../.env",
+            "http://localhost:8000/media/projects/../../.env",
+            "http://127.0.0.1/media/payments/proof.png",
+        ):
+            with self.assertRaises(ValueError, msg=url):
+                resolve_url_for_fal(url)
+
+    def test_own_media_still_resolves(self) -> None:
+        from content.url_resolve import resolve_url_for_fal
+
+        self.assertTrue(resolve_url_for_fal("http://localhost:8000/media/projects/ok.png").startswith("data:image/png;base64,"))

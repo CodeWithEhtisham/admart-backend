@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import requests
 from django.conf import settings
 
+from content.url_resolve import fetch_media
 from projects.oauth import REQUEST_TIMEOUT, ensure_fresh_access_token
 
 UPLOAD_TIMEOUT = 600
@@ -89,8 +90,7 @@ def publish_youtube(
     paid_promotion: bool = False,
 ) -> dict:
     token = ensure_fresh_access_token(account)
-    media = requests.get(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
-    media.raise_for_status()
+    media_content, _ = fetch_media(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
     snippet = {
         "title": (title or "Admart video")[:100],
         "description": (description or "")[:5000],
@@ -142,7 +142,7 @@ def publish_youtube(
         raise RuntimeError("YouTube did not return an upload URL")
     put = requests.put(
         upload_url,
-        data=media.content,
+        data=media_content,
         headers={"Content-Type": "video/*"},
         timeout=UPLOAD_TIMEOUT,
     )
@@ -170,16 +170,15 @@ def publish_youtube(
 
 
 def _set_youtube_thumbnail(token: str, video_id: str, thumbnail_url: str) -> None:
-    img = requests.get(_fetchable_url(thumbnail_url), timeout=UPLOAD_TIMEOUT)
-    img.raise_for_status()
-    content_type = (img.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+    img_content, img_type = fetch_media(_fetchable_url(thumbnail_url), timeout=UPLOAD_TIMEOUT)
+    content_type = (img_type or "image/jpeg").split(";")[0].strip()
     if content_type not in ("image/jpeg", "image/png", "image/webp"):
         content_type = "image/jpeg"
     resp = requests.post(
         "https://www.googleapis.com/upload/youtube/v3/thumbnails/set",
         params={"videoId": video_id},
         headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
-        data=img.content,
+        data=img_content,
         timeout=UPLOAD_TIMEOUT,
     )
     if not resp.ok:
@@ -294,11 +293,10 @@ def publish_facebook(
     page_token = (page or {}).get("access_token") or ""
     if not page_token:
         raise RuntimeError("Facebook Page token missing. Reconnect Facebook.")
-    media = requests.get(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
-    media.raise_for_status()
+    media_content, media_type = fetch_media(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
     path = "videos" if kind == "video" else "photos"
     filename = "video.mp4" if kind == "video" else "photo.jpg"
-    ctype = (media.headers.get("content-type") or "").split(";")[0].strip()
+    ctype = (media_type or "").split(";")[0].strip()
     if not ctype or ctype == "application/octet-stream":
         ctype = "video/mp4" if kind == "video" else "image/jpeg"
     text = (caption or title or "").strip()
@@ -315,7 +313,7 @@ def publish_facebook(
     resp = requests.post(
         f"{GRAPH}/{page['id']}/{path}",
         data=data,
-        files={"source": (filename, media.content, ctype)},
+        files={"source": (filename, media_content, ctype)},
         timeout=UPLOAD_TIMEOUT,
     )
     if not resp.ok:

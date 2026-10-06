@@ -1,5 +1,5 @@
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.signing import TimestampSigner
@@ -482,68 +482,6 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(self.client.get("/api/credits").status_code, status.HTTP_401_UNAUTHORIZED)
 
 
-class ClerkAuthenticationTests(APITestCase):
-    """Test suite for Clerk JWT authentication class."""
-
-    def test_clerk_auth_creates_new_user(self) -> None:
-        """Test ClerkJWTAuthentication creates user when valid token is presented."""
-        from unittest.mock import MagicMock, patch
-        from users.authentication import ClerkJWTAuthentication
-
-        auth = ClerkJWTAuthentication()
-        mock_request = MagicMock()
-        mock_request.headers = {"Authorization": "Bearer fake.clerk.jwt.token"}
-
-        mock_payload = {
-            "iss": "https://calm-seal-81.clerk.accounts.dev",
-            "sub": "user_2test123456789",
-            "email": "clerk_test@example.com",
-            "first_name": "Clerk",
-            "last_name": "Tester",
-        }
-
-        with patch("jwt.decode", return_value=mock_payload):
-            with patch("users.authentication._get_jwks_client") as mock_jwks:
-                mock_jwks_client = MagicMock()
-                mock_jwks_client.get_signing_key_from_jwt.return_value = MagicMock(key="public_key")
-                mock_jwks.return_value = mock_jwks_client
-
-                user, token = auth.authenticate(mock_request)
-                self.assertIsNotNone(user)
-                self.assertEqual(user.email, "clerk_test@example.com")
-                self.assertEqual(user.google_id, "user_2test123456789")
-                self.assertEqual(user.credits_remaining, 0)
-                self.assertEqual(token, "fake.clerk.jwt.token")
-
-    def test_clerk_auth_returns_existing_user(self) -> None:
-        """Test ClerkJWTAuthentication matches existing user by google_id."""
-        from unittest.mock import MagicMock, patch
-        from users.authentication import ClerkJWTAuthentication
-
-        existing_user = User.objects.create_user(
-            email="existing_clerk@example.com",
-            google_id="user_2existing_id",
-        )
-
-        auth = ClerkJWTAuthentication()
-        mock_request = MagicMock()
-        mock_request.headers = {"Authorization": "Bearer fake.clerk.jwt.token"}
-
-        mock_payload = {
-            "iss": "https://calm-seal-81.clerk.accounts.dev",
-            "sub": "user_2existing_id",
-        }
-
-        with patch("jwt.decode", return_value=mock_payload):
-            with patch("users.authentication._get_jwks_client") as mock_jwks:
-                mock_jwks_client = MagicMock()
-                mock_jwks_client.get_signing_key_from_jwt.return_value = MagicMock(key="public_key")
-                mock_jwks.return_value = mock_jwks_client
-
-                user, token = auth.authenticate(mock_request)
-                self.assertEqual(user, existing_user)
-
-
 GOOGLE_CLAIMS = {
     "sub": "google-sub-123",
     "email": "ada@example.com",
@@ -730,3 +668,52 @@ class PublicPlansFromDatabaseTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("plan", response.data)
+
+
+class ForgedTokenTests(APITestCase):
+    """#1: a token signed by someone else's key must never authenticate anyone."""
+
+    def test_self_signed_rs256_token_for_superuser_is_rejected(self) -> None:
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        User.objects.create_superuser(email="boss@example.com", password="Password123!")
+        attacker_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        forged = jwt.encode(
+            {"iss": "https://attacker.example", "sub": "x", "email": "boss@example.com"},
+            attacker_key,
+            algorithm="RS256",
+        )
+        # Simulate the attacker serving their own JWKS at the issuer URL.
+        signing_key = MagicMock(key=attacker_key.public_key())
+        with patch("jwt.PyJWKClient.get_signing_key_from_jwt", return_value=signing_key):
+            response = self.client.get("/api/auth/me", HTTP_AUTHORIZATION=f"Bearer {forged}")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class ProductionSettingsTests(APITestCase):
+    """#4: production must not boot without a real SECRET_KEY, and DEBUG is off by default."""
+
+    def _load_settings(self, **env) -> "subprocess.CompletedProcess":
+        import os
+        import subprocess
+        import sys
+
+        clean = {k: v for k, v in os.environ.items() if k not in ("DEBUG", "SECRET_KEY")}
+        clean.update(env)
+        code = "import config.settings as s; print(s.DEBUG, s.SECRET_KEY)"
+        # dotenv must not refill the vars from a local .env, so point it at an empty dir.
+        return subprocess.run(
+            [sys.executable, "-c", f"import dotenv; dotenv.load_dotenv = lambda *a, **k: None; {code}"],
+            capture_output=True, text=True, env=clean,
+        )
+
+    def test_missing_secret_key_refuses_to_start(self) -> None:
+        result = self._load_settings()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECRET_KEY must be set", result.stderr)
+
+    def test_secret_key_from_env_and_debug_off_by_default(self) -> None:
+        result = self._load_settings(SECRET_KEY="prod-secret")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["False", "prod-secret"])

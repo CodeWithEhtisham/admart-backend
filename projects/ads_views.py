@@ -2,13 +2,14 @@
 
 import logging
 import secrets
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,7 +19,7 @@ from projects import ads_oauth
 from projects.media_policy import ADS_PROVIDERS, validate_ads_placements
 from projects.models import AdAccount, AdBoostJob, Project
 from projects.serializers import AdAccountSerializer, AdBoostJobSerializer
-from projects.views import ProjectScopedSocialMixin
+from projects.views import ProjectScopedSocialMixin, oauth_frontend_redirect
 
 logger = logging.getLogger(__name__)
 
@@ -63,37 +64,58 @@ class AdsDisconnectView(ProjectScopedSocialMixin, APIView):
 
 
 class AdsCallbackView(APIView):
+    """Ads OAuth redirect target: forwards code/state to the frontend (see AdsConnectCompleteView)."""
+
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
-    def _redirect(self, provider: str, *, ok: bool) -> HttpResponseRedirect:
+    def _error(self, provider: str) -> HttpResponseRedirect:
         base = settings.FRONTEND_URL.rstrip("/")
-        flag = f"adsConnected={provider}" if ok else f"adsError={provider}"
-        return HttpResponseRedirect(f"{base}/social?{flag}")
+        return HttpResponseRedirect(f"{base}/social?{urlencode({'adsError': provider})}")
 
     def get(self, request: Request, provider: str, *args, **kwargs) -> HttpResponseRedirect:
         code = request.query_params.get("code", "")
         state = request.query_params.get("state", "")
         if request.query_params.get("error") or not code or not state:
-            return self._redirect(provider, ok=False)
+            return self._error(provider)
         try:
             payload = signing.loads(state, salt=ADS_STATE_SALT, max_age=ADS_STATE_MAX_AGE)
         except signing.BadSignature:
-            return self._redirect(provider, ok=False)
+            return self._error(provider)
         if payload.get("provider") != provider:
-            return self._redirect(provider, ok=False)
+            return self._error(provider)
+        return oauth_frontend_redirect("ads", provider, code, state)
+
+
+class AdsConnectCompleteView(APIView):
+    """POST /api/ads/complete/<provider> — finish ads OAuth as the user who started it."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, provider: str, *args, **kwargs) -> Response:
+        code = str(request.data.get("code") or "")
+        state = str(request.data.get("state") or "")
+        try:
+            payload = signing.loads(state, salt=ADS_STATE_SALT, max_age=ADS_STATE_MAX_AGE)
+        except signing.BadSignature:
+            return Response({"message": "This connection link is invalid or expired. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or payload.get("provider") != provider:
+            return Response({"message": "Invalid connection request."}, status=status.HTTP_400_BAD_REQUEST)
+        if payload.get("userId") != str(request.user.id):
+            return Response(
+                {"message": "This connection was started from a different account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        project = get_object_or_404(Project, id=payload.get("projectId"), owner=request.user)
         ads_provider = ads_oauth.ADS_PROVIDERS.get(provider)
         if ads_provider is None:
-            return self._redirect(provider, ok=False)
-        project = Project.objects.filter(id=payload.get("projectId"), owner_id=payload.get("userId")).first()
-        if project is None:
-            return self._redirect(provider, ok=False)
+            return Response({"message": f"{provider} ads is not available."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             tokens = ads_provider.exchange_code(code)
             profile = ads_provider.fetch_profile(tokens["access_token"])
         except Exception:  # noqa: BLE001
             logger.exception("Ads OAuth failed for %s", provider)
-            return self._redirect(provider, ok=False)
+            return Response({"message": f"Couldn't connect {provider} ads. Please try again."}, status=status.HTTP_502_BAD_GATEWAY)
         if not profile.get("externalId"):
             ids = tokens.get("advertiser_ids") or []
             if ids:
@@ -110,7 +132,7 @@ class AdsCallbackView(APIView):
             scope=tokens.get("scope", ""),
         )
         account.save()
-        return self._redirect(provider, ok=True)
+        return Response(AdAccountSerializer(account).data)
 
 
 class ProjectAdBoostView(ProjectScopedSocialMixin, APIView):

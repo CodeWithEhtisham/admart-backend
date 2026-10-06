@@ -30,7 +30,7 @@ from admin_panel.services import (
     free_signup_credits,
     review_payment,
 )
-from users.authentication import CombinedJWTAuthentication
+from users.authentication import AdmartJWTAuthentication
 from users.packs import serialize_topup_pack
 from users.plans import get_plan, serialize_plan, _plans_dict
 
@@ -40,7 +40,7 @@ User = get_user_model()
 class AdminAPIView(APIView):
     """Base class for admin views — accepts both JWT (API) and session (admin dashboard) auth."""
 
-    authentication_classes = [CombinedJWTAuthentication, SessionAuthentication]
+    authentication_classes = [AdmartJWTAuthentication, SessionAuthentication]
 
 
 class AdminStatsView(AdminAPIView):

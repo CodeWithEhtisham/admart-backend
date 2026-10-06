@@ -1,6 +1,7 @@
 import logging
 import secrets
 from typing import Any
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
@@ -151,6 +152,42 @@ class ProjectActivateView(APIView):
         return Response({"activeProjectId": str(project.id)}, status=status.HTTP_200_OK)
 
 
+def social_limit_response(user, project: Project, platform: str) -> Response | None:
+    """403 when connecting ``platform`` would exceed the plan's per-project limit.
+
+    Reconnecting a platform that is already connected doesn't count as a new slot.
+    """
+    from users.plans import get_plan
+
+    user_plan = get_plan(user.plan)
+    max_social_connections = user_plan.get("limits", {}).get("max_social_connections_per_project", 1)
+    current_connections = (
+        project.social_accounts.filter(connected=True).exclude(platform=platform).count()
+    )
+    if max_social_connections > 0 and current_connections >= max_social_connections:
+        return Response(
+            {
+                "message": f"Social media connection limit reached. Your {user_plan['name']} plan allows up to {max_social_connections} connected social account(s) per project. Upgrade to connect more accounts.",
+                "code": "SOCIAL_CONNECTION_LIMIT_REACHED",
+                "maxSocialConnections": max_social_connections,
+                "currentSocialConnections": current_connections,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+def oauth_frontend_redirect(kind: str, platform: str, code: str, state: str) -> HttpResponseRedirect:
+    """Hand the provider's code to the frontend, which completes it as the logged-in user.
+
+    The callback itself is unauthenticated, so it must not attach accounts: a signed
+    state alone would let an attacker send a victim their connect link (login CSRF).
+    """
+    base = settings.FRONTEND_URL.rstrip("/")
+    query = urlencode({"oauth": kind, "platform": platform, "code": code, "state": state})
+    return HttpResponseRedirect(f"{base}/social?{query}")
+
+
 class ProjectScopedSocialMixin:
     """Resolve and authorize the parent project for social-account endpoints."""
 
@@ -191,24 +228,9 @@ class ProjectSocialConnectView(ProjectScopedSocialMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check social media connection limit based on user's plan
-        from users.plans import get_plan
-        
-        user_plan = get_plan(request.user.plan)
-        limits = user_plan.get("limits", {})
-        max_social_connections = limits.get("max_social_connections_per_project", 1)
-        
-        current_connections = project.social_accounts.filter(connected=True).count()
-        if max_social_connections > 0 and current_connections >= max_social_connections:
-            return Response(
-                {
-                    "message": f"Social media connection limit reached. Your {user_plan['name']} plan allows up to {max_social_connections} connected social account(s) per project. Upgrade to connect more accounts.",
-                    "code": "SOCIAL_CONNECTION_LIMIT_REACHED",
-                    "maxSocialConnections": max_social_connections,
-                    "currentSocialConnections": current_connections,
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        limit = social_limit_response(request.user, project, platform)
+        if limit:
+            return limit
 
         user = request.user
         account, created = SocialAccount.objects.get_or_create(
@@ -297,44 +319,65 @@ class SocialConnectUrlView(ProjectScopedSocialMixin, APIView):
 class SocialCallbackView(APIView):
     """OAuth provider redirect target.
 
-    Reached via browser redirect from the provider (no bearer token); secured by the
-    signed ``state``. Exchanges the code, stores encrypted tokens, then 302-redirects
-    back to the frontend ``/social`` page with a status flag.
+    Reached via browser redirect from the provider (no bearer token). It only checks
+    the signed ``state`` and forwards ``code``/``state`` to the frontend, which posts
+    them to SocialConnectCompleteView as the logged-in user.
     """
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
-    def _redirect(self, platform: str, *, ok: bool) -> HttpResponseRedirect:
+    def _error(self, platform: str) -> HttpResponseRedirect:
         base = settings.FRONTEND_URL.rstrip("/")
-        flag = f"connected={platform}" if ok else f"error={platform}"
-        return HttpResponseRedirect(f"{base}/social?{flag}")
+        return HttpResponseRedirect(f"{base}/social?{urlencode({'error': platform})}")
 
     @extend_schema(summary="OAuth provider callback", responses={302: None})
     def get(self, request: Request, platform: str, *args: Any, **kwargs: Any) -> HttpResponseRedirect:
         code = request.query_params.get("code", "")
         state = request.query_params.get("state", "")
         if request.query_params.get("error") or not code or not state:
-            return self._redirect(platform, ok=False)
-
+            return self._error(platform)
         try:
             payload = signing.loads(state, salt=OAUTH_STATE_SALT, max_age=OAUTH_STATE_MAX_AGE)
         except signing.BadSignature:
             logger.warning("OAuth callback with bad/expired state for %s", platform)
-            return self._redirect(platform, ok=False)
-
+            return self._error(platform)
         if payload.get("platform") != platform:
-            return self._redirect(platform, ok=False)
+            return self._error(platform)
+        return oauth_frontend_redirect("social", platform, code, state)
 
+
+class SocialConnectCompleteView(APIView):
+    """POST /api/social/complete/<platform> — finish OAuth as the logged-in user.
+
+    Body: ``{"code": ..., "state": ...}`` from the callback redirect. Only the user who
+    started the flow (``state.userId``) can attach the account, to their own project.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(summary="Complete an OAuth social connection", request=None, responses={200: SocialAccountSerializer})
+    def post(self, request: Request, platform: str, *args: Any, **kwargs: Any) -> Response:
+        code = str(request.data.get("code") or "")
+        state = str(request.data.get("state") or "")
+        try:
+            payload = signing.loads(state, salt=OAUTH_STATE_SALT, max_age=OAUTH_STATE_MAX_AGE)
+        except signing.BadSignature:
+            return Response({"message": "This connection link is invalid or expired. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or payload.get("platform") != platform:
+            return Response({"message": "Invalid connection request."}, status=status.HTTP_400_BAD_REQUEST)
+        if payload.get("userId") != str(request.user.id):
+            return Response(
+                {"message": "This connection was started from a different account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        project = get_object_or_404(Project, id=payload.get("projectId"), owner=request.user)
         provider = oauth.PROVIDERS.get(platform)
         if provider is None:
-            return self._redirect(platform, ok=False)
-
-        project = Project.objects.filter(
-            id=payload.get("projectId"), owner_id=payload.get("userId")
-        ).first()
-        if project is None:
-            return self._redirect(platform, ok=False)
+            return Response({"message": f"{platform} connection is not available."}, status=status.HTTP_400_BAD_REQUEST)
+        limit = social_limit_response(request.user, project, platform)
+        if limit:
+            return limit
 
         try:
             if getattr(provider, "requires_pkce", False):
@@ -342,9 +385,9 @@ class SocialCallbackView(APIView):
             else:
                 tokens = provider.exchange_code(code)
             profile = provider.fetch_profile(tokens["access_token"])
-        except Exception:  # noqa: BLE001 — provider/network failures map to an error redirect
+        except Exception:  # noqa: BLE001 — provider/network failures map to a clean error
             logger.exception("OAuth token exchange/profile fetch failed for %s", platform)
-            return self._redirect(platform, ok=False)
+            return Response({"message": f"Couldn't connect {platform}. Please try again."}, status=status.HTTP_502_BAD_GATEWAY)
 
         account, _ = SocialAccount.objects.get_or_create(project=project, platform=platform)
         account.connected = True
@@ -363,5 +406,4 @@ class SocialCallbackView(APIView):
             scope=tokens.get("scope", ""),
         )
         account.save()
-
-        return self._redirect(platform, ok=True)
+        return Response(SocialAccountSerializer(account).data, status=status.HTTP_200_OK)

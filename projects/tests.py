@@ -12,6 +12,24 @@ from projects.crypto import decrypt
 from projects.models import Project, PublishJob, SocialAccount
 from projects.views import OAUTH_STATE_SALT
 
+
+def _complete_oauth(test, kind: str, platform: str, code: str, state: str, *, as_user=None):
+    """Provider redirect (anonymous) must only forward code/state; the logged-in
+    starter then completes the connection. Returns the completion response."""
+    from urllib.parse import parse_qs, urlparse
+
+    test.client.force_authenticate(user=None)
+    callback = "social_callback" if kind == "social" else "ads_callback"
+    key = "platform" if kind == "social" else "provider"
+    response = test.client.get(reverse(callback, kwargs={key: platform}), {"code": code, "state": state})
+    test.assertEqual(response.status_code, status.HTTP_302_FOUND)
+    forwarded = {k: v[0] for k, v in parse_qs(urlparse(response["Location"]).query).items()}
+    test.assertEqual(forwarded, {"oauth": kind, "platform": platform, "code": code, "state": state})
+
+    test.client.force_authenticate(user=as_user or test.user)
+    complete = "social_complete" if kind == "social" else "ads_complete"
+    return test.client.post(reverse(complete, kwargs={key: platform}), {"code": code, "state": state}, format="json")
+
 User = get_user_model()
 
 
@@ -304,12 +322,8 @@ class YouTubeOAuthConnectionTests(APITestCase):
         }
 
         # Callback is reached unauthenticated (browser redirect).
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "youtube"})
-        response = self.client.get(url, {"code": "auth-code", "state": self._valid_state()})
-
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=youtube")
+        response = _complete_oauth(self, "social", "youtube", "auth-code", self._valid_state())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         account = SocialAccount.objects.get(project=self.project, platform="youtube")
         self.assertTrue(account.connected)
@@ -338,12 +352,9 @@ class YouTubeOAuthConnectionTests(APITestCase):
         self.assertIn("error=youtube", response["Location"])
 
     @patch("projects.oauth.YouTubeProvider.exchange_code", side_effect=Exception("boom"))
-    def test_callback_exchange_failure_redirects_with_error(self, _mock_exchange) -> None:
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "youtube"})
-        response = self.client.get(url, {"code": "auth-code", "state": self._valid_state()})
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertIn("error=youtube", response["Location"])
+    def test_callback_exchange_failure_returns_error(self, _mock_exchange) -> None:
+        response = _complete_oauth(self, "social", "youtube", "auth-code", self._valid_state())
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertFalse(SocialAccount.objects.filter(project=self.project).exists())
 
 
@@ -431,12 +442,8 @@ class MetaOAuthConnectionTests(APITestCase):
             "handle": "",
             "avatarUrl": None,
         }
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "facebook"})
-        response = self.client.get(url, {"code": "c", "state": self._valid_state("facebook")})
-
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=facebook")
+        response = _complete_oauth(self, "social", "facebook", "c", self._valid_state("facebook"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         account = SocialAccount.objects.get(project=self.project, platform="facebook")
         self.assertTrue(account.connected)
         self.assertEqual(account.external_id, "fb-123")
@@ -452,12 +459,8 @@ class MetaOAuthConnectionTests(APITestCase):
             "handle": "maya.creates",
             "avatarUrl": "https://cdn.example/ig.jpg",
         }
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "instagram"})
-        response = self.client.get(url, {"code": "c", "state": self._valid_state("instagram")})
-
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=instagram")
+        response = _complete_oauth(self, "social", "instagram", "c", self._valid_state("instagram"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         account = SocialAccount.objects.get(project=self.project, platform="instagram")
         self.assertEqual(account.handle, "maya.creates")
         self.assertEqual(account.external_id, "ig-999")
@@ -566,11 +569,8 @@ class TikTokOAuthConnectionTests(APITestCase):
             "handle": "",
             "avatarUrl": "https://cdn.example/tt.jpg",
         }
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "tiktok"})
-        response = self.client.get(url, {"code": "c", "state": self._valid_state()})
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=tiktok")
+        response = _complete_oauth(self, "social", "tiktok", "c", self._valid_state())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         account = SocialAccount.objects.get(project=self.project, platform="tiktok")
         self.assertEqual(account.display_name, "Maya Creates")
         self.assertEqual(account.get_refresh_token(), "rft.tt")
@@ -664,11 +664,8 @@ class SnapchatOAuthConnectionTests(APITestCase):
             },
             salt=OAUTH_STATE_SALT,
         )
-        self.client.force_authenticate(user=None)
-        url = reverse("social_callback", kwargs={"platform": "snapchat"})
-        response = self.client.get(url, {"code": "c", "state": state})
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?connected=snapchat")
+        response = _complete_oauth(self, "social", "snapchat", "c", state)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         mock_exchange.assert_called_once_with("c", code_verifier="verifier")
         account = SocialAccount.objects.get(project=self.project, platform="snapchat")
         self.assertEqual(account.display_name, "Maya")
@@ -1080,22 +1077,14 @@ class FacebookPagePublishTests(SimpleTestCase):
         pages.json.return_value = {
             "data": [{"id": "111", "name": "Brand Page", "access_token": "page-tok"}]
         }
-        media = MagicMock()
-        media.content = b"fake-png"
-        media.headers = {"content-type": "image/png"}
-        media.raise_for_status = MagicMock()
         posted = MagicMock()
         posted.ok = True
         posted.json.return_value = {"id": "post-9"}
 
-        def _get(url, **kwargs):
-            if "accounts" in url:
-                return pages
-            return media
-
         with (
             patch("projects.publish.ensure_fresh_access_token", return_value="user-tok"),
-            patch("projects.publish.requests.get", side_effect=_get),
+            patch("projects.publish.requests.get", return_value=pages),
+            patch("projects.publish.fetch_media", return_value=(b"fake-png", "image/png")),
             patch("projects.publish.requests.post", return_value=posted) as mock_post,
         ):
             result = publish_facebook(
@@ -1452,11 +1441,8 @@ class AdsAccountTests(APITestCase):
             },
             salt=ADS_STATE_SALT,
         )
-        self.client.force_authenticate(user=None)
-        url = reverse("ads_callback", kwargs={"provider": "meta"})
-        response = self.client.get(url, {"code": "auth-code", "state": state})
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertEqual(response["Location"], "http://localhost:5173/social?adsConnected=meta")
+        response = _complete_oauth(self, "ads", "meta", "auth-code", state)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         account = AdAccount.objects.get(project=self.project, provider="meta")
         self.assertTrue(account.connected)
         self.assertEqual(account.external_id, "123456")
@@ -1785,3 +1771,88 @@ class ProjectCalendarTests(APITestCase):
         url = reverse("project_calendar", kwargs={"project_id": foreign.id})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class PublishFetchSafetyTests(SimpleTestCase):
+    """#3: publish source URLs can't reach internal services or leave MEDIA_ROOT."""
+
+    def test_internal_addresses_are_refused(self) -> None:
+        from content.url_resolve import fetch_media
+
+        for url in (
+            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            "http://10.0.0.5:6379/",
+            "http://localhost/admin/",
+            "file:///etc/passwd",
+        ):
+            with patch("content.url_resolve.requests.get") as mock_get, self.assertRaises(ValueError, msg=url):
+                fetch_media(url, timeout=5)
+            mock_get.assert_not_called()
+
+    def test_redirect_to_internal_is_refused(self) -> None:
+        from content.url_resolve import fetch_media
+
+        redirect = MagicMock(is_redirect=True)
+        with (
+            patch("content.url_resolve.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]),
+            patch("content.url_resolve.requests.get", return_value=redirect) as mock_get,
+            self.assertRaises(ValueError),
+        ):
+            fetch_media("https://public.example/video.mp4", timeout=5)
+        self.assertFalse(mock_get.call_args.kwargs["allow_redirects"])
+
+    def test_public_url_is_fetched(self) -> None:
+        from content.url_resolve import fetch_media
+
+        ok = MagicMock(is_redirect=False, content=b"mp4", headers={"Content-Type": "video/mp4"})
+        with (
+            patch("content.url_resolve.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]),
+            patch("content.url_resolve.requests.get", return_value=ok),
+        ):
+            self.assertEqual(fetch_media("https://public.example/video.mp4", timeout=5), (b"mp4", "video/mp4"))
+
+
+@override_settings(
+    GOOGLE_OAUTH_CLIENT_ID="test-client-id",
+    GOOGLE_OAUTH_CLIENT_SECRET="test-client-secret",
+    YOUTUBE_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/youtube",
+    FRONTEND_URL="http://localhost:5173",
+)
+class OAuthConnectHijackTests(APITestCase):
+    """#5: an attacker's connect link must not attach a victim's account to the attacker."""
+
+    def setUp(self) -> None:
+        self.attacker = User.objects.create_user(email="attacker@example.com", password="Password123!")
+        self.victim = User.objects.create_user(email="victim@example.com", password="Password123!")
+        self.attacker_project = Project.objects.create(owner=self.attacker, name="Evil")
+        # The attacker starts a connect flow for their own project and sends the link on.
+        self.client.force_authenticate(user=self.attacker)
+        url = reverse("project_social_connect_url", kwargs={"project_id": self.attacker_project.id, "platform": "youtube"})
+        self.state = self.client.get(url).data["state"]
+
+    @patch("projects.oauth.YouTubeProvider.fetch_profile", return_value={"externalId": "victim-channel"})
+    @patch("projects.oauth.YouTubeProvider.exchange_code", return_value={"access_token": "victim-token"})
+    def test_victim_completing_attackers_flow_is_refused(self, mock_exchange, _profile) -> None:
+        response = _complete_oauth(self, "social", "youtube", "victim-code", self.state, as_user=self.victim)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        mock_exchange.assert_not_called()
+        self.assertFalse(SocialAccount.objects.filter(project=self.attacker_project).exists())
+
+    @patch("projects.oauth.YouTubeProvider.exchange_code")
+    def test_anonymous_callback_never_stores_tokens(self, mock_exchange) -> None:
+        self.client.force_authenticate(user=None)
+        self.client.get(reverse("social_callback", kwargs={"platform": "youtube"}), {"code": "c", "state": self.state})
+        mock_exchange.assert_not_called()
+        self.assertFalse(SocialAccount.objects.exists())
+
+    @patch("projects.ads_oauth.MetaAdsProvider.exchange_code")
+    def test_ads_flow_is_bound_to_its_starter_too(self, mock_exchange) -> None:
+        from projects.ads_views import ADS_STATE_SALT
+
+        state = signing.dumps(
+            {"projectId": str(self.attacker_project.id), "provider": "meta", "userId": str(self.attacker.id), "nonce": "n"},
+            salt=ADS_STATE_SALT,
+        )
+        response = _complete_oauth(self, "ads", "meta", "victim-code", state, as_user=self.victim)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        mock_exchange.assert_not_called()
