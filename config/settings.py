@@ -102,12 +102,28 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# PostgreSQL when POSTGRES_DB is set (production: row locks in credit/payment code
+# only take effect on Postgres); SQLite otherwise for local development.
+if os.getenv("POSTGRES_DB"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB"),
+            "USER": os.getenv("POSTGRES_USER", ""),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Email (password reset). Local DEBUG prints emails to the console; production
@@ -160,6 +176,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+# `collectstatic` target; nginx serves it at /static/ (Django admin + dashboard CSS).
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 
 # Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
 MEDIA_URL = "/media/"
@@ -191,9 +209,12 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/day",
-        "user": "1000/day",
-        "auth_sensitive": "5/minute",  # Rate limit login/reset password attempts
+        # Per-minute so normal use (job polling every ~2s, several pages open) never hits
+        # it, while scripted abuse still does. LocMemCache is per gunicorn worker, so the
+        # effective limit is rate x workers.
+        "anon": "60/minute",
+        "user": "300/minute",
+        "auth_sensitive": "5/minute",  # login, signup, Google, password reset (per IP)
     },
 }
 

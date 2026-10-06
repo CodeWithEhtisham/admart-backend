@@ -13,6 +13,7 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -58,7 +59,14 @@ def user_for_reset_token(token: str):
     return user if default_token_generator.check_token(user, raw) else None
 
 
-class RegisterView(APIView):
+class SensitiveAuthThrottle:
+    """Brute-force limit (settings "auth_sensitive", per IP) for credential endpoints."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_sensitive"
+
+
+class RegisterView(SensitiveAuthThrottle, APIView):
     """View to handle user registration.
 
     On successful registration, creates a free-plan user and returns JWT tokens.
@@ -92,7 +100,7 @@ class RegisterView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class CustomTokenObtainPairView(TokenObtainPairView):
+class CustomTokenObtainPairView(SensitiveAuthThrottle, TokenObtainPairView):
     """Custom Login View returning camelCase tokens and user profile."""
 
     serializer_class = CustomTokenObtainPairSerializer
@@ -132,7 +140,7 @@ class MeView(generics.RetrieveUpdateAPIView):
         return super().patch(request, *args, **kwargs)
 
 
-class ForgotPasswordView(APIView):
+class ForgotPasswordView(SensitiveAuthThrottle, APIView):
     """View to initiate password reset."""
 
     permission_classes = [AllowAny]
@@ -176,7 +184,7 @@ class ForgotPasswordView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class ResetPasswordView(APIView):
+class ResetPasswordView(SensitiveAuthThrottle, APIView):
     """View to reset password using signed token."""
 
     permission_classes = [AllowAny]
@@ -214,7 +222,7 @@ class ResetPasswordView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class GoogleAuthView(APIView):
+class GoogleAuthView(SensitiveAuthThrottle, APIView):
     """Exchange a Google auth code (or id_token) for Admart JWT."""
 
     permission_classes = [AllowAny]

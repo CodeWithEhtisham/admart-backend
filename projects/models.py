@@ -39,7 +39,8 @@ class Project(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["-last_accessed_at", "-created_at"]
+        # nulls_last: Postgres sorts NULL first in DESC; never-opened projects go last.
+        ordering = [models.F("last_accessed_at").desc(nulls_last=True), "-created_at"]
         indexes = [
             models.Index(fields=["owner", "-last_accessed_at"]),
         ]

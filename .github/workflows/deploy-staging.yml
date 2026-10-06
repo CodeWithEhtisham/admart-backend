@@ -1,0 +1,65 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false   # never interrupt a deploy halfway
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: admart
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: admart
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U admart"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DEBUG: "False"
+      SECRET_KEY: ci-only-secret-key-not-for-production
+      SOCIAL_TOKEN_ENCRYPTION_KEY: Y2ktb25seS1kdW1teS1rZXktMzItYnl0ZXMtbG9uZyE=
+      POSTGRES_DB: admart
+      POSTGRES_USER: admart
+      POSTGRES_PASSWORD: ci
+      POSTGRES_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test --noinput
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Deploy
+        env:
+          TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+          BACKEND_DIR: ${{ vars.BACKEND_DIR || '/srv/admart/backend' }}
+        run: ssh "$TARGET" "bash $BACKEND_DIR/deploy/deploy.sh staging"

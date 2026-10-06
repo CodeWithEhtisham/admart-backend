@@ -10,6 +10,17 @@ from rest_framework.test import APITestCase
 User = get_user_model()
 
 
+class APITestCase(APITestCase):  # noqa: F811 — shadow DRF's so every test here starts throttle-free
+    """Clears the cache (where DRF throttle history lives) before each test, so the
+    5/minute auth limit doesn't leak between tests."""
+
+    def run(self, result=None):
+        from django.core.cache import cache
+
+        cache.clear()
+        return super().run(result)
+
+
 class UserAuthTests(APITestCase):
     """Test suite for User Authentication and registration endpoints."""
 
@@ -875,3 +886,16 @@ class TokenEncryptionKeyTests(APITestCase):
         missing = settings_test._load_settings(SECRET_KEY="prod-secret")
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn("SOCIAL_TOKEN_ENCRYPTION_KEY must be set", missing.stderr)
+
+
+class AuthBruteForceLimitTests(APITestCase):
+    """#9: credential endpoints are rate limited per IP (settings "auth_sensitive")."""
+
+    def test_sixth_login_attempt_in_a_minute_is_blocked(self) -> None:
+        User.objects.create_user(email="victim2@example.com", password="Correct-Horse-9")
+        codes = [
+            self.client.post(reverse("auth_login"), {"email": "victim2@example.com", "password": f"guess{i}"}, format="json").status_code
+            for i in range(6)
+        ]
+        self.assertEqual(codes[:5], [401] * 5)
+        self.assertEqual(codes[5], 429)
