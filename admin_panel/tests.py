@@ -718,3 +718,49 @@ class AdminDeleteCustomerKeepsPaymentsTests(APITestCase):
         listed = self.client.get(reverse("admin_payments")).data
         rows = listed.get("items", listed) if isinstance(listed, dict) else listed
         self.assertIn("gone@example.com (deleted account)", [r["email"] for r in rows])
+
+
+class AdminInputValidationTests(APITestCase):
+    """Bad admin input gets a 400, never a 500 or a broken signup flow."""
+
+    def setUp(self) -> None:
+        self.owner = User.objects.create_superuser(email="owner3@example.com", password="Password123!")
+        self.customer = User.objects.create_user(email="cust3@example.com", password="Password123!", plan="free")
+        self.client.force_authenticate(user=self.owner)
+
+    def test_default_free_credits_must_be_a_number(self) -> None:
+        from admin_panel.models import AdminSetting
+
+        url = reverse("admin_settings")
+        for bad in ("abc", "-1", "NaN"):
+            response = self.client.put(url, {"defaultFreeCredits": bad}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, bad)
+        self.assertFalse(AdminSetting.objects.filter(key="default_free_credits").exists())
+        self.assertEqual(self.client.put(url, {"defaultFreeCredits": "5"}, format="json").status_code, status.HTTP_200_OK)
+        self.assertEqual(AdminSetting.objects.get(key="default_free_credits").value, "5")
+
+    def test_signup_survives_a_bad_stored_value(self) -> None:
+        from admin_panel.models import AdminSetting
+
+        AdminSetting.objects.create(key="default_free_credits", value="lots")
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            reverse("auth_register"),
+            {"email": "newbie@example.com", "password": "Strong-Pass-123", "firstName": "New", "lastName": "Bie"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(User.objects.get(email="newbie@example.com").credits_remaining, 0)
+
+    def test_credit_adjustment_rejects_non_numbers(self) -> None:
+        url = reverse("admin_user_credits", kwargs={"user_id": self.customer.id})
+        for bad in ("abc", "NaN", None):
+            response = self.client.post(url, {"amount": bad, "reason": "grant"}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, bad)
+
+    def test_plan_change_rejects_bad_topup_without_changing_anything(self) -> None:
+        url = reverse("admin_user_plan", kwargs={"user_id": self.customer.id})
+        response = self.client.post(url, {"plan": "plus", "creditsMode": "topup", "creditsToAdd": "abc"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.plan, "free")

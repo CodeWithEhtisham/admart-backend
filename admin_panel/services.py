@@ -1,7 +1,8 @@
 """Aggregations powering the superadmin overview/stats endpoints."""
 
 from datetime import timedelta
-from decimal import Decimal
+import logging
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -20,6 +21,8 @@ CHART_DAYS = 30
 PAID_PLANS = ("basic", "plus", "pro")
 
 ZERO = Decimal("0")
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
     "default_free_credits": "0",
@@ -59,8 +62,20 @@ def payment_screenshot_url(payment, request) -> str | None:
 
 
 def free_signup_credits() -> Decimal:
-    """Credits granted to a new Free-plan account (admin-editable setting)."""
-    return Decimal(get_setting("default_free_credits", "0"))
+    """Credits granted to a new Free-plan account (admin-editable setting).
+
+    A bad stored value (saved before validation existed) falls back to 0 instead
+    of breaking every signup.
+    """
+    raw = get_setting("default_free_credits", "0")
+    try:
+        value = Decimal(str(raw))
+    except InvalidOperation:
+        value = Decimal("NaN")
+    if not value.is_finite() or value < 0:
+        logger.warning("Invalid default_free_credits setting %r; using 0", raw)
+        return ZERO
+    return value
 
 
 def expire_subscription_if_due(user):

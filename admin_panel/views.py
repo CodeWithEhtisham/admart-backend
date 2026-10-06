@@ -452,9 +452,12 @@ class AdminUserPlanView(AdminAPIView):
             user.credits_reset_at = timezone.now() + timedelta(days=30)
         elif credits_mode == "topup":
             try:
-                add = Decimal(str(data.get("creditsToAdd") or 0))
-            except (TypeError, ValueError):
-                add = Decimal("0")
+                add = _non_negative_decimal(data.get("creditsToAdd") or 0)
+            except (InvalidOperation, ValueError):
+                return Response(
+                    {"message": "Credits to add must be a number of 0 or more."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             adjustment = add
             user.credits_total += add
             user.credits_remaining += add
@@ -502,8 +505,10 @@ class AdminUserCreditsView(AdminAPIView):
         data = request.data or {}
         try:
             amount = Decimal(str(data.get("amount")))
-        except (TypeError, ValueError):
-            return Response({"message": "Amount is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not amount.is_finite():
+                raise ValueError
+        except (TypeError, ValueError, InvalidOperation):
+            return Response({"message": "Amount must be a number."}, status=status.HTTP_400_BAD_REQUEST)
         if amount == 0:
             return Response({"message": "Amount must be non-zero."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -670,7 +675,16 @@ class AdminSettingsView(AdminAPIView):
             "easypaisaNumber": "easypaisa_number",
             "easypaisaName": "easypaisa_name",
         }
-        for camel, key in editable.items():
-            if camel in data:
-                AdminSetting.objects.update_or_create(key=key, defaults={"value": str(data[camel])})
+        values = {camel: str(data[camel]) for camel in editable if camel in data}
+        if "defaultFreeCredits" in values:
+            # Every signup reads this; a non-number here would break registration.
+            try:
+                values["defaultFreeCredits"] = str(_non_negative_decimal(values["defaultFreeCredits"]))
+            except (InvalidOperation, ValueError):
+                return Response(
+                    {"message": "Default free credits must be a number of 0 or more."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        for camel, value in values.items():
+            AdminSetting.objects.update_or_create(key=editable[camel], defaults={"value": value})
         return Response(self._payload())
