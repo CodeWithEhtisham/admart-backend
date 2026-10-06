@@ -208,50 +208,6 @@ class ProjectSocialListView(ProjectScopedSocialMixin, APIView):
         return Response(SocialAccountSerializer(accounts, many=True).data, status=status.HTTP_200_OK)
 
 
-class ProjectSocialConnectView(ProjectScopedSocialMixin, APIView):
-    """Mock-connect a social platform within a project.
-
-    In production this initiates an OAuth flow; for dev it creates/re-activates a
-    SocialAccount immediately.
-    """
-
-    @extend_schema(
-        summary="Connect a social platform to a project",
-        request=None,
-        responses={200: SocialAccountSerializer, 201: SocialAccountSerializer},
-    )
-    def post(self, request: Request, project_id: str, platform: str, *args: Any, **kwargs: Any) -> Response:
-        project = self.get_project(request, project_id)
-        if platform not in VALID_PLATFORMS:
-            return Response(
-                {"detail": f"Invalid platform. Choose from: {', '.join(VALID_PLATFORMS)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        limit = social_limit_response(request.user, project, platform)
-        if limit:
-            return limit
-
-        user = request.user
-        account, created = SocialAccount.objects.get_or_create(
-            project=project,
-            platform=platform,
-            defaults={
-                "connected": True,
-                "handle": f"@{(user.first_name or 'user').lower()}_{platform}",
-                "display_name": f"{user.first_name} {user.last_name}".strip() or user.email,
-            },
-        )
-        if not created and not account.connected:
-            account.connected = True
-            account.save(update_fields=["connected"])
-
-        return Response(
-            SocialAccountSerializer(account).data,
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-        )
-
-
 class ProjectSocialDisconnectView(ProjectScopedSocialMixin, APIView):
     """Soft-disconnect a social platform within a project."""
 

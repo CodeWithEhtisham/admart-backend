@@ -170,25 +170,6 @@ class ProjectSocialTests(APITestCase):
     def _url(self, name: str, **extra) -> str:
         return reverse(name, kwargs={"project_id": self.project.id, **extra})
 
-    def test_connect_social(self) -> None:
-        url = self._url("project_social_connect", platform="instagram")
-        response = self.client.post(url, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["platform"], "instagram")
-        self.assertEqual(response.data["projectId"], str(self.project.id))
-        self.assertTrue(response.data["connected"])
-
-    def test_connect_invalid_platform(self) -> None:
-        url = self._url("project_social_connect", platform="twitter")
-        response = self.client.post(url, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_connect_on_foreign_project_returns_404(self) -> None:
-        foreign = Project.objects.create(owner=self.other, name="Brand B")
-        url = reverse("project_social_connect", kwargs={"project_id": foreign.id, "platform": "tiktok"})
-        response = self.client.post(url, format="json")
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
     def test_list_social(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="tiktok", connected=True)
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
@@ -209,13 +190,6 @@ class ProjectSocialTests(APITestCase):
         url = self._url("project_social_disconnect", platform="tiktok")
         response = self.client.delete(url, format="json")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_reconnect_social(self) -> None:
-        SocialAccount.objects.create(project=self.project, platform="instagram", connected=False)
-        url = self._url("project_social_connect", platform="instagram")
-        response = self.client.post(url, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data["connected"])
 
     def test_same_platform_isolated_per_project(self) -> None:
         """Two projects can each connect the same platform independently."""
@@ -1856,3 +1830,39 @@ class OAuthConnectHijackTests(APITestCase):
         response = _complete_oauth(self, "ads", "meta", "victim-code", state, as_user=self.victim)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         mock_exchange.assert_not_called()
+
+
+@override_settings(
+    GOOGLE_OAUTH_CLIENT_ID="test-client-id",
+    GOOGLE_OAUTH_CLIENT_SECRET="test-client-secret",
+    YOUTUBE_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/youtube",
+    FRONTEND_URL="http://localhost:5173",
+)
+class SocialConnectionLimitTests(APITestCase):
+    """The plan's max_social_connections_per_project applies to real OAuth connects."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="limit@example.com", password="Password123!")  # Free: 1 slot
+        self.project = Project.objects.create(owner=self.user, name="Brand")
+        self.client.force_authenticate(user=self.user)
+
+    def _state(self, platform: str) -> str:
+        return signing.dumps(
+            {"projectId": str(self.project.id), "platform": platform, "userId": str(self.user.id), "nonce": "n"},
+            salt=OAUTH_STATE_SALT,
+        )
+
+    @patch("projects.oauth.YouTubeProvider.exchange_code")
+    def test_second_platform_over_limit_is_refused(self, mock_exchange) -> None:
+        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        response = _complete_oauth(self, "social", "youtube", "code", self._state("youtube"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["code"], "SOCIAL_CONNECTION_LIMIT_REACHED")
+        mock_exchange.assert_not_called()
+
+    @patch("projects.oauth.YouTubeProvider.fetch_profile", return_value={"externalId": "UC1"})
+    @patch("projects.oauth.YouTubeProvider.exchange_code", return_value={"access_token": "tok"})
+    def test_reconnecting_the_same_platform_is_allowed(self, _exchange, _profile) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        response = _complete_oauth(self, "social", "youtube", "code", self._state("youtube"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

@@ -17,7 +17,6 @@ from projects.publish_views import (
 from projects.views import (
     ProjectActivateView,
     ProjectDetailView,
-    ProjectSocialConnectView,
     ProjectSocialDisconnectView,
     ProjectSocialListView,
     SocialConnectUrlView,
@@ -38,11 +37,6 @@ urlpatterns = [
         "<uuid:project_id>/social/connect/<str:platform>/url",
         SocialConnectUrlView.as_view(),
         name="project_social_connect_url",
-    ),
-    path(
-        "<uuid:project_id>/social/connect/<str:platform>",
-        ProjectSocialConnectView.as_view(),
-        name="project_social_connect",
     ),
     path(
         "<uuid:project_id>/social/disconnect/<str:platform>",

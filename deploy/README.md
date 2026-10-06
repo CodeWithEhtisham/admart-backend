@@ -65,7 +65,7 @@ cp /srv/admart/backend/deploy/admart-backend.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now admart-backend
 
 cp /srv/admart/backend/deploy/nginx-admart.conf /etc/nginx/sites-available/admart
-sed -i 's/api-staging.example.com/<your api domain>/; s/staging.example.com/<your app domain>/' /etc/nginx/sites-available/admart
+sed -i 's/api-staging\.example\.com/<your api domain>/g; s/staging\.example\.com/<your app domain>/g' /etc/nginx/sites-available/admart
 ln -s /etc/nginx/sites-available/admart /etc/nginx/sites-enabled/ && rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 certbot --nginx -d <your app domain> -d <your api domain>
@@ -86,6 +86,38 @@ Point both domains' DNS A records at the server first. nginx serves `/media/` an
 | Variable (frontend) | `VITE_GOOGLE_REDIRECT_URI` | `https://<your app domain>/auth-callback` |
 
 Platform keys (fal, Google secret, Meta, TikTok…) live **only** in the server's `.env`. Never put them in GitHub.
+
+## 5. Nightly backups (as root)
+
+`deploy/backup.sh` dumps PostgreSQL and archives `media/` + `private_media/` into `/var/backups/admart/<timestamp>/`, owner-only, with checksums, and keeps 14 days.
+
+```bash
+install -d -o deploy -g deploy -m 700 /var/backups/admart
+cp /srv/admart/backend/deploy/admart-backup.service /srv/admart/backend/deploy/admart-backup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now admart-backup.timer
+systemctl start admart-backup.service && ls /var/backups/admart   # run one now to check
+```
+
+Backups on the same server are lost with the server, so also copy them offsite. Install `rclone`, configure a remote as the deploy user (`rclone config`, e.g. Backblaze B2 or S3, ideally with rclone's `crypt` encryption), then add to the service with `systemctl edit admart-backup.service`:
+
+```
+[Service]
+Environment=BACKUP_REMOTE=<remote>:admart-backups/staging
+```
+
+`.env` is not in the backups. Keep a copy in your password manager: without `SOCIAL_TOKEN_ENCRYPTION_KEY`, restored social tokens can't be decrypted.
+
+**Restore** (tested: data and files come back identical):
+
+```bash
+systemctl stop admart-backend
+sudo -u postgres psql -c "DROP DATABASE admart WITH (FORCE)" -c "CREATE DATABASE admart OWNER admart"
+PGPASSWORD=<db password> pg_restore --no-owner -h localhost -U admart -d admart /var/backups/admart/<stamp>/db.dump
+tar -xzf /var/backups/admart/<stamp>/files.tar.gz -C /srv/admart/backend
+systemctl start admart-backend
+```
+
+Practise a restore once on a spare machine before you need it.
 
 ## Rollback
 
