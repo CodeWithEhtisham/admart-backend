@@ -597,3 +597,105 @@ class SeededPlansMatchCodeTests(APITestCase):
 
         for plan in PlanDefinition.objects.all():
             self.assertEqual(plan.features, PLAN_TIERS[plan.plan_id]["features"], plan.plan_id)
+
+
+class TopupPacksFromDatabaseTests(APITestCase):
+    def setUp(self) -> None:
+        from admin_panel.models import TopupPack
+
+        # Packs are seeded by migration; the admin edits one and hides another.
+        TopupPack.objects.filter(pack_id="pack_small").update(credits=7, price_pkr=1999, name="Starter Plus")
+        TopupPack.objects.filter(pack_id="pack_large").update(is_public=False)
+        self.user = User.objects.create_user(email="packs@example.com", password="Password123!")
+        self.admin = User.objects.create_superuser(email="packadmin@example.com", password="Password123!")
+        self.client.force_authenticate(user=self.user)
+
+    def _submit(self, pack: str, txn: str):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        shot = SimpleUploadedFile("proof.png", b"filedata", content_type="image/png")
+        return self.client.post(
+            "/api/credits/payments/submit",
+            {"pack": pack, "screenshot": shot, "transactionId": txn},
+            format="multipart",
+        )
+
+    def test_topups_endpoint_follows_database(self) -> None:
+        items = self.client.get("/api/credits/topups").data["items"]
+        self.assertEqual([p["id"] for p in items], ["pack_small", "pack_medium"])
+        self.assertEqual(items[0]["name"], "Starter Plus")
+        self.assertEqual(items[0]["pricePkr"], 1999)
+
+    def test_hidden_pack_cannot_be_bought(self) -> None:
+        response = self._submit("pack_large", "EP-HIDDEN")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("pack", response.data)
+
+    def test_approval_uses_database_pack(self) -> None:
+        from admin_panel.services import review_payment
+
+        response = self._submit("pack_small", "EP-SMALL")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(float(response.data["amount"]), 1999)
+        review_payment(response.data["id"], "approve", self.admin)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.topup_credits, 7)
+
+
+class AdminPlanAndPackEditTests(APITestCase):
+    def setUp(self) -> None:
+        self.owner = User.objects.create_superuser(email="owner@example.com", password="Password123!")
+        self.staff = User.objects.create_user(email="staffer@example.com", password="Password123!", is_staff=True)
+        self.client.force_authenticate(user=self.owner)
+
+    def test_owner_edits_pack_and_billing_follows(self) -> None:
+        response = self.client.put(
+            reverse("admin_pack_detail", kwargs={"pack_id": "pack_medium"}),
+            {"name": "Creator Max", "credits": 18, "pricePkr": 4500, "popular": False,
+             "features": ["18 credits", "  ", "Never expires"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["features"], ["18 credits", "Never expires"])
+        public = {p["id"]: p for p in self.client.get("/api/credits/topups").data["items"]}
+        self.assertEqual(public["pack_medium"]["name"], "Creator Max")
+        self.assertEqual(public["pack_medium"]["pricePkr"], 4500)
+
+    def test_hidden_pack_still_listed_for_admin(self) -> None:
+        self.client.put(
+            reverse("admin_pack_detail", kwargs={"pack_id": "pack_large"}), {"isPublic": False}, format="json"
+        )
+        items = {p["id"]: p for p in self.client.get(reverse("admin_packs")).data["items"]}
+        self.assertFalse(items["pack_large"]["isPublic"])
+        public_ids = [p["id"] for p in self.client.get("/api/credits/topups").data["items"]]
+        self.assertNotIn("pack_large", public_ids)
+
+    def test_invalid_values_are_400_not_500(self) -> None:
+        for url, body in [
+            (reverse("admin_pack_detail", kwargs={"pack_id": "pack_small"}), {"pricePkr": -5}),
+            (reverse("admin_pack_detail", kwargs={"pack_id": "pack_small"}), {"credits": "lots"}),
+            (reverse("admin_pack_detail", kwargs={"pack_id": "pack_small"}), {"isPublic": "false"}),
+            (reverse("admin_plan_detail", kwargs={"plan_id": "plus"}), {"priceUsd": "abc"}),
+            (reverse("admin_plan_detail", kwargs={"plan_id": "plus"}), {"limits": {"max_projects": "4"}}),
+            (reverse("admin_plan_detail", kwargs={"plan_id": "plus"}), {"name": "  "}),
+        ]:
+            response = self.client.put(url, body, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, body)
+
+    def test_owner_edits_plan_limits(self) -> None:
+        response = self.client.put(
+            reverse("admin_plan_detail", kwargs={"plan_id": "plus"}),
+            {"monthlyCredits": 40, "limits": {"max_projects": 6, "has_analytics": True, "discount_percent": 12.5}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["limits"]["max_projects"], 6)
+        self.assertEqual(float(response.data["monthlyCredits"]), 40)
+
+    def test_staff_can_view_but_not_edit(self) -> None:
+        self.client.force_authenticate(user=self.staff)
+        self.assertEqual(self.client.get(reverse("admin_packs")).status_code, status.HTTP_200_OK)
+        response = self.client.put(
+            reverse("admin_pack_detail", kwargs={"pack_id": "pack_small"}), {"name": "X"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

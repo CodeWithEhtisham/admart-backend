@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from admin_panel.models import AdminSetting, CreditAdjustment, Payment, PlanDefinition, Subscription
+from admin_panel.models import AdminSetting, CreditAdjustment, Payment, PlanDefinition, Subscription, TopupPack
 
 
 @admin.register(AdminSetting)
@@ -64,5 +64,14 @@ class PlanDefinitionAdmin(admin.ModelAdmin):
     list_display = ("plan_id", "name", "price_usd", "price_pkr", "monthly_credits", "is_public", "sort_order")
     list_filter = ("is_public",)
     search_fields = ("plan_id", "name")
+    ordering = ("sort_order",)
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TopupPack)
+class TopupPackAdmin(admin.ModelAdmin):
+    list_display = ("pack_id", "name", "price_usd", "price_pkr", "credits", "popular", "is_public", "sort_order")
+    list_filter = ("is_public", "popular")
+    search_fields = ("pack_id", "name")
     ordering = ("sort_order",)
     readonly_fields = ("id", "created_at", "updated_at")

@@ -60,27 +60,57 @@ TOPUP_PACKS: dict[str, dict[str, Any]] = {
     },
 }
 
-PUBLIC_PACK_IDS = tuple(
-    pack_id
-    for pack_id, pack in sorted(TOPUP_PACKS.items(), key=lambda item: item[1]["sort"])
-)
+def _load_db_packs() -> dict[str, dict[str, Any]] | None:
+    """Try to load packs from the database. Returns None if the table doesn't exist yet."""
+    try:
+        from admin_panel.models import TopupPack
+
+        rows = list(TopupPack.objects.all())
+    except Exception:
+        return None
+    return {
+        row.pack_id: {
+            "id": row.pack_id,
+            "name": row.name,
+            "description": row.description,
+            "credits": Decimal(str(row.credits)),
+            "price_usd": Decimal(str(row.price_usd)),
+            "price_pkr": row.price_pkr,
+            "features": list(row.features) if row.features else [],
+            "sort": row.sort_order,
+            "popular": row.popular,
+            "public": row.is_public,
+        }
+        for row in rows
+    }
+
+
+def _packs_dict() -> dict[str, dict[str, Any]]:
+    """Return DB packs if available, otherwise the static fallback."""
+    return _load_db_packs() or TOPUP_PACKS
 
 
 def get_topup_pack(pack_id: str | None) -> dict[str, Any] | None:
-    """Return a copy of a top-up pack definition, or None if not found."""
+    """Return a copy of a pack definition (hidden packs included), or None if not found."""
     if not pack_id:
         return None
-    key = str(pack_id).lower()
-    pack = TOPUP_PACKS.get(key)
+    pack = _packs_dict().get(str(pack_id).lower())
     return deepcopy(pack) if pack else None
+
+
+def get_public_pack_ids() -> tuple[str, ...]:
+    """Return ordered tuple of pack IDs customers can buy."""
+    packs = _packs_dict()
+    return tuple(
+        pid for pid, p in sorted(packs.items(), key=lambda x: x[1]["sort"])
+        if p.get("public", True)
+    )
 
 
 def get_public_topup_packs() -> list[dict[str, Any]]:
     """Return ordered list of public top-up pack definitions."""
-    return [
-        serialize_topup_pack(pack_id)
-        for pack_id in PUBLIC_PACK_IDS
-    ]
+    packs = _packs_dict()
+    return [serialize_topup_pack(packs[pid]) for pid in get_public_pack_ids()]
 
 
 def serialize_topup_pack(pack_or_id: str | dict[str, Any]) -> dict[str, Any]:

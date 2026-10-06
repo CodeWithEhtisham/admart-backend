@@ -3,6 +3,8 @@ from django.urls import path
 from admin_panel.views import (
     AdminPaymentListView,
     AdminPaymentReviewView,
+    AdminPackDetailView,
+    AdminPacksView,
     AdminPlanCreateView,
     AdminPlanDetailView,
     AdminPlansView,
@@ -24,6 +26,8 @@ urlpatterns = [
     path("plans", AdminPlansView.as_view(), name="admin_plans"),
     path("plans/create", AdminPlanCreateView.as_view(), name="admin_plan_create"),
     path("plans/<str:plan_id>", AdminPlanDetailView.as_view(), name="admin_plan_detail"),
+    path("packs", AdminPacksView.as_view(), name="admin_packs"),
+    path("packs/<str:pack_id>", AdminPackDetailView.as_view(), name="admin_pack_detail"),
     path("settings", AdminSettingsView.as_view(), name="admin_settings"),
     path("users", AdminUserListView.as_view(), name="admin_users"),
     path("users/<uuid:user_id>", AdminUserDetailView.as_view(), name="admin_user_detail"),

@@ -115,8 +115,10 @@ input,select,textarea,button{font:inherit;color:inherit}
 .grid-4{display:grid;gap:14px;grid-template-columns:repeat(4,1fr)}
 .grid-6{display:grid;gap:14px;grid-template-columns:repeat(6,1fr)}
 .grid-2{display:grid;gap:14px;grid-template-columns:repeat(2,1fr)}
+.grid-3{display:grid;gap:14px;grid-template-columns:repeat(3,1fr)}
 @media(max-width:1024px){.grid-4,.grid-6{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:640px){.grid-4,.grid-6,.grid-2{grid-template-columns:1fr}}
+@media(max-width:1024px){.grid-3{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.grid-4,.grid-6,.grid-2,.grid-3{grid-template-columns:1fr}}
 
 /* ============ CHART ============ */
 .chart-wrap{height:112px;display:flex;align-items:flex-end;gap:4px}
@@ -311,6 +313,9 @@ function statusPill(a){return `<span class="pill ${a?'pill-active':'pill-inactiv
 function payPill(s){return `<span class="pill pill-${s||'pending'}">${s||'—'}</span>`}
 function fmtN(v){const n=Number(v??0);if(!Number.isFinite(n))return'—';if(Math.abs(n)>=1e6)return`${(n/1e6).toFixed(1).replace(/\.0$/,'')}M`;if(Math.abs(n)>=1e3)return`${(n/1e3).toFixed(1).replace(/\.0$/,'')}K`;return Number.isInteger(n)?String(n):String(Math.round(n*100)/100)}
 function fmtM(v){const n=Number(v??0);if(!Number.isFinite(n))return'0';return n.toLocaleString(undefined,{maximumFractionDigits:2})}
+// Revenue arrives per currency ({PKR:7999,USD:9}); never summed across currencies.
+function fmtCur(t){const sym={PKR:'Rs ',USD:'$'};const parts=Object.entries(t||{}).filter(([,v])=>Number(v)).map(([c,v])=>(sym[c]??c+' ')+fmtM(v));return parts.length?parts.join(' · '):'Rs 0'}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtDate(iso){if(!iso)return'—';try{return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}catch{return iso}}
 function fmtTime(iso){if(!iso)return'—';try{return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}catch{return iso}}
 function timeAgo(iso){if(!iso)return'—';const s=Math.floor((Date.now()-new Date(iso).getTime())/1000);if(s<60)return'just now';if(s<3600)return`${Math.floor(s/60)}m ago`;if(s<86400)return`${Math.floor(s/3600)}h ago`;return`${Math.floor(s/86400)}d ago`}
@@ -331,6 +336,7 @@ const ICONS={
   customers:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c.8-3 3.2-4.5 6-4.5s5.2 1.5 6 4.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 15.5c2.4.2 4.4 1.6 5 4.5"/></svg>',
   payments:'<svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 9.5h19"/><circle cx="6" cy="14.5" r="1"/></svg>',
   plans:'<svg viewBox="0 0 24 24"><path d="M4 5h16v4H4z"/><path d="M4 13h10v6H4z"/><path d="M17 13l2.5 2.5L17 18"/></svg>',
+  packs:'<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
   usage:'<svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-8M21 19H3"/></svg>',
   settings:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1.11-1.56 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.56-1.03H3a2 2 0 110-4h.09a1.7 1.7 0 001.56-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001.03-1.56V3a2 2 0 114 0v.09a1.7 1.7 0 001.03 1.56h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.56 1.03H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.56 1.03z"/></svg>',
 };
@@ -339,6 +345,7 @@ const TABS=[
   {id:'customers',label:'Customers',group:'Manage',sub:'Search, edit and adjust customers'},
   {id:'payments',label:'Payments',group:'Manage',sub:'Recorded payments and revenue'},
   {id:'plans',label:'Subscriptions',group:'Manage',sub:'Create and edit billing plans'},
+  {id:'packs',label:'Credit packs',group:'Manage',sub:'Edit top-up booster packs'},
   {id:'usage',label:'Usage & Credits',group:'Analytics',sub:'Credits used and fal.ai costs'},
   {id:'settings',label:'Settings',group:'System',sub:'Platform defaults and toggles'},
 ];
@@ -381,6 +388,7 @@ function renderContent(){
     case'customers':renderCustomers(el);break;
     case'payments':renderPayments(el);break;
     case'plans':renderPlans(el);break;
+    case'packs':renderPacks(el);break;
     case'usage':renderUsage(el);break;
     case'settings':renderSettings(el);break;
   }
@@ -437,13 +445,13 @@ function renderOverview(el){
   </div>
   <div class="grid-4" style="margin-bottom:16px">
     ${kpi('MRR','$'+fmtN(rev.mrrUsd),'active subs','var(--success)')}
-    ${kpi('Revenue (30d)','$'+fmtN(rev.revenueThisMonthUsd),`${fmtN(rev.paymentsThisMonth)} payments`,'var(--accent-blue)')}
+    ${kpi('Revenue (30d)',fmtCur(rev.revenueThisMonth),`${fmtN(rev.paymentsThisMonth)} payments`,'var(--accent-blue)')}
     ${kpi('Success rate',fmtN(jobs.combined?.successRate)+'%',`${fmtN(jobs.combined?.succeeded)} ok · ${fmtN(jobs.combined?.failed)} fail`,'var(--accent-violet)')}
     ${kpi('Credits used',fmtN(credits.used),`of ${fmtN(credits.issued)} issued · ${fmtN(credits.remaining)} left`,'var(--warning)')}
   </div>
   <div class="grid-4" style="margin-bottom:16px">
     <div class="card-sm"><div class="mb-3 flex justify-between items-center"><div><div style="font-size:14px;font-weight:600">Signups</div><div class="text-xs" style="color:var(--text-muted)">new customers / day</div></div></div>${miniChart(signups)}</div>
-    <div class="card-sm"><div class="mb-3 flex justify-between items-center"><div><div style="font-size:14px;font-weight:600">Revenue</div><div class="text-xs" style="color:var(--text-muted)">USD / day</div></div></div>${miniChart(revenueS,'var(--accent-violet)')}</div>
+    <div class="card-sm"><div class="mb-3 flex justify-between items-center"><div><div style="font-size:14px;font-weight:600">Revenue</div><div class="text-xs" style="color:var(--text-muted)">PKR / day</div></div></div>${miniChart(revenueS,'var(--accent-violet)')}</div>
     <div class="card-sm"><div class="mb-3 flex justify-between items-center"><div><div style="font-size:14px;font-weight:600">Credits consumed</div><div class="text-xs" style="color:var(--text-muted)">/ day</div></div></div>${miniChart(creditsS,'var(--warning)')}</div>
     <div class="card-sm"><div class="mb-3 flex justify-between items-center"><div><div style="font-size:14px;font-weight:600">Jobs per day</div><div class="text-xs" style="color:var(--text-muted)">succeeded vs failed</div></div><div class="flex gap-2 text-xs" style="color:var(--text-muted)"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--success);margin-right:4px"></span>ok</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--error);margin-right:4px"></span>fail</span></div></div>${miniChartMulti(jobS,[{k:'succeeded',c:'var(--success)'},{k:'failed',c:'var(--error)'}])}</div>
   </div>
@@ -606,8 +614,8 @@ function renderPayments(el){
   const pending=byStatus.pending||0;
   el.innerHTML=`
   <div class="grid-4" style="margin-bottom:16px">
-    ${kpi('Total revenue','$'+fmtM(payRev?.totalRevenueUsd),'all time, paid','var(--success)')}
-    ${kpi('This month','$'+fmtM(payRev?.thisMonthUsd),'last 30 days','var(--accent-blue)')}
+    ${kpi('Total revenue',fmtCur(payRev?.totalRevenue),'all time, paid','var(--success)')}
+    ${kpi('This month',fmtCur(payRev?.thisMonth),'last 30 days','var(--accent-blue)')}
     ${kpi('Paid',fmtN(byStatus.paid||0),`${fmtN(byStatus.failed||0)} failed`)}
     ${kpi('Pending review',fmtN(pending),'customer submissions','var(--warning)')}
   </div>
@@ -662,7 +670,7 @@ async function loadPlans(){
   try{plansRev=await api('GET','/api/admin/revenue')}catch(e){plansRev=null}
 }
 function renderPlans(el){
-  const byPlanRev=(plansRev?.byPlan||[]).reduce((a,i)=>{a[i.plan]=i.totalUsd;return a},{});
+  const byPlanRev=(plansRev?.byPlan||[]).reduce((a,i)=>{a[i.plan]=i.totals;return a},{});
   el.innerHTML=`
   <div class="flex justify-between items-center mb-3">
     <div><div style="font-size:18px;font-weight:700;font-family:&#39;Space Grotesk&#39;,sans-serif">Subscription Plans</div><div class="text-xs" style="color:var(--text-muted)">Manage plans served to the billing page</div></div>
@@ -678,7 +686,7 @@ function renderPlans(el){
         <div><div class="mono" style="font-size:22px;font-weight:700">${fmtN(p.subscriberCount)}</div><div class="text-xs" style="color:var(--text-muted)">customers</div></div>
         <div><div class="mono" style="font-size:22px;font-weight:700;color:var(--accent-blue)">${fmtN(p.activeSubscriptions)}</div><div class="text-xs" style="color:var(--text-muted)">active subs</div></div>
       </div>
-      <div style="margin-top:12px;border-radius:12px;background:var(--bg-surface);padding:8px 12px;text-align:center;font-size:12px;color:var(--text-muted)">$${fmtM(byPlanRev[p.id]||0)} all-time revenue</div>
+      <div style="margin-top:12px;border-radius:12px;background:var(--bg-surface);padding:8px 12px;text-align:center;font-size:12px;color:var(--text-muted)">${fmtCur(byPlanRev[p.id])} all-time revenue</div>
       ${p.id!=='free'?`<button class="btn btn-danger mt-3" style="font-size:12px;padding:6px 12px;justify-content:center" onclick="deletePlan('${encodeURIComponent(p.id)}')">Delete plan</button>`:''}
     </div>`).join('')}</div>
   ${(plansData.items||[]).length===0?'<div class="empty">No plans found. Create one to get started.</div>':''}
@@ -890,6 +898,79 @@ async function deletePlan(encodedPlanId){
 }
 
 /* ================================================================
+   CREDIT PACKS (TOP-UP BOOSTERS)
+   ================================================================ */
+let packsData=null;
+async function loadPacks(){try{packsData=await api('GET','/api/admin/packs')}catch(e){packsData={items:[]};toast('Could not load packs.')}}
+function renderPacks(el){
+  if(!packsData){
+    el.innerHTML='<div class="grid-3"><div class="skel" style="height:288px"></div><div class="skel" style="height:288px"></div><div class="skel" style="height:288px"></div></div>';
+    loadPacks().then(()=>{if(activeTab==='packs')renderContent()});
+    return;
+  }
+  const items=packsData.items||[];
+  el.innerHTML=`
+  <div class="mb-3"><div style="font-size:18px;font-weight:700;font-family:&#39;Space Grotesk&#39;,sans-serif">Credit Booster Packs</div><div class="text-xs" style="color:var(--text-muted)">One-time top-ups shown on the billing page. Hide a pack instead of deleting it — past payments reference its ID.</div></div>
+  <div class="grid-3">${items.map(p=>`
+    <div class="card" style="border-color:rgba(52,211,153,0.3);display:flex;flex-direction:column">
+      <div class="flex justify-between items-center"><div style="font-size:18px;font-weight:700;font-family:&#39;Space Grotesk&#39;,sans-serif">${esc(p.name)}</div>
+        <div class="flex gap-2">${p.popular?'<span class="badge badge-plan-plus">popular</span>':''}${p.isPublic?'':'<span class="badge badge-plan-free">hidden</span>'}${IS_OWNER?`<button class="btn btn-ghost" style="padding:4px 8px;font-size:12px" onclick="openPackModal('${encodeURIComponent(p.id)}')">&#9998;</button>`:''}</div></div>
+      <div class="mono text-xs" style="color:var(--text-muted);margin-top:2px">${esc(p.id)}</div>
+      <div class="mt-3" style="display:flex;align-items:baseline;gap:4px"><span class="mono" style="font-size:32px;font-weight:700">$${fmtN(p.priceUsd)}</span><span style="font-size:14px;color:var(--text-muted)">one-time · ${fmtN(p.pricePkr)} PKR</span></div>
+      <p style="font-size:14px;color:var(--success);margin-top:8px">+${fmtN(p.credits)} credits (never expire)</p>
+      <ul style="margin-top:16px;flex:1;font-size:14px;color:var(--text-secondary)">${(p.features||[]).map(f=>`<li style="padding:4px 0;display:flex;gap:8px"><span style="color:var(--success)">&#10003;</span>${esc(f)}</li>`).join('')}</ul>
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-default);text-align:center"><div class="mono" style="font-size:22px;font-weight:700">${fmtN(p.purchases)}</div><div class="text-xs" style="color:var(--text-muted)">approved purchases</div></div>
+    </div>`).join('')}</div>
+  ${items.length===0?'<div class="empty">No packs in the database. Run migrations to seed the default packs.</div>':''}`;
+}
+function openPackModal(encodedId){
+  const id=decodeURIComponent(encodedId);
+  const p=(packsData?.items||[]).find(x=>x.id===id);
+  if(!p)return;
+  document.getElementById('modalWrap').innerHTML=`
+  <div class="modal-bg" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()" style="max-width:520px">
+    <h2 style="font-family:&#39;Space Grotesk&#39;,sans-serif;font-size:20px;font-weight:700">Edit pack <span class="mono text-xs" style="color:var(--text-muted)">${esc(p.id)}</span></h2>
+    <p class="text-xs mt-2" style="color:var(--text-muted)">Changes show on the billing page right away. Credits granted on approval use the values saved here at that moment.</p>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
+      <input class="inp" id="pkName" placeholder="Name *" value="${esc(p.name)}">
+      <textarea class="inp" id="pkDesc" rows="2" placeholder="Description">${esc(p.description)}</textarea>
+      <div class="flex gap-2">
+        <div style="flex:1"><label class="section-title">Price $</label><input class="inp mono" type="number" min="0" step="0.01" id="pkUsd" value="${esc(p.priceUsd)}"></div>
+        <div style="flex:1"><label class="section-title">Price PKR</label><input class="inp mono" type="number" min="0" step="1" id="pkPkr" value="${esc(p.pricePkr)}"></div>
+        <div style="flex:1"><label class="section-title">Credits</label><input class="inp mono" type="number" min="0" step="0.01" id="pkCredits" value="${esc(p.credits)}"></div>
+      </div>
+      <div><label class="section-title">Feature lines (one per line)</label><textarea class="inp" id="pkFeatures" rows="4">${esc((p.features||[]).join('\n'))}</textarea></div>
+      <div class="flex gap-3 items-center"><input type="checkbox" id="pkPublic" ${p.isPublic?'checked':''}><label for="pkPublic" style="font-size:14px;color:var(--text-secondary)">Public (shown on billing page)</label></div>
+      <div class="flex gap-3 items-center"><input type="checkbox" id="pkPopular" ${p.popular?'checked':''}><label for="pkPopular" style="font-size:14px;color:var(--text-secondary)">"Popular choice" badge</label></div>
+      <p id="pkErr" class="text-xs" style="color:var(--error)"></p>
+    </div>
+    <div class="flex mt-5" style="justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="pkBtn" onclick="submitPack('${encodedId}')">Save changes</button>
+    </div>
+  </div></div>`;
+}
+async function submitPack(encodedId){
+  const g=id=>document.getElementById(id),err=g('pkErr');
+  const name=g('pkName').value.trim();
+  const nums={'Price $':g('pkUsd').value,'Price PKR':g('pkPkr').value,'Credits':g('pkCredits').value};
+  if(!name){err.textContent='Name is required.';return}
+  for(const[k,v]of Object.entries(nums)){if(v===''||!Number.isFinite(Number(v))||Number(v)<0){err.textContent=k+' must be a number of 0 or more.';return}}
+  if(!Number.isInteger(Number(nums['Price PKR']))){err.textContent='Price PKR must be a whole number.';return}
+  const payload={
+    name,description:g('pkDesc').value.trim(),
+    priceUsd:Number(nums['Price $']),pricePkr:Number(nums['Price PKR']),credits:Number(nums['Credits']),
+    features:g('pkFeatures').value.split('\n').map(x=>x.trim()).filter(Boolean),
+    isPublic:g('pkPublic').checked,popular:g('pkPopular').checked
+  };
+  g('pkBtn').disabled=true;
+  try{await api('PUT',`/api/admin/packs/${encodedId}`,payload);toast('Pack updated.');closeModal()}
+  catch(e){err.textContent=e?.message||'Could not save pack.';return}
+  finally{if(g('pkBtn'))g('pkBtn').disabled=false}
+  await loadPacks();renderContent();
+}
+
+/* ================================================================
    USAGE & CREDITS
    ================================================================ */
 let usageData=null;
@@ -993,6 +1074,7 @@ async function loadAll(retrying){
       case'customers':await loadCustomers();break;
       case'payments':await loadPayments();break;
       case'plans':await loadPlans();break;
+      case'packs':await loadPacks();break;
       case'usage':await loadUsage();break;
       case'settings':await loadSettings();break;
     }

@@ -175,6 +175,29 @@ class PlanDefinition(models.Model):
         return f"{self.name} ({self.plan_id})"
 
 
+class TopupPack(models.Model):
+    """Database-backed credit booster pack that the admin can edit. Replaces the hardcoded TOPUP_PACKS."""
+
+    pack_id = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=60)
+    description = models.TextField(blank=True, default="")
+    credits = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    price_usd = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    price_pkr = models.PositiveIntegerField(default=0)
+    features = models.JSONField(default=list, blank=True)
+    popular = models.BooleanField(default=False)
+    is_public = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.pack_id})"
+
+
 class AdminSetting(models.Model):
     """Key/value store for superadmin-controlled platform settings.
 

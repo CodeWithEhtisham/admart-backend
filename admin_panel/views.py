@@ -1,5 +1,5 @@
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
 
 from django.conf import settings
@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from admin_panel.permissions import IsAdmin, IsOwnerAdmin
-from admin_panel.models import AdminSetting, CreditAdjustment, Payment, PlanDefinition, Subscription
+from admin_panel.models import AdminSetting, CreditAdjustment, Payment, PlanDefinition, Subscription, TopupPack
 from admin_panel.serializers import (
     AdminUserDetailSerializer,
     AdminUserSerializer,
@@ -31,6 +31,7 @@ from admin_panel.services import (
     review_payment,
 )
 from users.authentication import CombinedJWTAuthentication
+from users.packs import serialize_topup_pack
 from users.plans import get_plan, serialize_plan, _plans_dict
 
 User = get_user_model()
@@ -94,6 +95,84 @@ class AdminPlansView(AdminAPIView):
         return Response({"items": items})
 
 
+def _non_negative_decimal(value) -> Decimal:
+    number = Decimal(str(value))
+    if not number.is_finite() or number < 0:
+        raise ValueError("must be a non-negative number")
+    return number
+
+
+def _non_negative_int(value) -> int:
+    number = int(value)
+    if number < 0:
+        raise ValueError("must be a non-negative whole number")
+    return number
+
+
+def _features(value) -> list:
+    if not isinstance(value, list):
+        raise ValueError("must be a list of strings")
+    return [str(f).strip() for f in value if str(f).strip()]
+
+
+def _limits(value) -> dict:
+    # The dashboard plan editor sends numbers (incl. fractional discount_percent) and booleans.
+    if not isinstance(value, dict) or not all(
+        isinstance(v, (bool, int, float)) for v in value.values()
+    ):
+        raise ValueError("must map each limit to a number or true/false")
+    return value
+
+
+def _flag(value) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("must be true or false")
+    return value
+
+
+def _text(value) -> str:
+    return str(value).strip()
+
+
+# API field -> (model attribute, parser) for admin-editable plans and packs.
+PLAN_FIELDS = {
+    "name": ("name", _text),
+    "description": ("description", _text),
+    "priceUsd": ("price_usd", _non_negative_decimal),
+    "pricePkr": ("price_pkr", _non_negative_int),
+    "monthlyCredits": ("monthly_credits", _non_negative_decimal),
+    "features": ("features", _features),
+    "limits": ("limits", _limits),
+    "isPublic": ("is_public", _flag),
+    "sortOrder": ("sort_order", int),
+}
+PACK_FIELDS = {
+    "name": ("name", _text),
+    "description": ("description", _text),
+    "priceUsd": ("price_usd", _non_negative_decimal),
+    "pricePkr": ("price_pkr", _non_negative_int),
+    "credits": ("credits", _non_negative_decimal),
+    "features": ("features", _features),
+    "popular": ("popular", _flag),
+    "isPublic": ("is_public", _flag),
+    "sortOrder": ("sort_order", int),
+}
+
+
+def _apply_fields(obj, data: dict, fields: dict) -> Response | None:
+    """Set each present field on ``obj``; 400 response on the first invalid value."""
+    for key, (attr, parse) in fields.items():
+        if key not in data:
+            continue
+        try:
+            setattr(obj, attr, parse(data[key]))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            return Response({"message": f"{key}: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+    if not obj.name:
+        return Response({"message": "name: is required"}, status=status.HTTP_400_BAD_REQUEST)
+    return None
+
+
 class AdminPlanDetailView(AdminAPIView):
     """PUT/DELETE /api/admin/plans/<plan_id> — edit or delete a plan."""
 
@@ -105,25 +184,9 @@ class AdminPlanDetailView(AdminAPIView):
     @extend_schema(summary="Update a plan definition", request=None)
     def put(self, request, plan_id):
         plan = self._get_plan(plan_id)
-        data = request.data or {}
-        if "name" in data:
-            plan.name = str(data["name"]).strip()
-        if "description" in data:
-            plan.description = str(data["description"]).strip()
-        if "priceUsd" in data:
-            plan.price_usd = Decimal(str(data["priceUsd"]))
-        if "pricePkr" in data:
-            plan.price_pkr = int(data["pricePkr"])
-        if "monthlyCredits" in data:
-            plan.monthly_credits = Decimal(str(data["monthlyCredits"]))
-        if "features" in data:
-            plan.features = list(data["features"])
-        if "limits" in data:
-            plan.limits = dict(data["limits"])
-        if "isPublic" in data:
-            plan.is_public = bool(data["isPublic"])
-        if "sortOrder" in data:
-            plan.sort_order = int(data["sortOrder"])
+        error = _apply_fields(plan, request.data or {}, PLAN_FIELDS)
+        if error:
+            return error
         plan.save()
         return Response(serialize_plan(plan.plan_id))
 
@@ -134,6 +197,54 @@ class AdminPlanDetailView(AdminAPIView):
             return Response({"message": "Cannot delete the free plan."}, status=status.HTTP_400_BAD_REQUEST)
         plan.delete()
         return Response({"message": "Plan deleted."}, status=status.HTTP_200_OK)
+
+
+def _serialize_admin_pack(pack: TopupPack) -> dict:
+    """Pack card for the admin panel: public fields plus visibility and order."""
+    return {
+        **serialize_topup_pack(
+            {
+                "id": pack.pack_id,
+                "name": pack.name,
+                "description": pack.description,
+                "credits": pack.credits,
+                "price_usd": pack.price_usd,
+                "price_pkr": pack.price_pkr,
+                "features": pack.features or [],
+                "popular": pack.popular,
+            }
+        ),
+        "isPublic": pack.is_public,
+        "sortOrder": pack.sort_order,
+        "purchases": Payment.objects.filter(
+            payment_type="topup", pack=pack.pack_id, status="paid"
+        ).count(),
+    }
+
+
+class AdminPacksView(AdminAPIView):
+    """GET /api/admin/packs — all top-up packs, including hidden ones."""
+
+    permission_classes = [IsAdmin]
+
+    @extend_schema(summary="Superadmin top-up pack definitions")
+    def get(self, request):
+        return Response({"items": [_serialize_admin_pack(p) for p in TopupPack.objects.order_by("sort_order")]})
+
+
+class AdminPackDetailView(AdminAPIView):
+    """PUT /api/admin/packs/<pack_id> — edit a top-up pack."""
+
+    permission_classes = [IsOwnerAdmin]
+
+    @extend_schema(summary="Update a top-up pack", request=None)
+    def put(self, request, pack_id):
+        pack = get_object_or_404(TopupPack, pack_id=unquote(pack_id))
+        error = _apply_fields(pack, request.data or {}, PACK_FIELDS)
+        if error:
+            return error
+        pack.save()
+        return Response(_serialize_admin_pack(pack))
 
 
 class AdminPlanCreateView(AdminAPIView):

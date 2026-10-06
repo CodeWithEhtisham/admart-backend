@@ -257,10 +257,10 @@ class PaymentSubmitSerializer(serializers.Serializer):
     def validate_pack(self, value: str | None) -> str:
         if not value:
             return ""
-        from users.packs import get_topup_pack
+        from users.packs import get_public_pack_ids
 
         pack_id = str(value).strip().lower()
-        if not get_topup_pack(pack_id):
+        if pack_id not in get_public_pack_ids():
             raise serializers.ValidationError(self.PACK_ERROR)
         return pack_id
 
