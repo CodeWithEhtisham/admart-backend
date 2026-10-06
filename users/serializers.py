@@ -40,6 +40,11 @@ class UserSerializer(serializers.ModelSerializer):
     projectCount = serializers.SerializerMethodField(read_only=True)
     activeProjectId = serializers.SerializerMethodField(read_only=True)
     planDetails = serializers.SerializerMethodField(read_only=True)
+    # Google-only accounts have no password; account deletion confirms by email instead.
+    hasPassword = serializers.SerializerMethodField(read_only=True)
+
+    def get_hasPassword(self, obj) -> bool:
+        return obj.has_usable_password()
 
     def get_brandKit(self, obj) -> dict:
         """Return the brand kit dict from the model property."""
@@ -76,6 +81,7 @@ class UserSerializer(serializers.ModelSerializer):
             "creditsResetAt",
             "onboardingCompleted",
             "planDetails",
+            "hasPassword",
             "brandKit",
             "projectCount",
             "activeProjectId",

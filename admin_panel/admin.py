@@ -35,7 +35,7 @@ class PaymentAdmin(admin.ModelAdmin):
 
     @admin.display(description="User")
     def user_email(self, obj):
-        return obj.user.email
+        return obj.user.email if obj.user else f"{obj.payer_email} (deleted account)"
 
     @admin.display(description="Reviewed by")
     def reviewed_by_email(self, obj):

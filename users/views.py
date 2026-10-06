@@ -16,7 +16,9 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from projects.models import Project, SocialAccount
 from users.google import (
@@ -116,6 +118,52 @@ class CustomTokenObtainPairView(SensitiveAuthThrottle, TokenObtainPairView):
         if email and not User.objects.filter(email__iexact=email).exists():
             return Response(NO_ACCOUNT, status=status.HTTP_404_NOT_FOUND)
         return super().post(request, *args, **kwargs)
+
+
+class _RefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except User.DoesNotExist:
+            # Token belongs to a deleted account: 401, not a server error.
+            raise InvalidToken("This account no longer exists.")
+
+
+class RefreshView(TokenRefreshView):
+    """POST /api/auth/refresh — SimpleJWT refresh that treats deleted users as a bad token."""
+
+    serializer_class = _RefreshSerializer
+
+
+class DeleteAccountView(SensitiveAuthThrottle, APIView):
+    """POST /api/auth/delete-account — permanently delete the signed-in account.
+
+    Requires the password, or (for Google-only accounts without one) the account's
+    email typed as confirmation. Staff accounts must be removed by another admin.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(summary="Delete my account", request=None, responses={200: MessageSerializer})
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        from users.deletion import delete_account
+
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return Response(
+                {"message": "Admin accounts can't be deleted here. Ask another admin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if user.has_usable_password():
+            if not user.check_password(str(request.data.get("password") or "")):
+                return Response({"password": ["Incorrect password."]}, status=status.HTTP_400_BAD_REQUEST)
+        elif str(request.data.get("confirmEmail") or "").strip().lower() != user.email.lower():
+            return Response(
+                {"confirmEmail": ["Type your account email to confirm."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        delete_account(user)
+        return Response({"message": "Your account has been deleted."}, status=status.HTTP_200_OK)
 
 
 class MeView(generics.RetrieveUpdateAPIView):

@@ -415,8 +415,10 @@ class AdminUserDetailView(AdminAPIView):
 
     @extend_schema(summary="Delete a customer account")
     def delete(self, request, user_id):
+        from users.deletion import delete_account
+
         user = self._get_user(user_id)
-        user.delete()
+        delete_account(user)
         return Response({"message": "User deleted."}, status=status.HTTP_200_OK)
 
 
@@ -570,10 +572,10 @@ class AdminPaymentListView(AdminAPIView):
                         if is_topup and pack_obj
                         else (plan_obj["monthly_credits"] if plan_obj else None)
                     ),
-                    "email": p.user.email,
-                    "firstName": p.user.first_name,
-                    "lastName": p.user.last_name,
-                    "currentPlan": p.user.plan,
+                    "email": p.user.email if p.user else f"{p.payer_email} (deleted account)",
+                    "firstName": p.user.first_name if p.user else "",
+                    "lastName": p.user.last_name if p.user else "",
+                    "currentPlan": p.user.plan if p.user else "",
                     "screenshotUrl": (
                         payment_screenshot_url(p, request) if p.screenshot else None
                     ),

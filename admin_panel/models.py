@@ -98,11 +98,16 @@ class Payment(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Payment records outlive a deleted account (accounting); the link is cleared
+    # and payer_email keeps who paid. See users/deletion.py.
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="payments",
     )
+    payer_email = models.EmailField(blank=True, default="")
     payment_type = models.CharField(
         max_length=20, choices=PAYMENT_TYPE_CHOICES, default="subscription"
     )

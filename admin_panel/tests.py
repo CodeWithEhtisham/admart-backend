@@ -701,3 +701,20 @@ class AdminPlanAndPackEditTests(APITestCase):
             reverse("admin_pack_detail", kwargs={"pack_id": "pack_small"}), {"name": "X"}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class AdminDeleteCustomerKeepsPaymentsTests(APITestCase):
+    def test_owner_delete_keeps_payment_record(self) -> None:
+        owner = User.objects.create_superuser(email="owner2@example.com", password="Password123!")
+        customer = User.objects.create_user(email="gone@example.com", password="Password123!")
+        payment = Payment.objects.create(user=customer, amount=2499, currency="PKR", status="paid", plan="basic")
+        self.client.force_authenticate(user=owner)
+        response = self.client.delete(reverse("admin_user_detail", kwargs={"user_id": customer.id}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(pk=customer.pk).exists())
+        payment.refresh_from_db()
+        self.assertIsNone(payment.user)
+        self.assertEqual(payment.payer_email, "gone@example.com")
+        listed = self.client.get(reverse("admin_payments")).data
+        rows = listed.get("items", listed) if isinstance(listed, dict) else listed
+        self.assertIn("gone@example.com (deleted account)", [r["email"] for r in rows])

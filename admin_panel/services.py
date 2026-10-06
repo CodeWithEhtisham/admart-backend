@@ -315,7 +315,7 @@ def _recent_payments():
     return [
         {
             "id": str(p.id),
-            "email": p.user.email,
+            "email": p.user.email if p.user else f"{p.payer_email} (deleted account)",
             "amount": float(p.amount),
             "currency": p.currency,
             "method": p.method,

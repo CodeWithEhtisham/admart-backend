@@ -899,3 +899,97 @@ class AuthBruteForceLimitTests(APITestCase):
         ]
         self.assertEqual(codes[:5], [401] * 5)
         self.assertEqual(codes[5], 429)
+
+
+class AccountDeletionTests(APITestCase):
+    """Self-service deletion removes the account, its data and files; keeps payment rows."""
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.override = override_settings(MEDIA_ROOT=str(self.tmp / "media"), PRIVATE_MEDIA_ROOT=self.tmp / "private")
+        self.override.enable()
+        self.user = User.objects.create_user(email="leaving@example.com", password="Password123!")
+
+    def tearDown(self) -> None:
+        import shutil
+
+        self.override.disable()
+        shutil.rmtree(self.tmp)
+
+    def _seed(self):
+        from django.core.files.base import ContentFile
+
+        from admin_panel.models import Payment
+        from content.models import ImageUpload
+        from projects.models import Project, SocialAccount
+
+        project = Project.objects.create(owner=self.user, name="Brand")
+        account = SocialAccount.objects.create(project=project, platform="youtube", connected=True)
+        account.store_tokens(access_token="ya29.secret", refresh_token="1//refresh", expires_in=3600, scope="")
+        account.save()
+        out = self.tmp / "media" / "projects" / str(project.id) / "images" / "job1"
+        out.mkdir(parents=True)
+        (out / "out-0.png").write_bytes(b"png")
+        upload = ImageUpload.objects.create(project=project, user=self.user, content_type="image/png", byte_size=3)
+        upload.file.save("u.png", ContentFile(b"png"))
+        payment = Payment.objects.create(user=self.user, amount=7999, currency="PKR", status="paid", plan="plus", provider_ref="EP-77")
+        payment.screenshot.save("proof.png", ContentFile(b"proof"))
+        return project, payment, upload
+
+    def _delete(self, **body):
+        self.client.force_authenticate(user=self.user)
+        return self.client.post(reverse("auth_delete_account"), body, format="json")
+
+    def test_deletes_everything_but_keeps_anonymous_payment_record(self) -> None:
+        from admin_panel.models import Payment
+        from projects.models import Project, SocialAccount
+
+        project, payment, upload = self._seed()
+        upload_path = self.tmp / "media" / upload.file.name
+        proof_path = self.tmp / "private" / payment.screenshot.name
+        self.assertTrue(upload_path.exists() and proof_path.exists())
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self._delete(password="Password123!")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertFalse(User.objects.filter(email="leaving@example.com").exists())
+        self.assertFalse(Project.objects.filter(pk=project.pk).exists())
+        self.assertFalse(SocialAccount.objects.exists())  # OAuth tokens gone
+        self.assertFalse((self.tmp / "media" / "projects" / str(project.id)).exists())
+        self.assertFalse(upload_path.exists())
+        self.assertFalse(proof_path.exists())
+
+        kept = Payment.objects.get(pk=payment.pk)
+        self.assertIsNone(kept.user)
+        self.assertEqual((kept.payer_email, kept.amount, kept.provider_ref), ("leaving@example.com", 7999, "EP-77"))
+        self.assertFalse(kept.screenshot)
+
+    def test_wrong_password_deletes_nothing(self) -> None:
+        response = self._delete(password="nope")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_google_only_account_confirms_with_email(self) -> None:
+        self.user.set_unusable_password()
+        self.user.save()
+        self.assertEqual(self._delete(confirmEmail="someone@else.com").status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self._delete(confirmEmail="LEAVING@example.com").status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_staff_cannot_self_delete(self) -> None:
+        self.user.is_staff = True
+        self.user.save()
+        self.assertEqual(self._delete(password="Password123!").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_old_refresh_token_stops_working(self) -> None:
+        login = self.client.post(reverse("auth_login"), {"email": "leaving@example.com", "password": "Password123!"}, format="json")
+        refresh = login.data["refreshToken"]
+        self._delete(password="Password123!")
+        self.client.force_authenticate(user=None)
+        response = self.client.post(reverse("auth_refresh"), {"refresh": refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
