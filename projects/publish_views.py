@@ -15,7 +15,7 @@ from projects.analytics import build_project_analytics
 from projects.calendar import build_project_calendar
 from projects.media_policy import validate_organic_platforms
 from projects.models import PublishJob, SocialAccount
-from projects.publish import PUBLISHERS, PublishUnavailable, list_facebook_pages, list_youtube_playlists
+from projects.publish import PUBLISHERS, list_facebook_pages, list_youtube_playlists, user_error
 from projects.serializers import PublishJobSerializer
 from projects.views import ProjectScopedSocialMixin
 from users.plans import get_plan
@@ -225,10 +225,8 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                 results[platform] = publisher(connected[platform], **kwargs)
                 if action == "schedule" and results[platform].get("status") == "succeeded":
                     results[platform]["status"] = "scheduled"
-            except PublishUnavailable as exc:
-                results[platform] = {"status": "failed", "error": str(exc)}
             except Exception as exc:  # noqa: BLE001
-                results[platform] = {"status": "failed", "error": str(exc)}
+                results[platform] = {"status": "failed", "error": user_error(exc, platform)}
 
         statuses = [row.get("status") for row in results.values()]
         if action == "schedule" and all(s in ("scheduled", "succeeded") for s in statuses):
@@ -260,7 +258,7 @@ class ProjectYoutubePlaylistsView(ProjectScopedSocialMixin, APIView):
         try:
             playlists = list_youtube_playlists(account)
         except Exception as exc:  # noqa: BLE001
-            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": user_error(exc, "youtube")}, status=status.HTTP_400_BAD_REQUEST)
         return Response(playlists)
 
 
@@ -274,10 +272,8 @@ class ProjectFacebookPagesView(ProjectScopedSocialMixin, APIView):
             return Response({"message": "Connect Meta first (Social Accounts)."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             pages = list_facebook_pages(account)
-        except PublishUnavailable as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001
-            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": user_error(exc, "facebook")}, status=status.HTTP_400_BAD_REQUEST)
         return Response(pages)
 
 

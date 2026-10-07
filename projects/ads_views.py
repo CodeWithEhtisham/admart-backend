@@ -18,6 +18,7 @@ from content.models import LibraryAsset
 from projects import ads_oauth
 from projects.media_policy import ADS_PROVIDERS, validate_ads_placements
 from projects.models import AdAccount, AdBoostJob, Project
+from projects.publish import user_error
 from projects.serializers import AdAccountSerializer, AdBoostJobSerializer
 from projects.views import ProjectScopedSocialMixin, oauth_frontend_redirect
 
@@ -204,7 +205,7 @@ class ProjectAdBoostView(ProjectScopedSocialMixin, APIView):
             )
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
-            job.error = str(exc)
+            job.error = user_error(exc, account.provider)
             job.save(update_fields=["status", "error", "updated_at"])
             return Response(AdBoostJobSerializer(job).data, status=status.HTTP_400_BAD_REQUEST)
 

@@ -773,6 +773,32 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(response.data["status"], "succeeded")
         self.assertEqual(response.data["results"]["youtube"]["externalId"], "yt-vid-1")
 
+    def test_network_error_is_shown_as_plain_message(self) -> None:
+        import requests
+
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        boom = MagicMock(side_effect=requests.ConnectionError("('Connection aborted.', ConnectionResetError(104))"))
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": boom}), self.assertLogs("projects.publish", "WARNING"):
+            response = self.client.post(
+                self.url,
+                {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
+                format="json",
+            )
+        error = response.data["results"]["youtube"]["error"]
+        self.assertNotIn("Connection aborted", error)
+        self.assertIn("Couldn't reach YouTube", error)
+
+    def test_platform_message_passes_through(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
+        quota = MagicMock(side_effect=RuntimeError("Upload quota exceeded"))
+        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": quota}):
+            response = self.client.post(
+                self.url,
+                {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
+                format="json",
+            )
+        self.assertEqual(response.data["results"]["youtube"]["error"], "Upload quota exceeded")
+
     def test_draft_does_not_call_publisher(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
         with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": MagicMock(side_effect=AssertionError("draft"))}):

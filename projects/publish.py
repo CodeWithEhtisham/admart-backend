@@ -1,5 +1,7 @@
 """Organic publish to connected social accounts."""
 
+import json
+import logging
 import time
 from urllib.parse import urlparse
 
@@ -14,6 +16,33 @@ UPLOAD_TIMEOUT = 600
 
 class PublishUnavailable(Exception):
     """Platform cannot organic-post yet (App Review / Login Kit)."""
+
+
+logger = logging.getLogger(__name__)
+
+PLATFORM_LABELS = {
+    "youtube": "YouTube",
+    "facebook": "Facebook",
+    "instagram": "Instagram",
+    "tiktok": "TikTok",
+    "snapchat": "Snapchat",
+    "meta": "Meta Ads",
+    "snap": "Snap Ads",
+    "google": "Google Ads",
+}
+
+
+def user_error(exc: Exception, platform: str) -> str:
+    """A message safe to show users. Our own errors (and platform API messages) pass through;
+    network failures and unexpected exceptions are logged and replaced with plain text."""
+    name = PLATFORM_LABELS.get(platform, platform)
+    if isinstance(exc, requests.RequestException):
+        logger.warning("%s request failed", name, exc_info=exc)
+        return f"Couldn't reach {name}. Try again in a minute, or reconnect it on Social Accounts."
+    if isinstance(exc, (PublishUnavailable, RuntimeError, ValueError)) and not isinstance(exc, json.JSONDecodeError):
+        return str(exc)
+    logger.exception("%s request failed", name, exc_info=exc)
+    return f"Something went wrong with {name}. Try again, or reconnect it on Social Accounts."
 
 
 def _fetchable_url(source_url: str) -> str:
@@ -159,13 +188,13 @@ def publish_youtube(
             _set_youtube_thumbnail(token, video_id, thumbnail_url)
             result["thumbnailSet"] = True
         except Exception as exc:  # noqa: BLE001
-            result["thumbnailError"] = str(exc)
+            result["thumbnailError"] = user_error(exc, "youtube")
     if video_id and playlist_id:
         try:
             _add_to_youtube_playlist(token, playlist_id, video_id)
             result["playlistId"] = playlist_id
         except Exception as exc:  # noqa: BLE001
-            result["playlistError"] = str(exc)
+            result["playlistError"] = user_error(exc, "youtube")
     return result
 
 
