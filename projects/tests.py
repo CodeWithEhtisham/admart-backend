@@ -1866,3 +1866,130 @@ class SocialConnectionLimitTests(APITestCase):
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
         response = _complete_oauth(self, "social", "youtube", "code", self._state("youtube"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+@override_settings(
+    META_APP_ID="meta-app",
+    META_APP_SECRET="meta-secret",
+    META_OAUTH_REDIRECT_URI="http://testserver/api/social/callback/meta",
+    FRONTEND_URL="http://localhost:5173",
+    FACEBOOK_PUBLISH_ENABLED=True,
+    INSTAGRAM_PUBLISH_ENABLED=True,
+    META_ADS_ENABLED=True,
+)
+class SingleMetaConnectionTests(APITestCase):
+    """One "Connect Meta" login sets up Facebook, the linked Instagram and Meta Ads."""
+
+    ASSETS = {
+        "profile": {"id": "fb-user-1", "name": "Ehtisham"},
+        "pages": [
+            {"id": "page-1", "name": "Admart Page", "instagram": {"id": "ig-17841", "username": "admart.app", "name": "Admart", "profile_picture_url": "https://cdn.example/ig.jpg"}}
+        ],
+        "adAccounts": [{"id": "act_999", "account_id": "999", "name": "Admart Ads"}],
+    }
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="metaone@example.com", password="Password123!", plan="plus")
+        self.project = Project.objects.create(owner=self.user, name="Brand")
+        self.client.force_authenticate(user=self.user)
+
+    def _state(self) -> str:
+        return signing.dumps(
+            {"projectId": str(self.project.id), "platform": "meta", "userId": str(self.user.id), "nonce": "n"},
+            salt=OAUTH_STATE_SALT,
+        )
+
+    def _connect(self, assets=None):
+        with (
+            patch("projects.oauth.MetaConnectProvider.exchange_code", return_value={"access_token": "EAA.user", "expires_in": 5184000}),
+            patch("projects.oauth.MetaConnectProvider.fetch_assets", return_value=assets or self.ASSETS),
+        ):
+            return _complete_oauth(self, "social", "meta", "code", self._state())
+
+    def test_connect_url_asks_for_pages_instagram_and_ads_in_one_login(self) -> None:
+        url = reverse("project_social_connect_url", kwargs={"project_id": self.project.id, "platform": "meta"})
+        auth_url = self.client.get(url).data["authUrl"]
+        for scope in ("pages_manage_posts", "instagram_basic", "instagram_content_publish", "ads_management"):
+            self.assertIn(scope, auth_url)
+        self.assertIn("callback%2Fmeta", auth_url)
+
+    @override_settings(FACEBOOK_PUBLISH_ENABLED=False, INSTAGRAM_PUBLISH_ENABLED=False, META_ADS_ENABLED=False)
+    def test_unapproved_permissions_are_not_requested(self) -> None:
+        from projects.oauth import PROVIDERS
+
+        scopes = PROVIDERS["meta"].scopes
+        for scope in ("pages_manage_posts", "instagram_content_publish", "ads_management"):
+            self.assertNotIn(scope, scopes)
+
+    def test_one_login_connects_facebook_instagram_and_ads(self) -> None:
+        from projects.models import AdAccount
+
+        response = self._connect()
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["instagram"]["username"], "admart.app")
+        self.assertEqual(response.data["ads"]["id"], "999")
+
+        fb = SocialAccount.objects.get(project=self.project, platform="facebook")
+        ig = SocialAccount.objects.get(project=self.project, platform="instagram")
+        ads = AdAccount.objects.get(project=self.project, provider="meta")
+        self.assertTrue(fb.connected and ig.connected and ads.connected)
+        self.assertEqual({fb.get_access_token(), ig.get_access_token(), decrypt(ads.access_token)}, {"EAA.user"})
+        self.assertEqual((ig.external_id, ig.handle), ("ig-17841", "admart.app"))
+
+    def test_free_plan_slot_connects_facebook_and_explains_instagram_skip(self) -> None:
+        self.user.plan = "free"
+        self.user.save(update_fields=["plan"])
+        response = self._connect()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["instagramSkipped"], "plan_limit")
+        self.assertFalse(SocialAccount.objects.filter(project=self.project, platform="instagram").exists())
+
+    def test_page_without_linked_instagram_is_reported(self) -> None:
+        assets = {**self.ASSETS, "pages": [{"id": "page-1", "name": "Admart Page", "instagram": None}]}
+        response = self._connect(assets)
+        self.assertEqual(response.data["instagramSkipped"], "no_linked_instagram")
+
+    def test_no_page_is_a_clear_error(self) -> None:
+        response = self._connect({**self.ASSETS, "pages": []})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "META_NO_PAGE")
+        self.assertFalse(SocialAccount.objects.filter(project=self.project).exists())
+
+    def test_disconnect_meta_turns_off_all_three_and_erases_tokens(self) -> None:
+        from projects.models import AdAccount
+
+        self._connect()
+        self.client.force_authenticate(user=self.user)
+        url = reverse("project_social_disconnect", kwargs={"project_id": self.project.id, "platform": "meta"})
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_200_OK)
+        for account in [*SocialAccount.objects.filter(project=self.project), *AdAccount.objects.filter(project=self.project)]:
+            self.assertFalse(account.connected)
+            self.assertEqual(account.access_token, "")
+
+    def test_instagram_api_base_follows_how_the_account_was_connected(self) -> None:
+        from projects.publish import GRAPH, IG_GRAPH, ig_graph
+
+        self._connect()
+        meta_ig = SocialAccount.objects.get(project=self.project, platform="instagram")
+        self.assertEqual(ig_graph(meta_ig), GRAPH)
+        legacy = SocialAccount(platform="instagram", scope="instagram_business_basic,instagram_business_content_publish")
+        self.assertEqual(ig_graph(legacy), IG_GRAPH)
+        self.assertEqual(ig_graph(SocialAccount(platform="instagram", scope="")), IG_GRAPH)
+
+    def test_publish_to_meta_instagram_uses_facebook_graph(self) -> None:
+        from projects.publish import publish_instagram
+
+        self._connect()
+        ig = SocialAccount.objects.get(project=self.project, platform="instagram")
+        ok = MagicMock(ok=True)
+        ok.json.return_value = {"id": "container-1"}
+        with (
+            patch("projects.publish._public_media_url", return_value="https://api.example/media/a.png"),
+            patch("projects.publish.requests.post", return_value=ok) as mock_post,
+        ):
+            publish_instagram(ig, kind="image", source_url="/media/a.png", title="Hi")
+        urls = [c.args[0] for c in mock_post.call_args_list]
+        self.assertEqual(urls, [
+            "https://graph.facebook.com/v21.0/ig-17841/media",
+            "https://graph.facebook.com/v21.0/ig-17841/media_publish",
+        ])

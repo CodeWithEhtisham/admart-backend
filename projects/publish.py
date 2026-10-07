@@ -233,10 +233,24 @@ def _public_media_url(source_url: str) -> str:
     return url
 
 
+def ig_graph(account) -> str:
+    """Graph base for an Instagram account.
+
+    "Connect Meta" accounts (Facebook Login, linked to a Page) are granted the Facebook
+    Login permission ``instagram_basic`` and use graph.facebook.com. Anything else is an
+    older Instagram-login connection (``instagram_business_*`` or no scope stored) and
+    keeps using graph.instagram.com.
+    """
+    granted = set((account.scope or "").replace(" ", ",").split(","))
+    return GRAPH if "instagram_basic" in granted else IG_GRAPH
+
+
 def _ig_user_id(account, token: str) -> str:
     ig_id = (account.external_id or "").strip()
     if ig_id:
         return ig_id
+    if ig_graph(account) == GRAPH:
+        raise RuntimeError("Instagram account id missing. Reconnect Meta.")
     resp = requests.get(
         f"{IG_GRAPH}/me",
         params={"fields": "user_id", "access_token": token},
@@ -246,15 +260,15 @@ def _ig_user_id(account, token: str) -> str:
         raise RuntimeError(_google_error(resp))
     ig_id = str((resp.json() or {}).get("user_id") or (resp.json() or {}).get("id") or "")
     if not ig_id:
-        raise RuntimeError("Instagram user id missing. Reconnect Instagram.")
+        raise RuntimeError("Instagram user id missing. Reconnect Meta.")
     return ig_id
 
 
-def _wait_ig_container(creation_id: str, token: str) -> None:
+def _wait_ig_container(creation_id: str, token: str, base: str = IG_GRAPH) -> None:
     deadline = time.time() + min(UPLOAD_TIMEOUT, 180)
     while time.time() < deadline:
         resp = requests.get(
-            f"{IG_GRAPH}/{creation_id}",
+            f"{base}/{creation_id}",
             params={"fields": "status_code,status", "access_token": token},
             timeout=REQUEST_TIMEOUT,
         )
@@ -286,13 +300,13 @@ def publish_facebook(
         )
     pages = _facebook_accounts(account)
     if not pages:
-        raise RuntimeError("No Facebook Page found. Create a Page, then reconnect Facebook.")
+        raise RuntimeError("No Facebook Page found. Create a Page, then reconnect Meta.")
     page = next((p for p in pages if p.get("id") == page_id), None) if page_id else pages[0]
     if page_id and page is None:
         raise RuntimeError("That Facebook Page is not in this account.")
     page_token = (page or {}).get("access_token") or ""
     if not page_token:
-        raise RuntimeError("Facebook Page token missing. Reconnect Facebook.")
+        raise RuntimeError("Facebook Page token missing. Reconnect Meta.")
     media_content, media_type = fetch_media(_fetchable_url(source_url), timeout=UPLOAD_TIMEOUT)
     path = "videos" if kind == "video" else "photos"
     filename = "video.mp4" if kind == "video" else "photo.jpg"
@@ -331,6 +345,7 @@ def publish_instagram(account, *, kind: str, source_url: str, title: str, captio
             "Instagram publishing needs App Review. Set INSTAGRAM_PUBLISH_ENABLED after approval."
         )
     token = ensure_fresh_access_token(account)
+    base = ig_graph(account)
     ig_id = _ig_user_id(account, token)
     media_url = _public_media_url(source_url)
     text = (caption or title or "").strip()[:2200]
@@ -339,16 +354,16 @@ def publish_instagram(account, *, kind: str, source_url: str, title: str, captio
         body.update({"media_type": "REELS", "video_url": media_url, "share_to_feed": "true"})
     else:
         body["image_url"] = media_url
-    container = requests.post(f"{IG_GRAPH}/{ig_id}/media", data=body, timeout=UPLOAD_TIMEOUT)
+    container = requests.post(f"{base}/{ig_id}/media", data=body, timeout=UPLOAD_TIMEOUT)
     if not container.ok:
         raise RuntimeError(_google_error(container))
     creation_id = str((container.json() or {}).get("id") or "")
     if not creation_id:
         raise RuntimeError("Instagram did not return a media container.")
     if kind == "video":
-        _wait_ig_container(creation_id, token)
+        _wait_ig_container(creation_id, token, base)
     published = requests.post(
-        f"{IG_GRAPH}/{ig_id}/media_publish",
+        f"{base}/{ig_id}/media_publish",
         data={"creation_id": creation_id, "access_token": token},
         timeout=UPLOAD_TIMEOUT,
     )

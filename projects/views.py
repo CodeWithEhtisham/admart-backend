@@ -214,6 +214,11 @@ class ProjectSocialDisconnectView(ProjectScopedSocialMixin, APIView):
     @extend_schema(summary="Disconnect a social platform from a project", responses={200: None})
     def delete(self, request: Request, project_id: str, platform: str, *args: Any, **kwargs: Any) -> Response:
         project = self.get_project(request, project_id)
+        if platform == "meta":
+            from projects.meta_connect import disconnect_meta
+
+            disconnect_meta(project)
+            return Response({"message": "Meta disconnected successfully."}, status=status.HTTP_200_OK)
         try:
             account = SocialAccount.objects.get(project=project, platform=platform)
         except SocialAccount.DoesNotExist:
@@ -241,7 +246,8 @@ class SocialConnectUrlView(ProjectScopedSocialMixin, APIView):
     def get(self, request: Request, project_id: str, platform: str, *args: Any, **kwargs: Any) -> Response:
         project = self.get_project(request, project_id)
 
-        if platform not in VALID_PLATFORMS:
+        # "meta" is the combined Facebook + Instagram + Meta Ads connection.
+        if platform not in VALID_PLATFORMS and platform != "meta":
             return Response({"message": "Unsupported platform"}, status=status.HTTP_400_BAD_REQUEST)
 
         provider = oauth.PROVIDERS.get(platform)
@@ -303,6 +309,31 @@ class SocialCallbackView(APIView):
         return oauth_frontend_redirect("social", platform, code, state)
 
 
+def _complete_meta(user, project, provider, code: str) -> Response:
+    """Finish the single Meta login: connect the Page, its Instagram and the ad account."""
+    from projects.meta_connect import connect_meta
+
+    limit = social_limit_response(user, project, "facebook")
+    if limit:
+        return limit
+    try:
+        tokens = provider.exchange_code(code)
+        assets = provider.fetch_assets(tokens["access_token"])
+    except Exception:  # noqa: BLE001 — provider/network failures map to a clean error
+        logger.exception("Meta OAuth token exchange/asset fetch failed")
+        return Response({"message": "Couldn't connect Meta. Please try again."}, status=status.HTTP_502_BAD_GATEWAY)
+    if not assets.get("pages"):
+        return Response(
+            {
+                "message": "No Facebook Page found on this account. Create a Page (and link your Instagram "
+                "Professional account to it), then connect Meta again.",
+                "code": "META_NO_PAGE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response(connect_meta(user, project, tokens, assets, scope=",".join(provider.scopes)))
+
+
 class SocialConnectCompleteView(APIView):
     """POST /api/social/complete/<platform> — finish OAuth as the logged-in user.
 
@@ -331,6 +362,8 @@ class SocialConnectCompleteView(APIView):
         provider = oauth.PROVIDERS.get(platform)
         if provider is None:
             return Response({"message": f"{platform} connection is not available."}, status=status.HTTP_400_BAD_REQUEST)
+        if platform == "meta":
+            return _complete_meta(request.user, project, provider, code)
         limit = social_limit_response(request.user, project, platform)
         if limit:
             return limit

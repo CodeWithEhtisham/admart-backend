@@ -3,7 +3,7 @@
 import requests
 
 from projects.oauth import REQUEST_TIMEOUT, ensure_fresh_access_token
-from projects.publish import GRAPH, IG_GRAPH, _facebook_accounts
+from projects.publish import GRAPH, _facebook_accounts, ig_graph
 
 
 def _as_int(value):
@@ -118,7 +118,7 @@ def instagram_media_stats(account, media_id: str) -> dict:
     likes = comments = views = None
     try:
         resp = requests.get(
-            f"{IG_GRAPH}/{media_id}",
+            f"{ig_graph(account)}/{media_id}",
             params={"fields": "like_count,comments_count", "access_token": token},
             timeout=REQUEST_TIMEOUT,
         )
@@ -130,7 +130,7 @@ def instagram_media_stats(account, media_id: str) -> dict:
         pass
     try:
         resp = requests.get(
-            f"{IG_GRAPH}/{media_id}/insights",
+            f"{ig_graph(account)}/{media_id}/insights",
             params={"metric": "views,plays", "access_token": token},
             timeout=REQUEST_TIMEOUT,
         )

@@ -285,6 +285,16 @@ FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
 INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
     "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
 )
+# Single "Connect Meta": one Facebook Login on META_APP_* (a Business-type app with the
+# Pages, Instagram and Marketing API use cases) connects the Facebook Page, its linked
+# Instagram Business account and the ad account together. Add this URI to the app's
+# Facebook Login "Valid OAuth Redirect URIs".
+META_OAUTH_REDIRECT_URI = os.getenv(
+    "META_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/meta"
+)
+# Ads permissions (ads_management, ads_read) are only requested once the Marketing API
+# use case is on the app; requesting them earlier makes Meta reject the whole login.
+META_ADS_ENABLED = os.getenv("META_ADS_ENABLED", "False").lower() in ("true", "1", "yes")
 # Instagram Business Login uses a separate App ID/Secret from the Meta dashboard
 # (Instagram → API setup with Instagram login). Falls back to META_APP_* if unset.
 INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")

@@ -271,7 +271,7 @@ class ProjectFacebookPagesView(ProjectScopedSocialMixin, APIView):
         project = self.get_project(request, project_id)
         account = SocialAccount.objects.filter(project=project, platform="facebook", connected=True).first()
         if account is None:
-            return Response({"message": "Connect Facebook first."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "Connect Meta first (Social Accounts)."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             pages = list_facebook_pages(account)
         except PublishUnavailable as exc:

@@ -248,6 +248,63 @@ class MetaProvider:
         }
 
 
+class MetaConnectProvider(MetaProvider):
+    """One Facebook Login that connects a Page, its linked Instagram Business account
+    and the Meta ad account (single "Connect Meta" button).
+
+    Uses META_APP_*, which must be a Business app with the Pages, Instagram and (for
+    ads) Marketing API use cases. Instagram is reached through graph.facebook.com with
+    this same token, so the Instagram account must be Professional and linked to the
+    Page. Publish/ads scopes stay gated by settings (see MetaProvider.scopes).
+    """
+
+    BASE_SCOPES = ["public_profile", "pages_show_list", "pages_read_engagement", "instagram_basic", "business_management"]
+    ADS_SCOPES = ["ads_management", "ads_read"]
+
+    def __init__(self):
+        super().__init__(
+            "meta",
+            "META_OAUTH_REDIRECT_URI",
+            base_scopes=self.BASE_SCOPES,
+            publish_scopes=[],
+            publish_setting="FACEBOOK_PUBLISH_ENABLED",
+        )
+
+    @property
+    def scopes(self) -> list[str]:
+        scopes = list(self.BASE_SCOPES)
+        if settings.FACEBOOK_PUBLISH_ENABLED:
+            scopes += FACEBOOK_PUBLISH_SCOPES
+        if settings.INSTAGRAM_PUBLISH_ENABLED:
+            scopes += ["instagram_content_publish", "instagram_manage_insights"]
+        if settings.META_ADS_ENABLED:
+            scopes += self.ADS_SCOPES
+        return scopes
+
+    def fetch_assets(self, access_token: str) -> dict:
+        """The user's profile, Pages (each with its linked Instagram account, if any)
+        and ad accounts, from one token."""
+
+        def get(path: str, fields: str) -> dict:
+            resp = requests.get(
+                f"{self.GRAPH}/{path}",
+                params={"fields": fields, "access_token": access_token},
+                timeout=REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            return resp.json() or {}
+
+        profile = get("me", "id,name")
+        pages = []
+        for page in get("me/accounts", "id,name,instagram_business_account{id,username,name,profile_picture_url}").get("data") or []:
+            ig = page.get("instagram_business_account") or None
+            pages.append({"id": str(page.get("id") or ""), "name": page.get("name") or "", "instagram": ig})
+        ad_accounts = []
+        if settings.META_ADS_ENABLED:
+            ad_accounts = get("me/adaccounts", "id,name,account_id").get("data") or []
+        return {"profile": profile, "pages": pages, "adAccounts": ad_accounts}
+
+
 def _instagram_short_lived(payload: dict) -> dict:
     """Normalize Instagram's short-lived token JSON (flat or ``{data: [...]}``)."""
     entry = payload
@@ -615,6 +672,7 @@ PROVIDERS = {
         publish_setting="FACEBOOK_PUBLISH_ENABLED",
     ),
     "instagram": InstagramProvider(),
+    "meta": MetaConnectProvider(),
     "tiktok": TikTokProvider(),
     "snapchat": SnapchatProvider(),
 }
