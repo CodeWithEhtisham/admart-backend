@@ -32,6 +32,9 @@ class Project(models.Model):
     brand_industry = models.CharField(max_length=100, blank=True, default="")
     brand_color_hex = models.CharField(max_length=7, blank=True, default="#2563eb")
     brand_logo_url = models.URLField(max_length=1000, null=True, blank=True)
+    # The rest of the Brand Kit page (palette, fonts, voice, generation defaults,
+    # icon and watermark images). Shape is checked by ProjectSerializer.
+    brand_settings = models.JSONField(default=dict, blank=True)
 
     # Recency tracking — used to auto-select the active project on login.
     last_accessed_at = models.DateTimeField(null=True, blank=True)
@@ -61,6 +64,7 @@ class Project(models.Model):
             "industry": self.brand_industry,
             "brandColorHex": self.brand_color_hex,
             "logoUrl": self.brand_logo_url,
+            **self.brand_settings,
         }
 
 

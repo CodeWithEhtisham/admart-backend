@@ -101,6 +101,50 @@ class ProjectCRUDTests(APITestCase):
         self.assertEqual(response.data["name"], "New Name")
         self.assertEqual(response.data["org"], "Personal")
 
+    def test_brand_kit_saves_and_reads_back(self) -> None:
+        project = Project.objects.create(owner=self.user, name="Brand")
+        url = reverse("project_detail", kwargs={"id": project.id})
+        settings_payload = {
+            "colors": [{"hex": "#112233", "role": "Primary"}, {"hex": "#AABBCC", "role": "Accent"}],
+            "headingFont": "Inter",
+            "bodyFont": "Roboto",
+            "tone": "custom",
+            "toneText": "Warm and direct.",
+            "defaults": {"aspect": "9:16", "style": "Minimal", "voice": "Warm", "watermark": "None"},
+            "iconUrl": "https://cdn.example.com/icon.png",
+            "watermarkUrl": "",
+        }
+        response = self.client.patch(
+            url,
+            {"brand_name": "Shop Co", "brand_color_hex": "#112233", "brand_settings": settings_payload},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        kit = self.client.get(url).data["brandKit"]
+        self.assertEqual(kit["brandName"], "Shop Co")
+        self.assertEqual(kit["brandColorHex"], "#112233")
+        self.assertEqual(kit["colors"][1]["hex"], "#AABBCC")
+        self.assertEqual(kit["defaults"]["aspect"], "9:16")
+        self.assertEqual(kit["iconUrl"], "https://cdn.example.com/icon.png")
+
+    def test_brand_kit_rejects_bad_values(self) -> None:
+        project = Project.objects.create(owner=self.user, name="Brand")
+        url = reverse("project_detail", kwargs={"id": project.id})
+        bad = [
+            {"brand_settings": {"isAdmin": True}},
+            {"brand_settings": {"colors": [{"hex": "red", "role": "Primary"}]}},
+            {"brand_settings": {"colors": [{"hex": "#000000"}] * 9}},
+            {"brand_settings": {"iconUrl": "javascript:alert(1)"}},
+            {"brand_settings": {"toneText": "x" * 2001}},
+            {"brand_settings": {"defaults": {"other": "x"}}},
+            {"brand_color_hex": "blue"},
+        ]
+        for payload in bad:
+            with self.subTest(payload=str(payload)[:60]):
+                self.assertEqual(self.client.patch(url, payload, format="json").status_code, status.HTTP_400_BAD_REQUEST)
+        project.refresh_from_db()
+        self.assertEqual(project.brand_settings, {})
+
     def test_delete_project(self) -> None:
         project = Project.objects.create(owner=self.user, name="Doomed")
         url = reverse("project_detail", kwargs={"id": project.id})
