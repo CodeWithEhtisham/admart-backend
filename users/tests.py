@@ -332,6 +332,13 @@ class CreditsApiTests(APITestCase):
         self.assertEqual(ids, ["basic", "plus", "pro"])
         self.assertEqual(response.data["items"][0]["monthlyCredits"], "8")
         self.assertTrue(response.data["paymentConnected"])
+        self.assertEqual(response.data["freeSignupCredits"], "0")
+
+    def test_plans_show_admin_free_signup_credits(self) -> None:
+        from admin_panel.models import AdminSetting
+
+        AdminSetting.objects.update_or_create(key="default_free_credits", defaults={"value": "50"})
+        self.assertEqual(self.client.get("/api/credits/plans").data["freeSignupCredits"], "50")
 
     def test_payment_methods_requires_auth(self) -> None:
         self.client.force_authenticate(user=None)

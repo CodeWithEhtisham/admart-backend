@@ -14,6 +14,7 @@ from admin_panel.models import Payment
 from admin_panel.services import (
     SCREENSHOT_LINK_MAX_AGE,
     SCREENSHOT_LINK_SALT,
+    free_signup_credits,
     get_setting,
     payment_screenshot_url,
 )
@@ -77,6 +78,8 @@ class CreditsPlansView(APIView):
                 "localCurrency": "PKR",
                 "items": [serialize_plan(plan_id) for plan_id in get_public_plan_ids()],
                 "paymentConnected": True,
+                # What a new account gets on sign-up (admin setting), shown on the sign-up page.
+                "freeSignupCredits": f"{free_signup_credits().normalize():f}",
             }
         )
 
