@@ -1,0 +1,86 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false   # never interrupt a deploy halfway
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: admart
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: admart
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U admart"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DEBUG: "False"
+      SECRET_KEY: ci-only-secret-key-not-for-production
+      SOCIAL_TOKEN_ENCRYPTION_KEY: Y2ktb25seS1kdW1teS1rZXktMzItYnl0ZXMtbG9uZyE=
+      POSTGRES_DB: admart
+      POSTGRES_USER: admart
+      POSTGRES_PASSWORD: ci
+      POSTGRES_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test --noinput
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          python3 - << 'PYEOF'
+          import os, sys, textwrap
+          raw = os.environ.get("SSH_KEY", "").strip()
+          if not raw:
+              print("::error::SSH_KEY secret is empty or missing!", file=sys.stderr)
+              sys.exit(1)
+          if raw.startswith("ssh-ed25519") or raw.startswith("ssh-rsa") or raw.startswith("ecdsa-"):
+              print("::error::SSH_KEY secret contains a PUBLIC key instead of a PRIVATE key! It must start with '-----BEGIN OPENSSH PRIVATE KEY-----'", file=sys.stderr)
+              sys.exit(1)
+          header = "-----BEGIN OPENSSH PRIVATE KEY-----"
+          footer = "-----END OPENSSH PRIVATE KEY-----"
+          if header in raw and footer in raw:
+              body = raw.split(header)[1].split(footer)[0].replace(" ", "").replace("\n", "").replace("\r", "")
+              clean_key = f"{header}\n" + "\n".join(textwrap.wrap(body, 70)) + f"\n{footer}\n"
+          else:
+              clean_key = raw.replace("\r", "") + "\n"
+          ssh_path = os.path.expanduser("~/.ssh/id_ed25519")
+          with open(ssh_path, "w") as f:
+              f.write(clean_key)
+          os.chmod(ssh_path, 0o600)
+          print("SSH key written successfully.")
+          PYEOF
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519
+      - name: Deploy
+        env:
+          TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+          BACKEND_DIR: ${{ vars.BACKEND_DIR || '/srv/admart/backend' }}
+        run: ssh "$TARGET" "bash $BACKEND_DIR/deploy/deploy.sh staging"

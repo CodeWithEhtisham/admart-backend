@@ -1,0 +1,77 @@
+from django.contrib import admin
+
+from admin_panel.models import AdminSetting, CreditAdjustment, Payment, PlanDefinition, Subscription, TopupPack
+
+
+@admin.register(AdminSetting)
+class AdminSettingAdmin(admin.ModelAdmin):
+    list_display = ("key", "value", "updated_at")
+    search_fields = ("key",)
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("user_email", "plan", "status", "auto_renew", "current_period_end", "created_at")
+    list_filter = ("plan", "status", "auto_renew")
+    search_fields = ("user__email",)
+    readonly_fields = ("id", "created_at", "updated_at")
+    date_hierarchy = "created_at"
+
+    @admin.display(description="User")
+    def user_email(self, obj):
+        return obj.user.email
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = (
+        "user_email", "plan", "amount", "currency", "method", "status",
+        "provider_ref", "reviewed_by_email", "created_at",
+    )
+    list_filter = ("status", "method", "currency", "plan")
+    search_fields = ("user__email", "provider_ref")
+    readonly_fields = ("id", "created_at", "updated_at")
+    date_hierarchy = "created_at"
+
+    @admin.display(description="User")
+    def user_email(self, obj):
+        return obj.user.email if obj.user else f"{obj.payer_email} (deleted account)"
+
+    @admin.display(description="Reviewed by")
+    def reviewed_by_email(self, obj):
+        return obj.reviewed_by.email if obj.reviewed_by else "-"
+
+
+@admin.register(CreditAdjustment)
+class CreditAdjustmentAdmin(admin.ModelAdmin):
+    list_display = ("user_email", "amount", "reason", "performed_by_email", "notes", "created_at")
+    list_filter = ("reason",)
+    search_fields = ("user__email", "performed_by__email", "notes")
+    readonly_fields = ("id", "created_at")
+    date_hierarchy = "created_at"
+
+    @admin.display(description="User")
+    def user_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description="Performed by")
+    def performed_by_email(self, obj):
+        return obj.performed_by.email if obj.performed_by else "-"
+
+
+@admin.register(PlanDefinition)
+class PlanDefinitionAdmin(admin.ModelAdmin):
+    list_display = ("plan_id", "name", "price_usd", "price_pkr", "monthly_credits", "is_public", "sort_order")
+    list_filter = ("is_public",)
+    search_fields = ("plan_id", "name")
+    ordering = ("sort_order",)
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TopupPack)
+class TopupPackAdmin(admin.ModelAdmin):
+    list_display = ("pack_id", "name", "price_usd", "price_pkr", "credits", "popular", "is_public", "sort_order")
+    list_filter = ("is_public", "popular")
+    search_fields = ("pack_id", "name")
+    ordering = ("sort_order",)
+    readonly_fields = ("id", "created_at", "updated_at")

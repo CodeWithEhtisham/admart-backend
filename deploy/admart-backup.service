@@ -1,0 +1,9 @@
+# /etc/systemd/system/admart-backup.service — run by admart-backup.timer
+[Unit]
+Description=Admart database + media backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/srv/admart/backend/deploy/backup.sh

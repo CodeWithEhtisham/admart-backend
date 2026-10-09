@@ -1,0 +1,24 @@
+# /etc/systemd/system/admart-backend.service
+[Unit]
+Description=Admart backend (gunicorn)
+After=network.target postgresql.service
+
+[Service]
+User=deploy
+Group=www-data
+WorkingDirectory=/srv/admart/backend
+# Files the app creates (media uploads) are group-readable so nginx (www-data) can
+# serve /media; nothing is world-readable.
+UMask=0027
+# Threads keep the site responsive while long publish uploads (up to 600s) run.
+ExecStart=/srv/admart/backend/.venv/bin/gunicorn config.wsgi:application \
+    --bind 127.0.0.1:8001 --workers 3 --worker-class gthread --threads 4 \
+    --timeout 660 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

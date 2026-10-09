@@ -10,46 +10,76 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+from datetime import timedelta
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env
+load_dotenv(BASE_DIR / ".env")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-548$eoapdux5ros4czno60f93yz+pvs+$3$2p$!i8m(0%r=vd$'
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Safe by default: local development opts in with DEBUG=True in .env.
+DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = []
+# SECURITY WARNING: keep the secret key used in production secret!
+# It signs JWTs, OAuth state and password-reset tokens, so it must come from the environment.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is off.")
+    SECRET_KEY = "django-insecure-local-development-only"
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
+    if host.strip()
+]
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # Third party apps
+    "corsheaders",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",  # logout + rotation revoke refresh tokens
+    "drf_spectacular",
+    # Local apps
+    "users.apps.UsersConfig",
+    "projects.apps.ProjectsConfig",
+    "content.apps.ContentConfig",
+    "admin_panel.apps.AdminPanelConfig",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "corsheaders.middleware.CorsMiddleware",  # Must be as high as possible
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "admin_panel.middleware.UpdateLastActiveMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
+
 
 TEMPLATES = [
     {
@@ -72,13 +102,44 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# PostgreSQL when POSTGRES_DB is set (production: row locks in credit/payment code
+# only take effect on Postgres); SQLite otherwise for local development.
+if os.getenv("POSTGRES_DB"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB"),
+            "USER": os.getenv("POSTGRES_USER", ""),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
+
+# Email (password reset). Local DEBUG prints emails to the console; production
+# needs real SMTP credentials (any provider: SES, Postmark, Mailgun, Gmail SMTP...).
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+EMAIL_TIMEOUT = 20
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Admart <no-reply@localhost>")
+PASSWORD_RESET_TIMEOUT = 3600  # reset links expire after one hour
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -114,4 +175,216 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
+# `collectstatic` target; nginx serves it at /static/ (Django admin + dashboard CSS).
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
+
+# Uploaded + generated media (local disk in dev; swap for S3/R2 in prod).
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+# Never served by the web server (payment proofs); keep it outside MEDIA_ROOT.
+PRIVATE_MEDIA_ROOT = Path(os.getenv("PRIVATE_MEDIA_ROOT", BASE_DIR / "private_media"))
+# Allow library video uploads up to ~200 MB (view enforces per-type limits).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+# Absolute base for public media URLs when no request is available (e.g. workers).
+# In local dev, leave blank and build URLs from the request; fal needs a publicly
+# reachable URL for uploads — use ngrok / a tunnel or set MEDIA_BASE_URL.
+MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "")
+
+# Custom User Model
+AUTH_USER_MODEL = "users.User"
+
+# Django REST Framework Settings
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "users.authentication.AdmartJWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        # Per-minute so normal use (job polling every ~2s, several pages open) never hits
+        # it, while scripted abuse still does. LocMemCache is per gunicorn worker, so the
+        # effective limit is rate x workers.
+        "anon": "60/minute",
+        "user": "300/minute",
+        "auth_sensitive": "5/minute",  # login, signup, Google, password reset (per IP)
+    },
+}
+
+# Simple JWT Settings
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Each refresh returns a new refresh token and revokes the old one, so a stolen
+    # refresh token stops working as soon as the real user refreshes (or logs out).
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+}
+
+# Spectacular Schema settings
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Admart API",
+    "DESCRIPTION": "Admart Authentication & Video Publishing Platform Backend API",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
+CORS_ALLOW_CREDENTIALS = True
+
+# Origins allowed to POST forms with the session cookie (Django admin + dashboard).
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+
+# HTTPS hardening (production runs behind nginx terminating TLS).
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
+    # nginx already redirects http->https; enable here too if it doesn't.
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("true", "1", "yes")
+    # Start short; raise to 31536000 once HTTPS is confirmed working everywhere.
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "86400"))
+
+# Frontend base URL (where OAuth callbacks redirect back to).
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Google / YouTube OAuth (Google Sign-In + YouTube social connect).
+# Client id must match the frontend VITE_GOOGLE_CLIENT_ID.
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+YOUTUBE_OAUTH_REDIRECT_URI = os.getenv(
+    "YOUTUBE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/youtube"
+)
+
+# Meta (Facebook + Instagram) OAuth — a single Meta app powers both platforms.
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+FACEBOOK_OAUTH_REDIRECT_URI = os.getenv(
+    "FACEBOOK_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/facebook"
+)
+INSTAGRAM_OAUTH_REDIRECT_URI = os.getenv(
+    "INSTAGRAM_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/instagram"
+)
+# Single "Connect Meta": one Facebook Login on META_APP_* (a Business-type app with the
+# Pages, Instagram and Marketing API use cases) connects the Facebook Page, its linked
+# Instagram Business account and the ad account together. Add this URI to the app's
+# Facebook Login "Valid OAuth Redirect URIs".
+META_OAUTH_REDIRECT_URI = os.getenv(
+    "META_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/meta"
+)
+# Ads permissions (ads_management, ads_read) are only requested once the Marketing API
+# use case is on the app; requesting them earlier makes Meta reject the whole login.
+META_ADS_ENABLED = os.getenv("META_ADS_ENABLED", "False").lower() in ("true", "1", "yes")
+# Instagram Business Login uses a separate App ID/Secret from the Meta dashboard
+# (Instagram → API setup with Instagram login). Falls back to META_APP_* if unset.
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
+
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Gate Meta page/IG publishing scopes behind App Review. Keep False until the
+# permissions are added + approved in the Meta dashboard, otherwise Meta rejects the
+# entire consent screen with "Invalid Scopes".
+FACEBOOK_PUBLISH_ENABLED = os.getenv("FACEBOOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+INSTAGRAM_PUBLISH_ENABLED = os.getenv("INSTAGRAM_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# TikTok Login Kit. Redirect URI must be https (TikTok rejects http://localhost).
+# Local: ngrok http 8000, then set TIKTOK_OAUTH_REDIRECT_URI to
+#   https://<ngrok-host>/api/social/callback/tiktok
+TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+TIKTOK_OAUTH_REDIRECT_URI = os.getenv("TIKTOK_OAUTH_REDIRECT_URI", "")
+TIKTOK_PUBLISH_ENABLED = os.getenv("TIKTOK_PUBLISH_ENABLED", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Snapchat Login Kit (identity only). Add the redirect URI in the Snap Kit portal.
+SNAPCHAT_CLIENT_ID = os.getenv("SNAPCHAT_CLIENT_ID", "")
+SNAPCHAT_CLIENT_SECRET = os.getenv("SNAPCHAT_CLIENT_SECRET", "")
+SNAPCHAT_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAPCHAT_OAUTH_REDIRECT_URI", "http://localhost:8000/api/social/callback/snapchat"
+)
+
+# Ads Manager OAuth — separate from organic Login Kit. Do not add these scopes to Connect.
+# Marketing API cannot be added to a Facebook Login + App Ads Manager app; use a
+# second Business app and set META_ADS_APP_* (falls back to META_APP_* if empty).
+META_ADS_APP_ID = os.getenv("META_ADS_APP_ID", "")
+META_ADS_APP_SECRET = os.getenv("META_ADS_APP_SECRET", "")
+META_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "META_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/meta"
+)
+TIKTOK_ADS_APP_ID = os.getenv("TIKTOK_ADS_APP_ID", "")
+TIKTOK_ADS_APP_SECRET = os.getenv("TIKTOK_ADS_APP_SECRET", "")
+TIKTOK_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "TIKTOK_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/tiktok"
+)
+SNAP_ADS_CLIENT_ID = os.getenv("SNAP_ADS_CLIENT_ID", "")
+SNAP_ADS_CLIENT_SECRET = os.getenv("SNAP_ADS_CLIENT_SECRET", "")
+SNAP_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "SNAP_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/snap"
+)
+
+# Google Ads (YouTube ads). Same Google Cloud client as YouTube Connect, different
+# redirect URI and adwords scope. Developer token: ads.google.com → API Center.
+GOOGLE_ADS_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_ADS_OAUTH_REDIRECT_URI", "http://localhost:8000/api/ads/callback/google"
+)
+GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
+
+# Fernet key(s) for encrypting social OAuth tokens at rest. Comma-separated to rotate:
+# the first key encrypts, every listed key can decrypt. Required in production so
+# changing SECRET_KEY can't silently break every connected account. In local DEBUG a
+# key derived from SECRET_KEY is used when unset.
+SOCIAL_TOKEN_ENCRYPTION_KEY = os.getenv("SOCIAL_TOKEN_ENCRYPTION_KEY", "")
+if not DEBUG and not SOCIAL_TOKEN_ENCRYPTION_KEY:
+    raise ImproperlyConfigured(
+        "SOCIAL_TOKEN_ENCRYPTION_KEY must be set when DEBUG is off "
+        '(generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").'
+    )
+
+# Image generation provider
+FAL_KEY = os.getenv("FAL_KEY", "")
+FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
+FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
+
+# Prompt enhancer (server-side only)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
+PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
+
+# Optional Runware-powered preview generation for the owned template seed command.
+# The gallery works without this; set these when generating fresh preview_url assets.
+RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")
+RUNWARE_API_URL = os.getenv("RUNWARE_API_URL", "https://api.runware.ai/v1")
+RUNWARE_PREVIEW_MODEL = os.getenv("RUNWARE_PREVIEW_MODEL", "")
+RUNWARE_TIMEOUT = int(os.getenv("RUNWARE_TIMEOUT", "60"))

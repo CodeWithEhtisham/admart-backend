@@ -1,0 +1,415 @@
+import logging
+from typing import Any
+from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils import timezone
+from drf_spectacular.utils import OpenApiExample, extend_schema
+from rest_framework import generics, status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from projects.models import Project, SocialAccount
+from users.google import (
+    NO_ACCOUNT,
+    GoogleAuthError,
+    exchange_code,
+    resolve_google_user,
+    should_create_account,
+    verify_id_token,
+)
+from users.serializers import (
+    AuthResponseSerializer,
+    CustomTokenObtainPairSerializer,
+    ForgotPasswordSerializer,
+    GoogleAuthSerializer,
+    MessageSerializer,
+    OnboardingCompleteSerializer,
+    RegisterSerializer,
+    ResetPasswordSerializer,
+    UserSerializer,
+)
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+
+def password_reset_token(user) -> str:
+    """One-time reset token: invalid once the password changes or after
+    PASSWORD_RESET_TIMEOUT. Format ``<uidb64>.<token>`` (single query param)."""
+    return f"{urlsafe_base64_encode(force_bytes(user.pk))}.{default_token_generator.make_token(user)}"
+
+
+def user_for_reset_token(token: str):
+    """The user a reset token is valid for, or None."""
+    uidb64, _, raw = (token or "").partition(".")
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uidb64)))
+    except (ValueError, TypeError, OverflowError, ValidationError, User.DoesNotExist):
+        return None
+    return user if default_token_generator.check_token(user, raw) else None
+
+
+class SensitiveAuthThrottle:
+    """Brute-force limit (settings "auth_sensitive", per IP) for credential endpoints."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_sensitive"
+
+
+class RegisterView(SensitiveAuthThrottle, APIView):
+    """View to handle user registration.
+
+    On successful registration, creates a free-plan user and returns JWT tokens.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = RegisterSerializer
+
+    @extend_schema(
+        summary="Register a new user",
+        request=RegisterSerializer,
+        responses={
+            201: AuthResponseSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Handle user registration and generate tokens."""
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+
+            return Response(
+                {
+                    "accessToken": str(refresh.access_token),
+                    "refreshToken": str(refresh),
+                    "user": UserSerializer(user).data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CustomTokenObtainPairView(SensitiveAuthThrottle, TokenObtainPairView):
+    """Custom Login View returning camelCase tokens and user profile."""
+
+    serializer_class = CustomTokenObtainPairSerializer
+
+    @extend_schema(
+        summary="Login with email and password",
+        responses={
+            200: AuthResponseSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        email = (request.data.get("email") or request.data.get("username") or "").strip()
+        if email and not User.objects.filter(email__iexact=email).exists():
+            return Response(NO_ACCOUNT, status=status.HTTP_404_NOT_FOUND)
+        return super().post(request, *args, **kwargs)
+
+
+class _RefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except User.DoesNotExist:
+            # Token belongs to a deleted account: 401, not a server error.
+            raise InvalidToken("This account no longer exists.")
+
+
+class RefreshView(TokenRefreshView):
+    """POST /api/auth/refresh — SimpleJWT refresh that treats deleted users as a bad token."""
+
+    serializer_class = _RefreshSerializer
+
+
+class DeleteAccountView(SensitiveAuthThrottle, APIView):
+    """POST /api/auth/delete-account — permanently delete the signed-in account.
+
+    Requires the password, or (for Google-only accounts without one) the account's
+    email typed as confirmation. Staff accounts must be removed by another admin.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(summary="Delete my account", request=None, responses={200: MessageSerializer})
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        from users.deletion import delete_account
+
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return Response(
+                {"message": "Admin accounts can't be deleted here. Ask another admin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if user.has_usable_password():
+            if not user.check_password(str(request.data.get("password") or "")):
+                return Response({"password": ["Incorrect password."]}, status=status.HTTP_400_BAD_REQUEST)
+        elif str(request.data.get("confirmEmail") or "").strip().lower() != user.email.lower():
+            return Response(
+                {"confirmEmail": ["Type your account email to confirm."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        delete_account(user)
+        return Response({"message": "Your account has been deleted."}, status=status.HTTP_200_OK)
+
+
+class MeView(generics.RetrieveUpdateAPIView):
+    """View to retrieve or update the authenticated user's profile."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get_object(self) -> Any:
+        return self.request.user
+
+    @extend_schema(summary="Get current user details")
+    def get(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().get(request, *args, **kwargs)
+
+    @extend_schema(summary="Update current user details")
+    def put(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().put(request, *args, **kwargs)
+
+    @extend_schema(summary="Partially update current user details")
+    def patch(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        return super().patch(request, *args, **kwargs)
+
+
+class ForgotPasswordView(SensitiveAuthThrottle, APIView):
+    """View to initiate password reset."""
+
+    permission_classes = [AllowAny]
+    serializer_class = ForgotPasswordSerializer
+
+    @extend_schema(
+        summary="Forgot password request",
+        request=ForgotPasswordSerializer,
+        responses={
+            200: MessageSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Email a one-time reset link; same response whether or not the email exists."""
+        serializer = ForgotPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            user = User.objects.filter(email__iexact=email, is_active=True).first()
+            if user is not None:
+                reset_link = (
+                    f"{settings.FRONTEND_URL.rstrip('/')}/auth/reset-password"
+                    f"?token={password_reset_token(user)}"
+                )
+                try:
+                    send_mail(
+                        "Reset your Admart password",
+                        "We received a request to reset your Admart password.\n\n"
+                        f"Open this link within an hour to choose a new one:\n{reset_link}\n\n"
+                        "If you didn't ask for this, you can ignore this email.",
+                        None,
+                        [user.email],
+                    )
+                except Exception:  # noqa: BLE001 — never reveal delivery problems to the requester
+                    # The link itself is never logged: it is a credential.
+                    logger.exception("Password reset email failed to send")
+
+            return Response(
+                {"message": "If the email is registered, a password reset link has been sent."},
+                status=status.HTTP_200_OK,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResetPasswordView(SensitiveAuthThrottle, APIView):
+    """View to reset password using signed token."""
+
+    permission_classes = [AllowAny]
+    serializer_class = ResetPasswordSerializer
+
+    @extend_schema(
+        summary="Reset password using token",
+        request=ResetPasswordSerializer,
+        responses={
+            200: MessageSerializer,
+            400: MessageSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Unsign and verify the token, then set user's password."""
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            token = serializer.validated_data["token"]
+            new_password = serializer.validated_data["newPassword"]
+
+            user = user_for_reset_token(token)
+            if user is None:
+                return Response(
+                    {"non_field_errors": ["The reset link is invalid or has expired."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Changing the password invalidates this token (and any other issued ones).
+            user.set_password(new_password)
+            user.save()
+            return Response(
+                {"message": "Password has been reset successfully."},
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GoogleAuthView(SensitiveAuthThrottle, APIView):
+    """Exchange a Google auth code (or id_token) for Admart JWT."""
+
+    permission_classes = [AllowAny]
+    serializer_class = GoogleAuthSerializer
+
+    @extend_schema(
+        summary="Google OAuth Callback Exchange",
+        request=GoogleAuthSerializer,
+        responses={
+            200: AuthResponseSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        serializer = GoogleAuthSerializer(data=request.data)
+        if not serializer.is_valid():
+            code = (request.data.get("code") or "").strip()
+            id_token = (request.data.get("idToken") or request.data.get("id_token") or "").strip()
+            if not code and not id_token:
+                return Response(
+                    {"message": "Missing authorization code."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(
+                {"message": "Google sign-in failed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        try:
+            if data["id_token"]:
+                claims = verify_id_token(data["id_token"])
+            else:
+                id_token = exchange_code(data["code"], data["redirect_uri"])
+                claims = verify_id_token(id_token)
+        except GoogleAuthError as exc:
+            return Response({"message": exc.message}, status=exc.status_code)
+
+        create = should_create_account(data.get("intent") or "", data.get("create_account"))
+        user = resolve_google_user(claims, create=create)
+        if user is None:
+            return Response(NO_ACCOUNT, status=status.HTTP_404_NOT_FOUND)
+
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "accessToken": str(refresh.access_token),
+                "refreshToken": str(refresh),
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class LogoutView(APIView):
+    """View to handle user logout by invalidating token."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Logout User",
+        request=None,
+        responses={
+            200: MessageSerializer,
+        },
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Handle logout (accepts optional refresh token for simplejwt blacklisting)."""
+        # If client passes refreshToken in body, try to blacklist it:
+        refresh_token = request.data.get("refreshToken")
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                # Fail gracefully if blacklist is not enabled/supported
+                pass
+
+        return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
+
+
+class OnboardingCompleteView(APIView):
+    """Complete the onboarding flow in one call.
+
+    Creates the user's first Project (the parent for brand kit + social accounts),
+    connects the chosen platforms to it, makes it active, and marks the user as
+    onboarded. The brand kit is also mirrored onto the user for backward compat.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = OnboardingCompleteSerializer
+
+    @extend_schema(
+        summary="Complete onboarding",
+        request=OnboardingCompleteSerializer,
+        responses={200: UserSerializer},
+    )
+    def post(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Create the first project from onboarding data and mark user onboarded."""
+        serializer = OnboardingCompleteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        data = serializer.validated_data
+        brand_name = data.get("brandName", "")
+        brand_industry = data.get("industry", "")
+        brand_color_hex = data.get("brandColorHex", "#2563eb")
+
+        # Mirror brand kit onto the user for backward compatibility.
+        user.brand_name = brand_name or user.brand_name
+        user.brand_industry = brand_industry or user.brand_industry
+        user.brand_color_hex = brand_color_hex or user.brand_color_hex
+        user.onboarding_completed = True
+
+        # Create the project that owns this brand kit + its social accounts.
+        project = Project.objects.create(
+            owner=user,
+            name=(data.get("projectName") or brand_name or "My Project")[:80],
+            color=brand_color_hex,
+            brand_name=brand_name,
+            brand_industry=brand_industry,
+            brand_color_hex=brand_color_hex,
+            last_accessed_at=timezone.now(),
+        )
+        user.active_project = project
+        user.save(update_fields=[
+            "brand_name", "brand_industry", "brand_color_hex",
+            "onboarding_completed", "active_project", "updated_at",
+        ])
+
+        for platform in data.get("connectedPlatforms", []):
+            SocialAccount.objects.get_or_create(
+                project=project,
+                platform=platform,
+                defaults={
+                    "connected": True,
+                    "handle": f"@{(user.first_name or 'user').lower()}_{platform}",
+                    "display_name": f"{user.first_name} {user.last_name}".strip() or user.email,
+                },
+            )
+
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
