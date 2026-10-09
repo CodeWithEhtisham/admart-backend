@@ -55,9 +55,30 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          python3 - << 'PYEOF'
+          import os, sys, textwrap
+          raw = os.environ.get("SSH_KEY", "").strip()
+          if not raw:
+              print("::error::SSH_KEY secret is empty or missing!", file=sys.stderr)
+              sys.exit(1)
+          if raw.startswith("ssh-ed25519") or raw.startswith("ssh-rsa") or raw.startswith("ecdsa-"):
+              print("::error::SSH_KEY secret contains a PUBLIC key instead of a PRIVATE key! It must start with '-----BEGIN OPENSSH PRIVATE KEY-----'", file=sys.stderr)
+              sys.exit(1)
+          header = "-----BEGIN OPENSSH PRIVATE KEY-----"
+          footer = "-----END OPENSSH PRIVATE KEY-----"
+          if header in raw and footer in raw:
+              body = raw.split(header)[1].split(footer)[0].replace(" ", "").replace("\n", "").replace("\r", "")
+              clean_key = f"{header}\n" + "\n".join(textwrap.wrap(body, 70)) + f"\n{footer}\n"
+          else:
+              clean_key = raw.replace("\r", "") + "\n"
+          ssh_path = os.path.expanduser("~/.ssh/id_ed25519")
+          with open(ssh_path, "w") as f:
+              f.write(clean_key)
+          os.chmod(ssh_path, 0o600)
+          print("SSH key written successfully.")
+          PYEOF
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519
       - name: Deploy
         env:
           TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
