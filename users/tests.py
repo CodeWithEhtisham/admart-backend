@@ -720,7 +720,11 @@ class ProductionSettingsTests(APITestCase):
         import subprocess
         import sys
 
-        clean = {k: v for k, v in os.environ.items() if k not in ("DEBUG", "SECRET_KEY")}
+        clean = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("DEBUG", "SECRET_KEY", "SOCIAL_TOKEN_ENCRYPTION_KEY")
+        }
         clean.update(env)
         code = f"import config.settings as s; print({expr})"
         # dotenv must not refill the vars from a local .env, so point it at an empty dir.

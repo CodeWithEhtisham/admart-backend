@@ -495,7 +495,7 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
     double-approve) or the decision is unknown.
     """
     payment = (
-        Payment.objects.select_for_update()
+        Payment.objects.select_for_update(of=("self",))
         .select_related("user")
         .filter(pk=payment_id)
         .first()
