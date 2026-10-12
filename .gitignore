@@ -94,3 +94,4 @@ venv/
 # Payment proofs and other never-public uploads
 private_media/
 staticfiles/
+agent_music/

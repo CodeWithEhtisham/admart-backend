@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     "projects.apps.ProjectsConfig",
     "content.apps.ContentConfig",
     "admin_panel.apps.AdminPanelConfig",
+    "agents.apps.AgentsConfig",
 ]
 
 MIDDLEWARE = [
@@ -381,6 +382,25 @@ FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
 PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
+
+# Agents (YouTube Shorts Creator etc.). The worker is `manage.py run_agents_worker`.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# Dry run: template script, placeholder images, silent audio, no provider calls, 0 credits.
+AGENTS_DRY_RUN = os.getenv("AGENTS_DRY_RUN", "False").lower() in ("true", "1", "yes")
+AGENTS_IMAGE_MODEL = os.getenv("AGENTS_IMAGE_MODEL", "fal-ai/flux/schnell")
+AGENTS_TTS_MODEL = os.getenv("AGENTS_TTS_MODEL", "gpt-4o-mini-tts")
+AGENTS_TTS_VOICE = os.getenv("AGENTS_TTS_VOICE", "alloy")
+# Provider cost estimates used for credit quotes (USD).
+AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.015")
+AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0.002")
+AGENTS_RESEARCH_USD = os.getenv("AGENTS_RESEARCH_USD", "0.035")  # one search-grounded Gemini call
+AGENTS_TRANSCRIBE_USD_PER_MIN = os.getenv("AGENTS_TRANSCRIBE_USD_PER_MIN", "0.006")  # word timings
+AGENTS_TRANSCRIBE_MODEL = os.getenv("AGENTS_TRANSCRIBE_MODEL", "whisper-1")
+# Free stock footage (https://www.pexels.com/api/). Empty = AI images only.
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+# Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.
+AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
+AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Optional Runware-powered preview generation for the owned template seed command.
 # The gallery works without this; set these when generating fresh preview_url assets.
