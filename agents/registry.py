@@ -81,6 +81,10 @@ AGENTS: dict[str, AgentSpec] = {
 
 
 def _image_usd() -> Decimal:
+    from agents import providers
+
+    if not providers.image_uses_fal():
+        return Decimal("0")  # Cloudflare free allowance
     model = settings.AGENTS_IMAGE_MODEL
     row = get_fal_prices([model]).get(model) or FALLBACK_PRICES.get(model) or {}
     price = Decimal(str(row.get("unit_price", "0.03")))
@@ -94,17 +98,19 @@ def estimate_credits(spec: AgentSpec, run_input: dict) -> Decimal:
     if settings.AGENTS_DRY_RUN:
         return Decimal("0")
     usd = Decimal("0")
+    from agents import providers
+
     llm_calls = sum(step in spec.steps for step in ("concepts", "script"))
-    usd += Decimal(settings.AGENTS_LLM_USD_PER_RUN) * llm_calls
+    usd += providers.text_usd() * llm_calls
     if "research" in spec.steps:
-        usd += Decimal(settings.AGENTS_RESEARCH_USD)
+        usd += providers.research_usd()
     if "visuals" in spec.steps:
         usd += _image_usd() * SHORT_SCENES  # worst case: every scene an AI image
     if "voice" in spec.steps:
         chars = SHORT_NARRATION_CHARS if "script" in spec.steps else len(str(run_input.get("text", "")))
-        usd += Decimal(settings.AGENTS_TTS_USD_PER_1K_CHARS) * Decimal(chars) / Decimal(1000)
+        usd += providers.speech_usd(chars)
     if "captions" in spec.steps:
-        usd += Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
+        usd += providers.timing_usd()
     cost = quantize_credits(usd)
     return quantize_credits(cost * admart_markup_multiplier(cost))
 

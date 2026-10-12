@@ -13,16 +13,27 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from agents import engine, render, steps
+from agents import engine, providers, render, steps
 from agents.models import AgentDeployment, AgentRun
 from agents.registry import AGENTS, estimate_credits
 from projects.models import Project
 
 User = get_user_model()
 NO_PRICES = patch("agents.registry.get_fal_prices", return_value={})
-# Tests never depend on the developer's .env: no keys, real (non-dry) mode, no music.
-HERMETIC = {"AGENTS_DRY_RUN": False, "OPENAI_API_KEY": "", "GEMINI_API_KEY": "", "PEXELS_API_KEY": "",
-            "AGENTS_MUSIC_DIR": "/nonexistent-agent-music"}
+# Tests never depend on the developer's .env. Real (non-dry) mode with one paid provider per job
+# (fake keys, every HTTP call is patched), no local models, no stock, no music.
+HERMETIC = {
+    "AGENTS_DRY_RUN": False, "OPENAI_API_KEY": "k", "GEMINI_API_KEY": "k", "FAL_KEY": "k", "GROQ_API_KEY": "",
+    "PEXELS_API_KEY": "", "CLOUDFLARE_ACCOUNT_ID": "", "CLOUDFLARE_API_TOKEN": "",
+    "AGENTS_LLM_PROVIDERS": "gemini", "AGENTS_TTS_PROVIDERS": "openai", "AGENTS_IMAGE_PROVIDERS": "fal",
+    "AGENTS_CAPTION_PROVIDERS": "openai", "AGENTS_KOKORO_DIR": "/nonexistent-kokoro",
+    "AGENTS_MUSIC_DIR": "/nonexistent-agent-music",
+}
+FREE_PROVIDERS = {
+    "AGENTS_LLM_PROVIDERS": "groq", "GROQ_API_KEY": "g", "AGENTS_TTS_PROVIDERS": "gemini",
+    "AGENTS_IMAGE_PROVIDERS": "cloudflare", "CLOUDFLARE_ACCOUNT_ID": "a", "CLOUDFLARE_API_TOKEN": "t",
+    "AGENTS_CAPTION_PROVIDERS": "",
+}
 
 
 class CleanScriptTests(SimpleTestCase):
@@ -73,6 +84,11 @@ class EstimateTests(SimpleTestCase):
         self.assertGreater(shorts, script)
         self.assertGreater(script, 0)
         with override_settings(AGENTS_DRY_RUN=True):
+            self.assertEqual(estimate_credits(AGENTS["youtube-shorts"], {}), 0)
+
+    @NO_PRICES
+    def test_free_providers_only_charge_for_text(self, _prices) -> None:
+        with override_settings(**FREE_PROVIDERS, AGENTS_LLM_USD_PER_RUN="0"):
             self.assertEqual(estimate_credits(AGENTS["youtube-shorts"], {}), 0)
 
 
@@ -226,8 +242,7 @@ class ProviderStepTests(_AgentAPITestCase):
             deployment=deployment, project=self.project, user=self.user, input=run_input or {"topic": "coffee"}
         )
 
-    @override_settings(GEMINI_API_KEY="k")
-    @patch("agents.steps.requests.post")
+    @patch("agents.providers.requests.post")
     def test_script_uses_gemini_and_brand(self, post) -> None:
         post.return_value = MagicMock(
             status_code=200,
@@ -256,8 +271,7 @@ class ProviderStepTests(_AgentAPITestCase):
         steps.step_script(run)  # already done: no second paid call
         self.assertEqual(post.call_count, 1)
 
-    @override_settings(GEMINI_API_KEY="k")
-    @patch("agents.steps.requests.post")
+    @patch("agents.providers.requests.post")
     def test_research_uses_search_grounding_and_keeps_sources(self, post) -> None:
         post.return_value = MagicMock(
             status_code=200,
@@ -291,8 +305,8 @@ class ProviderStepTests(_AgentAPITestCase):
         self.assertTrue(scene["clip"].endswith("clip-0.mp4"))
         self.assertEqual(scene["credit"]["by"], "Ana")
 
-    @patch("agents.steps.requests.get")
-    @patch("agents.steps.fal_client")
+    @patch("agents.providers.requests.get")
+    @patch("agents.providers.fal_client")
     def test_images_step_saves_each_scene_once(self, fal, get) -> None:
         fal.submit.return_value = MagicMock(status_url="s", response_url="r")
         fal.status.return_value = {"status": "COMPLETED"}
@@ -305,8 +319,7 @@ class ProviderStepTests(_AgentAPITestCase):
         self.assertEqual(fal.submit.call_count, 2)
         self.assertTrue((Path(self.media) / run.output["scenes"][1]["image"]).exists())
 
-    @override_settings(OPENAI_API_KEY="k")
-    @patch("agents.steps.requests.post")
+    @patch("agents.providers.requests.post")
     def test_voice_step_records_duration(self, post) -> None:
         sample = Path(self.media) / "sample.mp3"
         render.silent_audio(sample, 2.0)
@@ -316,8 +329,7 @@ class ProviderStepTests(_AgentAPITestCase):
         self.assertAlmostEqual(run.output["scenes"][0]["duration"], 2.0, delta=0.2)
         self.assertEqual(post.call_args.kwargs["json"]["input"], "Hello world")
 
-    @override_settings(OPENAI_API_KEY="k")
-    @patch("agents.steps.requests.post")
+    @patch("agents.providers.requests.post")
     def test_captions_use_word_timings_or_fall_back(self, post) -> None:
         audio = Path(self.media) / "a.mp3"
         render.silent_audio(audio, 2.0)
@@ -329,7 +341,7 @@ class ProviderStepTests(_AgentAPITestCase):
         import requests as real_requests
         post.side_effect = real_requests.ConnectionError("down")
         del run.output["scenes"][0]["words"]
-        with self.assertLogs("agents.steps", "WARNING"):
+        with self.assertLogs("agents.providers", "WARNING"):
             steps.step_captions(run)
         self.assertEqual([w["word"] for w in run.output["scenes"][0]["words"]], ["Hello", "world"])
 
@@ -352,8 +364,53 @@ class ProviderStepTests(_AgentAPITestCase):
 
     def test_voice_step_without_key_has_a_clear_error(self) -> None:
         run = self._run("voiceover", {"text": "Hi"})
-        with override_settings(OPENAI_API_KEY=""), self.assertRaisesMessage(RuntimeError, "isn't set up"):
+        with override_settings(OPENAI_API_KEY=""), self.assertRaisesMessage(RuntimeError, "No voice service is set up"):
             steps.step_voice(run)
+
+
+class ProviderChainTests(_AgentAPITestCase):
+    """Free-first provider lists: skip what isn't set up, fall through on failure."""
+
+    @override_settings(AGENTS_LLM_PROVIDERS="gemini,groq", GROQ_API_KEY="g")
+    @patch("agents.providers.requests.post")
+    def test_text_falls_back_to_groq_when_gemini_fails(self, post) -> None:
+        import requests as real_requests
+
+        groq = MagicMock(json=lambda: {"choices": [{"message": {"content": '{"ok": true}'}}]})
+        post.side_effect = [real_requests.HTTPError("429 free tier used up"), groq]
+        with self.assertLogs("agents.providers", "WARNING"):
+            self.assertEqual(providers.text("sys", "user"), {"ok": True})
+        self.assertIn("groq.com", post.call_args.args[0])
+        self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+    @override_settings(AGENTS_TTS_PROVIDERS="kokoro,gemini")
+    @patch("agents.providers.requests.post")
+    def test_gemini_voice_is_converted_to_mp3_and_missing_kokoro_is_skipped(self, post) -> None:
+        import base64
+
+        pcm = b"\x00\x00" * 24000  # one second of 24 kHz silence
+        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [
+            {"inlineData": {"data": base64.b64encode(pcm).decode()}}]}}]})
+        audio = Path(self.media) / "g.mp3"
+        audio.write_bytes(providers.speech("Hello"))
+        self.assertAlmostEqual(render.duration_of(audio), 1.0, delta=0.15)
+        self.assertEqual(post.call_count, 1)  # Kokoro had no model files, so it was never tried
+
+    @override_settings(AGENTS_IMAGE_PROVIDERS="cloudflare,fal", CLOUDFLARE_ACCOUNT_ID="a", CLOUDFLARE_API_TOKEN="t")
+    @patch("agents.providers.requests.post")
+    def test_cloudflare_image_is_decoded(self, post) -> None:
+        import base64
+
+        post.return_value = MagicMock(json=lambda: {"result": {"image": base64.b64encode(b"jpegbytes").decode()}})
+        self.assertEqual(providers.image("a cat", 768, 1344), (b"jpegbytes", ".jpg"))
+        self.assertIn("/accounts/a/ai/run/", post.call_args.args[0])
+
+    @override_settings(AGENTS_IMAGE_PROVIDERS="cloudflare", AGENTS_TTS_PROVIDERS="")
+    def test_nothing_set_up_gives_a_clear_message(self) -> None:
+        with self.assertRaisesMessage(providers.ProviderUnavailable, "No image service is set up"):
+            providers.image("x", 10, 10)
+        with self.assertRaisesMessage(providers.ProviderUnavailable, "No voice service is set up"):
+            providers.speech("x")
 
 
 class EngineTests(_AgentAPITestCase):

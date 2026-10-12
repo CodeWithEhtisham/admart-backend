@@ -400,6 +400,27 @@ AGENTS_TRANSCRIBE_MODEL = os.getenv("AGENTS_TRANSCRIBE_MODEL", "whisper-1")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 # Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.
 AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
+# Provider order per job, free first. Providers without a key/model are skipped; a failing one
+# (e.g. a free-tier limit) falls through to the next. See agents/providers.py.
+AGENTS_LLM_PROVIDERS = os.getenv("AGENTS_LLM_PROVIDERS", "gemini,groq")
+AGENTS_TTS_PROVIDERS = os.getenv("AGENTS_TTS_PROVIDERS", "kokoro,gemini,openai")
+AGENTS_IMAGE_PROVIDERS = os.getenv("AGENTS_IMAGE_PROVIDERS", "cloudflare,fal")
+AGENTS_CAPTION_PROVIDERS = os.getenv("AGENTS_CAPTION_PROVIDERS", "local,openai")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+AGENTS_GROQ_MODEL = os.getenv("AGENTS_GROQ_MODEL", "llama-3.3-70b-versatile")
+AGENTS_GEMINI_TTS_MODEL = os.getenv("AGENTS_GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+AGENTS_GEMINI_TTS_VOICE = os.getenv("AGENTS_GEMINI_TTS_VOICE", "Kore")
+# Kokoro: free local voice (CPU). Files come from `manage.py download_agent_models`.
+AGENTS_MODELS_DIR = os.getenv("AGENTS_MODELS_DIR") or str(BASE_DIR / "agent_models")
+AGENTS_KOKORO_DIR = str(Path(AGENTS_MODELS_DIR) / "kokoro")
+AGENTS_KOKORO_VOICE = os.getenv("AGENTS_KOKORO_VOICE", "af_heart")
+# faster-whisper: free local word timings for captions (CPU).
+AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "base.en")
+AGENTS_WHISPER_DIR = str(Path(AGENTS_MODELS_DIR) / "whisper")
+# Cloudflare Workers AI: free daily allowance of FLUX schnell images.
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+AGENTS_CLOUDFLARE_IMAGE_MODEL = os.getenv("AGENTS_CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
 AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Optional Runware-powered preview generation for the owned template seed command.

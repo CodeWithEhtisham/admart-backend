@@ -13,17 +13,14 @@ from pathlib import Path
 import requests
 from django.conf import settings
 
-from agents import render
+from agents import providers, render
 from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, STYLES
-from content import fal_client
 from content.models import LibraryAsset
-from content.prompt_enhancer import GEMINI_ENDPOINT, _extract_candidate_text, _parse_json_text
 from content.storage_utils import absolute_media_url
 
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_COLORS = ("0x2563eb", "0x7c3aed", "0x059669", "0xdb2777", "0xd97706", "0x0891b2", "0x4b5563")
-IMAGE_TIMEOUT_SECONDS = 180
 SPEECH_WORDS_PER_SECOND = 2.6
 MAX_STOCK_BYTES = 80 * 1024 * 1024
 MUSIC_SUFFIXES = (".mp3", ".m4a", ".wav")
@@ -103,47 +100,6 @@ def _brand_lines(run) -> str:
     )
 
 
-# ── Gemini ────────────────────────────────────────────────────────────────
-
-
-def _gemini(system: str, user: str, *, json_mode: bool = True, search: bool = False, temperature: float = 0.8):
-    """One Gemini call. JSON mode returns a dict; search mode returns (text, sources)."""
-    if not settings.GEMINI_API_KEY:
-        raise RuntimeError("Script writing isn't set up on this server yet.")
-    body = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "generationConfig": {"temperature": temperature, "maxOutputTokens": 2500},
-    }
-    if json_mode:
-        body["generationConfig"]["responseMimeType"] = "application/json"
-    if search:
-        body["tools"] = [{"google_search": {}}]
-    response = requests.post(
-        GEMINI_ENDPOINT.format(model=settings.PROMPT_ENHANCER_MODEL),
-        headers={"Content-Type": "application/json", "x-goog-api-key": settings.GEMINI_API_KEY},
-        json=body,
-        timeout=90,
-    )
-    if response.status_code >= 400:
-        logger.warning("Gemini failed status=%s body=%s", response.status_code, response.text[:300])
-        raise RuntimeError("The AI writer is unavailable right now. Please try again.")
-    data = response.json()
-    text = _extract_candidate_text(data)
-    if search:
-        chunks = ((data.get("candidates") or [{}])[0].get("groundingMetadata") or {}).get("groundingChunks") or []
-        sources = [
-            {"title": str(c["web"].get("title", ""))[:120], "uri": str(c["web"].get("uri", ""))[:500]}
-            for c in chunks
-            if isinstance(c, dict) and isinstance(c.get("web"), dict)
-        ][:8]
-        return text, sources
-    parsed = _parse_json_text(text)
-    if not isinstance(parsed, dict):
-        raise RuntimeError("The AI writer returned an unexpected format. Please try again.")
-    return parsed
-
-
 # ── pre-production ────────────────────────────────────────────────────────
 
 
@@ -154,7 +110,7 @@ def step_research(run) -> None:
     if settings.AGENTS_DRY_RUN:
         notes, sources = f"- Dry run: research notes about {topic} would appear here.", []
     else:
-        notes, sources = _gemini(RESEARCH_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
+        notes, sources = providers.text(RESEARCH_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
     run.output["research"] = {"notes": (notes or "").strip()[:3000], "sources": sources}
     _save(run)
 
@@ -193,7 +149,7 @@ def step_concepts(run) -> None:
         }
     else:
         notes = run.output.get("research", {}).get("notes", "")
-        raw = _gemini(CONCEPTS_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}")
+        raw = providers.text(CONCEPTS_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}")
     run.output["concepts"] = clean_concepts(raw)
     _save(run)
 
@@ -265,7 +221,7 @@ def step_script(run) -> None:
             if concept
             else ""
         )
-        raw = _gemini(SCRIPT_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}{concept_lines}Research notes:\n{notes}")
+        raw = providers.text(SCRIPT_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}{concept_lines}Research notes:\n{notes}")
     run.output.update(clean_script(raw, topic))
     _save(run)
 
@@ -295,29 +251,10 @@ def step_voice(run) -> None:
             seconds = max(1.5, len(scene["narration"].split()) / SPEECH_WORDS_PER_SECOND)
             render.silent_audio(folder / name, seconds)
         else:
-            (folder / name).write_bytes(_openai_speech(scene["narration"]))
+            (folder / name).write_bytes(providers.speech(scene["narration"]))
         scene["audio"] = f"{rel}/{name}"
         scene["duration"] = round(render.duration_of(folder / name), 3)
         _save(run)
-
-
-def _openai_speech(text: str) -> bytes:
-    if not settings.OPENAI_API_KEY:
-        raise RuntimeError("Voiceover isn't set up on this server yet.")
-    body = {"model": settings.AGENTS_TTS_MODEL, "voice": settings.AGENTS_TTS_VOICE, "input": text[:4000],
-            "response_format": "mp3"}
-    if settings.AGENTS_TTS_MODEL.startswith("gpt-4o"):
-        body["instructions"] = "Speak clearly and with energy, like a friendly YouTube Shorts narrator."
-    response = requests.post(
-        "https://api.openai.com/v1/audio/speech",
-        headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
-        json=body,
-        timeout=120,
-    )
-    if response.status_code >= 400:
-        logger.warning("OpenAI speech failed status=%s body=%s", response.status_code, response.text[:300])
-        raise RuntimeError("The voice service returned an error. Please try again.")
-    return response.content
 
 
 def step_captions(run) -> None:
@@ -325,34 +262,9 @@ def step_captions(run) -> None:
     for scene in run.output["scenes"]:
         if "words" in scene:
             continue
-        words = None
-        if not settings.AGENTS_DRY_RUN and settings.OPENAI_API_KEY:
-            words = _transcribe_words(media_path(scene["audio"]))
+        words = None if settings.AGENTS_DRY_RUN else providers.word_times(media_path(scene["audio"]))
         scene["words"] = words or render.estimate_word_times(scene["narration"], scene["duration"])
         _save(run)
-
-
-def _transcribe_words(audio: Path) -> list[dict] | None:
-    """Exact word timings; None (fall back to estimates) if the service fails — captions still work."""
-    try:
-        with audio.open("rb") as fh:
-            response = requests.post(
-                "https://api.openai.com/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
-                data={"model": settings.AGENTS_TRANSCRIBE_MODEL, "response_format": "verbose_json",
-                      "timestamp_granularities[]": "word"},
-                files={"file": (audio.name, fh, "audio/mpeg")},
-                timeout=120,
-            )
-        response.raise_for_status()
-        words = [
-            {"word": str(w.get("word", "")).strip(), "start": round(float(w["start"]), 3), "end": round(float(w["end"]), 3)}
-            for w in response.json().get("words") or []
-        ]
-        return [w for w in words if w["word"]] or None
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        logger.warning("Word timing transcription failed; using estimated caption timing", exc_info=True)
-        return None
 
 
 # ── visuals ───────────────────────────────────────────────────────────────
@@ -380,7 +292,7 @@ def step_visuals(run) -> None:
             name = f"scene-{i}.png"
             render.placeholder_image(folder / name, PLACEHOLDER_COLORS[i % len(PLACEHOLDER_COLORS)])
         else:
-            content, ext = _fal_image(f"{scene['image_prompt']}. Style: {style_hint}")
+            content, ext = providers.image(f"{scene['image_prompt']}. Style: {style_hint}", IMAGE_WIDTH, IMAGE_HEIGHT)
             name = f"scene-{i}-{int(time.time())}{ext}"  # new name per take so browsers don't show a cached one
             (folder / name).write_bytes(content)
         scene.update({"image": f"{rel}/{name}", "clip": None, "credit": None})
@@ -420,40 +332,6 @@ def _pexels_clip(query: str, min_seconds: float) -> tuple[bytes, dict] | None:
         user = video.get("user") or {}
         return clip.content, {"source": "Pexels", "by": str(user.get("name", ""))[:80], "url": str(video.get("url", ""))[:300]}
     return None
-
-
-def _fal_image(prompt: str) -> tuple[bytes, str]:
-    model = settings.AGENTS_IMAGE_MODEL
-    try:
-        job = fal_client.submit(
-            model,
-            {
-                "prompt": f"{prompt}. Vertical 9:16 composition, no text, no letters, no logos.",
-                "image_size": {"width": IMAGE_WIDTH, "height": IMAGE_HEIGHT},
-                "num_images": 1,
-                "enable_safety_checker": True,
-            },
-        )
-        deadline = time.monotonic() + IMAGE_TIMEOUT_SECONDS
-        while True:
-            state = str(fal_client.status(status_url=job.status_url).get("status", "")).upper()
-            if state == "COMPLETED":
-                break
-            if state in ("FAILED", "ERROR", "CANCELLED"):
-                raise RuntimeError("An image could not be generated. Please try again.")
-            if time.monotonic() > deadline:
-                raise RuntimeError("Image generation took too long. Please try again.")
-            time.sleep(2)
-        images = fal_client.result(response_url=job.response_url).get("images") or []
-    except fal_client.FalError as exc:
-        raise RuntimeError(f"Image generation failed: {exc}") from exc
-    if not images or not images[0].get("url"):
-        raise RuntimeError("An image could not be generated. Please try again.")
-    resp = requests.get(images[0]["url"], timeout=120)
-    resp.raise_for_status()
-    kind = resp.headers.get("Content-Type", "").split(";")[0]
-    ext = {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(kind, ".png")
-    return resp.content, ext
 
 
 def step_review_storyboard(run) -> None:
