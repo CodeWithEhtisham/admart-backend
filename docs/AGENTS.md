@@ -39,9 +39,8 @@ Topic → Research → 3 concepts (you pick) → Script (you edit)
 ### On the server (once)
 
 - [ ] FFmpeg and fonts: `sudo apt install -y ffmpeg fonts-dejavu-core`
-- [ ] Python packages for the free local voice and captions: `pip install kokoro-onnx faster-whisper`
-      (to be pinned in `requirements.txt` after they are tested on the server). Without them, the
-      agent simply uses the next provider (Gemini voice, estimated caption timing).
+- [ ] Python packages: `pip install -r requirements.txt` (includes `kokoro-onnx` and `faster-whisper`
+      for the free local voice and captions; the first install is ~150 MB)
 - [ ] Free local models: `python manage.py download_agent_models` (~250 MB: Kokoro voice + Whisper)
 - [ ] The agents worker service — see [agents-worker.md](agents-worker.md)
 - [ ] `MEDIA_BASE_URL` set to the public API address (so YouTube can fetch the video)
@@ -109,6 +108,28 @@ Credits charged to users = provider cost × Admart markup. Free providers add 0;
 
 ---
 
+## Managing agents (admin dashboard)
+
+`/admin/dashboard/` → **Agents**:
+
+- **Summary**: runs and failure rate (30 days), credits charged, stuck runs, providers in use.
+- **Agent recipes**: each agent is a list of step blocks plus optional custom prompts
+  (research, concepts, script). Owners can edit a recipe or create a new agent with
+  **+ New agent** — it appears in the users' catalog immediately, no deploy needed. Invalid
+  orders are rejected with a reason (e.g. captions need a voice step first). Hiding an agent
+  removes it from the catalog; existing deployments keep working.
+- **Recent runs** across all users, filterable (failed, stuck, …). Owners can **Cancel & refund**
+  a queued/running/paused run or **Retry** a failed one.
+
+Users also get a **Try again** button on their own failed runs; it charges the run's credits
+again and resumes after the last finished step.
+
+Available step blocks: `research`, `concepts`, `pick_concept` (check-in), `script`,
+`review_script` (check-in), `voice`, `captions`, `visuals`, `review_storyboard` (check-in),
+`render`, `finish`.
+
+---
+
 ## Try it
 
 1. Set `AGENTS_DRY_RUN=True`, restart the backend, start the worker:
@@ -139,7 +160,8 @@ Credits are refunded automatically whenever a run fails.
 ## For developers
 
 - Code: `agents/` (models, registry, steps, providers, render, engine, views).
-- New agent: add an `AgentSpec` in `agents/registry.py` and any new steps in `agents/steps.py`.
+- New agent: create a recipe in the admin dashboard (no code). A new *step block* needs code in
+  `agents/steps.py` plus an entry in `STEP_BLOCKS` in `agents/registry.py`.
 - New provider: add it to the job's `*_READY` and call maps in `agents/providers.py`.
 - Tests: `python manage.py test agents` — no paid calls; providers are mocked and a full Short is
   rendered in dry-run mode.

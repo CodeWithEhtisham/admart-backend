@@ -14,7 +14,7 @@ import requests
 from django.conf import settings
 
 from agents import providers, render
-from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, STYLES
+from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, STYLES, get_agent
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
 
@@ -84,6 +84,16 @@ def _config(run) -> dict:
     return run.deployment.config or {}
 
 
+DEFAULT_PROMPTS = {"research": RESEARCH_PROMPT, "concepts": CONCEPTS_PROMPT, "script": SCRIPT_PROMPT}
+
+
+def _prompt(run, key: str) -> str:
+    """The recipe's prompt for this step, or the built-in one when the recipe leaves it blank."""
+    spec = get_agent(run.deployment.agent_type)
+    custom = (spec.prompts.get(key) or "").strip() if spec else ""
+    return custom or DEFAULT_PROMPTS[key]
+
+
 def _checkpoints(run) -> bool:
     """Pause at concept/script/storyboard unless the user chose 'final review only'."""
     return _config(run).get("checkpoints", "all") != "final"
@@ -110,7 +120,7 @@ def step_research(run) -> None:
     if settings.AGENTS_DRY_RUN:
         notes, sources = f"- Dry run: research notes about {topic} would appear here.", []
     else:
-        notes, sources = providers.text(RESEARCH_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
+        notes, sources = providers.text(_prompt(run, "research"), f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
     run.output["research"] = {"notes": (notes or "").strip()[:3000], "sources": sources}
     _save(run)
 
@@ -149,7 +159,7 @@ def step_concepts(run) -> None:
         }
     else:
         notes = run.output.get("research", {}).get("notes", "")
-        raw = providers.text(CONCEPTS_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}")
+        raw = providers.text(_prompt(run, "concepts"), f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}")
     run.output["concepts"] = clean_concepts(raw)
     _save(run)
 
@@ -221,7 +231,7 @@ def step_script(run) -> None:
             if concept
             else ""
         )
-        raw = providers.text(SCRIPT_PROMPT, f"Topic: {topic}\n{_brand_lines(run)}{concept_lines}Research notes:\n{notes}")
+        raw = providers.text(_prompt(run, "script"), f"Topic: {topic}\n{_brand_lines(run)}{concept_lines}Research notes:\n{notes}")
     run.output.update(clean_script(raw, topic))
     _save(run)
 

@@ -16,7 +16,7 @@ ffmpeg -version | head -1
 
 ```bash
 cd /srv/admart/backend
-.venv/bin/pip install kokoro-onnx faster-whisper
+.venv/bin/pip install -r requirements.txt          # deploys do this already
 .venv/bin/python manage.py download_agent_models   # ~250 MB, once
 ```
 

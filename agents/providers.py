@@ -297,7 +297,16 @@ def _whisper():
 
 
 def _local_words(audio: Path) -> list[dict]:
-    segments, _ = _whisper().transcribe(str(audio), word_timestamps=True, beam_size=1, language="en")
+    import numpy as np
+
+    # Decode with FFmpeg (16 kHz mono float) instead of faster-whisper's PyAV loader,
+    # which breaks with some PyAV releases.
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(audio), "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"],
+        capture_output=True, check=True, timeout=120,
+    ).stdout
+    samples = np.frombuffer(raw, dtype="float32")
+    segments, _ = _whisper().transcribe(samples, word_timestamps=True, beam_size=1, language="en")
     return [
         {"word": w.word.strip(), "start": round(float(w.start), 3), "end": round(float(w.end), 3)}
         for seg in segments for w in (seg.words or []) if w.word.strip()

@@ -13,8 +13,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from agents import engine
 from agents.models import AgentDeployment, AgentRun
-from agents.registry import AGENTS, MAX_TEXT_INPUT, STYLES, catalog_entry, estimate_credits, image_credits
+from agents.registry import MAX_TEXT_INPUT, STYLES, active_agents, catalog_entry, estimate_credits, get_agent, image_credits
 from agents.steps import clean_script
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.pricing import serialize_decimal
@@ -46,7 +47,7 @@ def _month_spend(deployment: AgentDeployment) -> Decimal:
 
 
 def deployment_data(deployment: AgentDeployment) -> dict:
-    spec = AGENTS.get(deployment.agent_type)
+    spec = get_agent(deployment.agent_type)
     return {
         "id": str(deployment.id),
         "agentType": deployment.agent_type,
@@ -65,7 +66,7 @@ def deployment_data(deployment: AgentDeployment) -> dict:
 
 def run_data(run: AgentRun, request) -> dict:
     out = run.output or {}
-    spec = AGENTS.get(run.deployment.agent_type)
+    spec = get_agent(run.deployment.agent_type)
     return {
         "id": str(run.id),
         "deploymentId": str(run.deployment_id),
@@ -146,7 +147,7 @@ class AgentCatalogView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response([catalog_entry(spec) for spec in AGENTS.values()])
+        return Response([catalog_entry(spec) for spec in active_agents()])
 
 
 class DeploymentListCreateView(_ProjectScoped):
@@ -159,7 +160,7 @@ class DeploymentListCreateView(_ProjectScoped):
     def post(self, request, project_id):
         project = self.project(request, project_id)
         agent_type = str(request.data.get("agentType", ""))
-        if agent_type not in AGENTS:
+        if agent_type not in {spec.slug for spec in active_agents()}:
             return _bad("Unknown agent.")
         try:
             config = _parse_config(request.data.get("config"))
@@ -213,12 +214,12 @@ class RunListCreateView(_ProjectScoped):
 
     def post(self, request, project_id, deployment_id):
         deployment = self.deployment(request, project_id, deployment_id)
-        spec = AGENTS.get(deployment.agent_type)
+        spec = get_agent(deployment.agent_type)
         if spec is None:
             return _bad("This agent is no longer available.")
         if deployment.status != "active":
             return _bad("This agent is paused. Resume it to run.", "AGENT_PAUSED")
-        if spec.input_label == "Topic":
+        if spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
             if not value or len(value) > 200:
                 return _bad("Enter a topic (up to 200 characters).")
@@ -277,6 +278,7 @@ class RunActionView(_ProjectScoped):
             "regenerate": self._regenerate,
             "approve": self._approve,
             "discard": self._discard,
+            "retry": self._retry,
         }.get(action)
         if handler is None:
             return _bad("Unknown action.")
@@ -357,6 +359,17 @@ class RunActionView(_ProjectScoped):
             return _bad("Only a finished video waiting for review can be approved.")
         run.status = "approved"
         run.save(update_fields=["status", "updated_at"])
+        return None
+
+    def _retry(self, run, data):
+        if run.status != "failed":
+            return _bad("Only a failed run can be retried.")
+        try:
+            if not engine.retry(run):
+                return _bad("This run was already retried.")
+        except InsufficientCredits:
+            return _bad("Not enough credits to retry this run.", "INSUFFICIENT_CREDITS",
+                        http=status.HTTP_402_PAYMENT_REQUIRED)
         return None
 
     def _discard(self, run, data):

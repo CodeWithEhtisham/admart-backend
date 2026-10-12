@@ -30,7 +30,7 @@ class Command(BaseCommand):
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
-            raise CommandError("faster-whisper is not installed: pip install kokoro-onnx faster-whisper") from exc
+            raise CommandError("faster-whisper is not installed: pip install -r requirements.txt") from exc
         Path(settings.AGENTS_WHISPER_DIR).mkdir(parents=True, exist_ok=True)
         self.stdout.write(f"Fetching whisper model {settings.AGENTS_WHISPER_MODEL}…")
         WhisperModel(settings.AGENTS_WHISPER_MODEL, device="cpu", compute_type="int8",

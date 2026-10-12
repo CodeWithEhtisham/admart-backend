@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from decimal import Decimal
 
 import requests
 from django.db.models import F
 from django.utils import timezone
 
 from agents.models import AgentRun
-from agents.registry import AGENTS
+from agents.registry import get_agent
 from agents.steps import STEPS, NeedsReview
-from content.credits import refund_credits
+from content.credits import refund_credits, reserve_credits
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def claim_next() -> AgentRun | None:
 
 
 def process(run: AgentRun) -> None:
-    spec = AGENTS.get(run.deployment.agent_type)
+    spec = get_agent(run.deployment.agent_type)
     if spec is None:
         fail(run, "This agent is no longer available.")
         return
@@ -81,6 +82,35 @@ def fail(run: AgentRun, message: str) -> None:
     )
     if updated and run.credits_reserved > 0:
         refund_credits(run.user, run.credits_reserved, topup=run.topup_reserved)
+
+
+def retry(run: AgentRun) -> bool:
+    """Queue a failed run again, resuming after its last finished step.
+
+    The credits refunded when it failed are reserved again (raises InsufficientCredits).
+    Returns False if the run isn't failed (e.g. someone retried it already).
+    """
+    if run.status != "failed":
+        return False
+    topup = reserve_credits(run.user, run.credits_reserved) if run.credits_reserved > 0 else Decimal("0")
+    updated = AgentRun.objects.filter(id=run.id, status="failed").update(
+        status="queued", error="", attempts=0, locked_until=None, finished_at=None, topup_reserved=topup
+    )
+    if not updated and run.credits_reserved > 0:  # lost a race with another retry: give the credits back
+        refund_credits(run.user, run.credits_reserved, topup=topup)
+    run.refresh_from_db()
+    return bool(updated)
+
+
+def cancel(run: AgentRun, message: str = "Cancelled by support. Your credits were refunded.") -> bool:
+    """Stop a queued, running or paused run and refund it (admin action)."""
+    updated = AgentRun.objects.filter(id=run.id, status__in=("queued", "running", "needs_review")).update(
+        status="failed", error=message, locked_until=None, finished_at=timezone.now()
+    )
+    if updated and run.credits_reserved > 0:
+        refund_credits(run.user, run.credits_reserved, topup=run.topup_reserved)
+    run.refresh_from_db()
+    return bool(updated)
 
 
 def _message(exc: Exception, doing: str) -> str:

@@ -15,7 +15,7 @@ from rest_framework.test import APITestCase
 
 from agents import engine, providers, render, steps
 from agents.models import AgentDeployment, AgentRun
-from agents.registry import AGENTS, estimate_credits
+from agents.registry import BUILTIN_AGENTS, estimate_credits, validate_recipe
 from projects.models import Project
 
 User = get_user_model()
@@ -79,17 +79,17 @@ class CleanScriptTests(SimpleTestCase):
 class EstimateTests(SimpleTestCase):
     @NO_PRICES
     def test_real_runs_cost_credits_and_dry_runs_are_free(self, _prices) -> None:
-        shorts = estimate_credits(AGENTS["youtube-shorts"], {})
-        script = estimate_credits(AGENTS["script-writer"], {})
+        shorts = estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {})
+        script = estimate_credits(BUILTIN_AGENTS["script-writer"], {})
         self.assertGreater(shorts, script)
         self.assertGreater(script, 0)
         with override_settings(AGENTS_DRY_RUN=True):
-            self.assertEqual(estimate_credits(AGENTS["youtube-shorts"], {}), 0)
+            self.assertEqual(estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {}), 0)
 
     @NO_PRICES
     def test_free_providers_only_charge_for_text(self, _prices) -> None:
         with override_settings(**FREE_PROVIDERS, AGENTS_LLM_USD_PER_RUN="0"):
-            self.assertEqual(estimate_credits(AGENTS["youtube-shorts"], {}), 0)
+            self.assertEqual(estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {}), 0)
 
 
 class _AgentAPITestCase(APITestCase):
@@ -545,3 +545,125 @@ class AgentAPITests(_AgentAPITestCase):
         deployment = self.deploy("voiceover")
         self.assertEqual(self.start(deployment, text="x" * 3001).status_code, 400)
         self.assertEqual(self.start(deployment, text="Hello").status_code, 201)
+
+
+class RecipeValidationTests(SimpleTestCase):
+    base = {"kind": "small", "input_kind": "topic", "review": False, "needs": [], "prompts": {}}
+
+    def check(self, **overrides):
+        return validate_recipe({**self.base, **overrides})
+
+    def test_valid_recipes(self) -> None:
+        self.assertIsNone(self.check(steps=["script"]))
+        self.assertIsNone(self.check(steps=["research", "script", "voice"]))
+        self.assertIsNone(self.check(steps=["voice"], input_kind="text"))
+        shorts = BUILTIN_AGENTS["youtube-shorts"]
+        self.assertIsNone(self.check(steps=list(shorts.steps), kind="large", review=True, needs=["youtube"]))
+
+    def test_invalid_recipes_explain_why(self) -> None:
+        self.assertIn("at least one", self.check(steps=[]))
+        self.assertIn("Unknown step", self.check(steps=["hack"]))
+        self.assertIn("only be used once", self.check(steps=["script", "script"]))
+        self.assertIn("needs voice", self.check(steps=["captions", "voice"]))
+        self.assertIn("need a topic", self.check(steps=["script"], input_kind="text"))
+        self.assertIn("needs a script", self.check(steps=["voice"]))
+        self.assertIn("Final approval", self.check(steps=["script"], review=True))
+        self.assertIn("platform", self.check(steps=["script"], needs=["myspace"]))
+        self.assertIn("Prompts", self.check(steps=["script"], prompts={"evil": "x"}))
+
+
+class RecipeTests(_AgentAPITestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.owner = User.objects.create_superuser(email="boss@example.com", password="Password123!",
+                                                   first_name="B", last_name="O")
+        self.staff = User.objects.create_user(email="staff@example.com", password="Password123!",
+                                              first_name="S", last_name="T", is_staff=True)
+
+    def test_builtin_recipes_are_seeded_and_listed(self) -> None:
+        slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
+        self.assertEqual(slugs, ["youtube-shorts", "script-writer", "voiceover"])
+
+    def test_owner_creates_an_agent_that_users_can_deploy_and_run(self) -> None:
+        self.client.force_authenticate(self.owner)
+        payload = {"slug": "hook-writer", "name": "Hook Writer", "kind": "small", "inputKind": "topic",
+                   "steps": ["research", "script"], "description": "Researched scripts.",
+                   "prompts": {"script": "Write only a punchy script. Return JSON."}}
+        response = self.client.post(reverse("admin_agent_recipes"), payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.client.force_authenticate(self.user)
+        self.assertIn("hook-writer", [a["slug"] for a in self.client.get(reverse("agent_catalog")).data])
+        deployment = self.deploy("hook-writer")
+        self.assertEqual(self.start(deployment).status_code, 201)
+
+    @patch("agents.providers.requests.post")
+    def test_edited_prompt_is_used_by_the_step(self, post) -> None:
+        self.client.force_authenticate(self.owner)
+        url = reverse("admin_agent_recipe", kwargs={"slug": "script-writer"})
+        self.assertEqual(self.client.put(url, {"prompts": {"script": "CUSTOM SCRIPT PROMPT"}}, format="json").status_code, 200)
+        self.client.force_authenticate(self.user)
+        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [{"text":
+            '{"title":"T","scenes":[{"narration":"a","image_prompt":"b"},{"narration":"c","image_prompt":"d"},'
+            '{"narration":"e","image_prompt":"f"}]}'}]}}]})
+        deployment = self.deploy("script-writer")
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "x"})
+        steps.step_script(run)
+        self.assertEqual(post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"], "CUSTOM SCRIPT PROMPT")
+
+    def test_invalid_edit_is_rejected_and_staff_cannot_edit(self) -> None:
+        url = reverse("admin_agent_recipe", kwargs={"slug": "voiceover"})
+        self.client.force_authenticate(self.staff)
+        self.assertEqual(self.client.get(reverse("admin_agent_recipes")).status_code, 200)
+        self.assertEqual(self.client.put(url, {"name": "X"}, format="json").status_code, 403)
+        self.client.force_authenticate(self.owner)
+        bad = self.client.put(url, {"steps": ["captions"]}, format="json")
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("needs voice", bad.data["message"])
+        self.client.force_authenticate(self.user)
+        self.assertEqual(self.client.get(reverse("admin_agent_recipes")).status_code, 403)
+
+    def test_hidden_agent_leaves_catalog_but_existing_deployments_work(self) -> None:
+        deployment = self.deploy("voiceover")
+        self.client.force_authenticate(self.owner)
+        self.client.put(reverse("admin_agent_recipe", kwargs={"slug": "voiceover"}), {"isActive": False}, format="json")
+        self.client.force_authenticate(self.user)
+        self.assertNotIn("voiceover", [a["slug"] for a in self.client.get(reverse("agent_catalog")).data])
+        self.assertEqual(self.start(deployment, text="Still works").status_code, 201)
+
+
+class RetryAndAdminRunTests(_AgentAPITestCase):
+    def _failed_run(self) -> AgentRun:
+        deployment = self.deploy("script-writer")
+        run_id = self.start(deployment).data["id"]
+        run = AgentRun.objects.get(id=run_id)
+        engine.fail(run, "Broke.")  # refunds
+        run.refresh_from_db()
+        return run
+
+    def test_user_retry_charges_again_and_requeues(self) -> None:
+        run = self._failed_run()
+        self.user.refresh_from_db()
+        before = self.user.credits_remaining
+        url = reverse("agent_run_action", kwargs={"project_id": self.project.id, "deployment_id": run.deployment_id,
+                                                  "run_id": run.id, "action": "retry"})
+        self.assertEqual(self.client.post(url).data["status"], "queued")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, before - run.credits_reserved)
+        self.assertEqual(self.client.post(url).status_code, 400)  # not failed any more
+
+    def test_admin_sees_runs_and_can_cancel_with_refund(self) -> None:
+        deployment = self.deploy("script-writer")
+        run_id = self.start(deployment).data["id"]
+        self.user.refresh_from_db()
+        before = self.user.credits_remaining
+        owner = User.objects.create_superuser(email="boss@example.com", password="Password123!",
+                                              first_name="B", last_name="O")
+        self.client.force_authenticate(owner)
+        data = self.client.get(reverse("admin_agent_runs")).data
+        self.assertEqual(data["summary"]["inProgress"], 1)
+        self.assertEqual(data["runs"][0]["user"], "agent@example.com")
+        cancel = reverse("admin_agent_run_action", kwargs={"run_id": run_id, "action": "cancel"})
+        self.assertEqual(self.client.post(cancel).data["status"], "failed")
+        self.assertEqual(self.client.post(cancel).status_code, 400)
+        self.user.refresh_from_db()
+        self.assertGreater(self.user.credits_remaining, before)

@@ -5,6 +5,37 @@ from django.db import models
 from django.utils import timezone
 
 
+class AgentRecipe(models.Model):
+    """An agent in the catalog: which step blocks it runs, its prompts and presentation.
+
+    Editable in the admin dashboard; see agents.registry for the step blocks and validation.
+    """
+
+    KIND_CHOICES = [("small", "Single task"), ("large", "Full automation")]
+    INPUT_CHOICES = [("topic", "Topic"), ("text", "Text")]
+
+    slug = models.SlugField(max_length=50, primary_key=True)
+    name = models.CharField(max_length=80)
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES, default="small")
+    description = models.CharField(max_length=300, blank=True, default="")
+    steps = models.JSONField(default=list)
+    needs = models.JSONField(default=list, blank=True)
+    input_kind = models.CharField(max_length=8, choices=INPUT_CHOICES, default="topic")
+    input_hint = models.CharField(max_length=120, blank=True, default="")
+    review = models.BooleanField(default=False)
+    uses = models.JSONField(default=list, blank=True)
+    prompts = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class AgentDeployment(models.Model):
     """An agent from the catalog (registry slug) deployed to a project."""
 

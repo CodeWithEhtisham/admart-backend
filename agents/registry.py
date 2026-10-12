@@ -1,8 +1,14 @@
-"""Agent catalog. Adding an agent = a spec here + any new steps in agents.steps."""
+"""Agent catalog.
+
+Agents are *recipes* stored in the database (AgentRecipe) and editable in the admin dashboard:
+which step blocks run in which order, the AI prompts, and how the agent is presented. The
+three built-in recipes below seed the table and are the fallback if a row is missing.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.conf import settings
@@ -13,6 +19,7 @@ SHORT_SCENES = 6
 SHORT_NARRATION_CHARS = 900  # ~130 words, ~45 seconds of speech
 IMAGE_WIDTH, IMAGE_HEIGHT = 768, 1344  # 9:16, about 1 megapixel; rendered up to 1080x1920
 MAX_TEXT_INPUT = 3000
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}$")
 
 # Visual style presets: applied to every image prompt of a Short.
 STYLES = {
@@ -25,6 +32,24 @@ STYLES = {
 # Pause points where a person approves before money is spent on the next stage.
 GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard"}
 
+# Step blocks a recipe can use, and what each needs earlier in the recipe.
+STEP_BLOCKS = {
+    "research": {"label": "Research the topic (web search)", "needs": []},
+    "concepts": {"label": "Propose 3 concepts", "needs": []},
+    "pick_concept": {"label": "Check-in: user picks a concept", "needs": ["concepts"]},
+    "script": {"label": "Write the script", "needs": []},
+    "review_script": {"label": "Check-in: user edits the script", "needs": ["script"]},
+    "voice": {"label": "Record the voice", "needs": []},
+    "captions": {"label": "Time the captions", "needs": ["voice"]},
+    "visuals": {"label": "Make visuals (stock video / AI images)", "needs": ["script"]},
+    "review_storyboard": {"label": "Check-in: user reviews the storyboard", "needs": ["visuals"]},
+    "render": {"label": "Edit the video", "needs": ["voice", "captions", "visuals"]},
+    "finish": {"label": "Save the video to the library", "needs": ["render"]},
+}
+TOPIC_STEPS = ("research", "concepts", "script")  # need a topic as input
+PROMPT_KEYS = ("research", "concepts", "script")
+PLATFORMS = ("youtube", "facebook", "instagram")
+
 
 @dataclass(frozen=True)
 class AgentSpec:
@@ -34,13 +59,18 @@ class AgentSpec:
     description: str
     steps: tuple[str, ...]
     needs: tuple[str, ...] = ()  # connected platforms the outcome needs
-    input_label: str = "Topic"
+    input_kind: str = "topic"  # "topic" (one line) or "text" (text to speak)
     input_hint: str = ""
-    review: bool = False  # large agents stop at needs_review for human approval
-    uses: tuple[str, ...] = ()  # small agents a large agent is built from (shown on its card)
+    review: bool = False  # stop at needs_review for human approval of the final result
+    uses: tuple[str, ...] = ()  # other agents this one is built from (shown on its card)
+    prompts: dict = field(default_factory=dict)  # overrides of the default AI prompts
+
+    @property
+    def input_label(self) -> str:
+        return "Topic" if self.input_kind == "topic" else "Text to speak"
 
 
-AGENTS: dict[str, AgentSpec] = {
+BUILTIN_AGENTS: dict[str, AgentSpec] = {
     spec.slug: spec
     for spec in (
         AgentSpec(
@@ -73,11 +103,75 @@ AGENTS: dict[str, AgentSpec] = {
             kind="small",
             description="Turns your text into a natural voice recording (MP3) you can download.",
             steps=("voice",),
-            input_label="Text to speak",
+            input_kind="text",
             input_hint="Paste up to 3,000 characters",
         ),
     )
 }
+
+
+def spec_from_recipe(recipe) -> AgentSpec:
+    return AgentSpec(
+        slug=recipe.slug,
+        name=recipe.name,
+        kind=recipe.kind,
+        description=recipe.description,
+        steps=tuple(recipe.steps),
+        needs=tuple(recipe.needs),
+        input_kind=recipe.input_kind,
+        input_hint=recipe.input_hint,
+        review=recipe.review,
+        uses=tuple(recipe.uses),
+        prompts=dict(recipe.prompts or {}),
+    )
+
+
+def get_agent(slug: str) -> AgentSpec | None:
+    """The agent recipe for a slug (inactive ones too, so existing runs keep working)."""
+    from agents.models import AgentRecipe
+
+    recipe = AgentRecipe.objects.filter(slug=slug).first()
+    return spec_from_recipe(recipe) if recipe else BUILTIN_AGENTS.get(slug)
+
+
+def active_agents() -> list[AgentSpec]:
+    from agents.models import AgentRecipe
+
+    return [spec_from_recipe(r) for r in AgentRecipe.objects.filter(is_active=True)]
+
+
+def validate_recipe(data: dict) -> str | None:
+    """Return a readable problem with a recipe, or None if it can run."""
+    steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return "Add at least one step."
+    unknown = [s for s in steps if s not in STEP_BLOCKS]
+    if unknown:
+        return f"Unknown step: {', '.join(map(str, unknown))}."
+    if len(set(steps)) != len(steps):
+        return "Each step can only be used once."
+    for i, step in enumerate(steps):
+        missing = [need for need in STEP_BLOCKS[step]["needs"] if need not in steps[:i]]
+        if missing:
+            return f"'{step}' needs {', '.join(missing)} earlier in the recipe."
+    input_kind = data.get("input_kind")
+    if input_kind not in ("topic", "text"):
+        return "Input must be a topic or text."
+    if input_kind == "text" and any(s in TOPIC_STEPS for s in steps):
+        return "Research, concepts and script need a topic as input, not text."
+    if "voice" in steps and input_kind == "topic" and "script" not in steps[: steps.index("voice")]:
+        return "'voice' needs a script earlier, or text as the input."
+    if data.get("kind") not in ("small", "large"):
+        return "Kind must be single task or full automation."
+    if data.get("review") and "finish" not in steps:
+        return "Final approval only applies to recipes that produce a video (ending with 'finish')."
+    if any(n not in PLATFORMS for n in data.get("needs") or []):
+        return "Unknown platform in 'needs'."
+    prompts = data.get("prompts") or {}
+    if not isinstance(prompts, dict) or any(k not in PROMPT_KEYS or not isinstance(v, str) or len(v) > 6000
+                                            for k, v in prompts.items()):
+        return "Prompts must be text (up to 6,000 characters) for research, concepts or script."
+    return None
 
 
 def _image_usd() -> Decimal:
@@ -131,9 +225,10 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "description": spec.description,
         "needs": list(spec.needs),
         "inputLabel": spec.input_label,
+        "inputKind": spec.input_kind,
         "inputHint": spec.input_hint,
         "review": spec.review,
-        "uses": [AGENTS[slug].name for slug in spec.uses],
+        "uses": [a.name for slug in spec.uses if (a := get_agent(slug))],
         "estimatedCredits": f"{estimate_credits(spec, {'text': 'x' * 500}):f}",
         "steps": [step for step in spec.steps if step not in GATES],
         "styles": [{"id": key, "label": label} for key, (label, _) in STYLES.items()] if "visuals" in spec.steps else [],
