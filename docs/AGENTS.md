@@ -108,6 +108,26 @@ Credits charged to users = provider cost × Admart markup. Free providers add 0;
 
 ---
 
+## Autopilot (scheduled runs)
+
+On an agent's page (agents that take a topic), switch **Autopilot** on and choose:
+
+- **Days and time** — in the user's own time zone (taken from the browser).
+- **Upcoming topics** — used in order, one per run.
+- **Channel niche** — when the topic list is empty, the agent picks a fresh topic from the niche,
+  avoiding its recent topics.
+
+The worker checks every 30 seconds and starts due runs with the usual credit and monthly-limit
+checks. If a slot can't run (for example not enough credits) it is skipped, a note shows on the
+agent, and it tries again at the next slot. Results never post by themselves: they wait for the
+user.
+
+**Inbox:** runs that need the user (concept, script, storyboard, finished Short) and failures from
+the last 7 days show on **Notifications**, as a count on the bell, and under **Waiting for you**
+on the Agents page.
+
+---
+
 ## Managing agents (admin dashboard)
 
 `/admin/dashboard/` → **Agents**:

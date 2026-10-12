@@ -94,6 +94,34 @@ def _prompt(run, key: str) -> str:
     return custom or DEFAULT_PROMPTS[key]
 
 
+TOPIC_PROMPT = """You plan a YouTube Shorts channel. Suggest ONE fresh topic for the next 45-second Short.
+It must fit the channel niche, be specific and curiosity-driven, and must not repeat or closely
+resemble the recent topics listed. Return JSON only: {"topic": string} (at most 80 characters)."""
+
+
+def _topic(run) -> str:
+    """The run's topic. Autopilot runs with an empty topic queue pick one from the niche (once)."""
+    topic = str(run.input.get("topic", "")).strip()
+    if topic or not run.input.get("auto"):
+        return topic
+    recent = [
+        str(r.input.get("topic", ""))
+        for r in run.deployment.runs.exclude(id=run.id).order_by("-created_at")[:15]
+        if r.input.get("topic")
+    ]
+    niche = str(_config(run).get("niche") or "").strip()
+    if settings.AGENTS_DRY_RUN:
+        topic = f"{niche or 'Interesting facts'} #{len(recent) + 1}"
+    else:
+        raw = providers.text(TOPIC_PROMPT, f"{_brand_lines(run)}Recent topics:\n" + "\n".join(f"- {t}" for t in recent))
+        topic = " ".join(str(raw.get("topic") or "").split())[:200]
+        if not topic:
+            raise RuntimeError("The agent couldn't pick a topic. Please try again.")
+    run.input["topic"] = topic
+    run.save(update_fields=["input", "updated_at"])
+    return topic
+
+
 def _checkpoints(run) -> bool:
     """Pause at concept/script/storyboard unless the user chose 'final review only'."""
     return _config(run).get("checkpoints", "all") != "final"
@@ -116,7 +144,7 @@ def _brand_lines(run) -> str:
 def step_research(run) -> None:
     if "research" in run.output:
         return
-    topic = str(run.input.get("topic", "")).strip()
+    topic = _topic(run)
     if settings.AGENTS_DRY_RUN:
         notes, sources = f"- Dry run: research notes about {topic} would appear here.", []
     else:
@@ -148,7 +176,7 @@ def clean_concepts(raw: dict) -> list[dict]:
 def step_concepts(run) -> None:
     if run.output.get("concepts"):
         return
-    topic = str(run.input.get("topic", "")).strip()
+    topic = _topic(run)
     if settings.AGENTS_DRY_RUN:
         raw = {
             "concepts": [
@@ -211,7 +239,7 @@ def clean_script(raw: dict, topic: str) -> dict:
 def step_script(run) -> None:
     if run.output.get("scenes"):
         return
-    topic = str(run.input.get("topic", "")).strip()
+    topic = _topic(run)
     concept = run.output.get("concept") or {}
     if settings.AGENTS_DRY_RUN:
         raw = {

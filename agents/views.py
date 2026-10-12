@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Sum
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -15,17 +16,16 @@ from rest_framework.views import APIView
 
 from agents import engine
 from agents.models import AgentDeployment, AgentRun
-from agents.registry import MAX_TEXT_INPUT, STYLES, active_agents, catalog_entry, estimate_credits, get_agent, image_credits
+from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics, month_spend, next_slot, start_run
+from agents.registry import MAX_TEXT_INPUT, STYLES, active_agents, catalog_entry, get_agent, image_credits
 from agents.steps import clean_script
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
 from projects.models import Project
 
-OPEN_STATUSES = ("queued", "running")
 # Stopping at these checkpoints refunds the run: nothing expensive has been made yet.
 REFUNDABLE_GATES = ("concept", "script")
-MAX_OPEN_RUNS = 3  # per deployment, so a double-click can't queue (and charge) a pile of runs
 
 
 def _bad(message: str, code: str = "INVALID", http=status.HTTP_400_BAD_REQUEST, **extra) -> Response:
@@ -34,16 +34,6 @@ def _bad(message: str, code: str = "INVALID", http=status.HTTP_400_BAD_REQUEST, 
 
 def _media(rel: str | None, request) -> str | None:
     return absolute_media_url(rel, request=request) if rel else None
-
-
-def _month_spend(deployment: AgentDeployment) -> Decimal:
-    start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    total = (
-        deployment.runs.filter(created_at__gte=start)
-        .exclude(status="failed")  # failed runs were refunded
-        .aggregate(total=Sum("credits_reserved"))["total"]
-    )
-    return total or Decimal("0")
 
 
 def deployment_data(deployment: AgentDeployment) -> dict:
@@ -59,7 +49,12 @@ def deployment_data(deployment: AgentDeployment) -> dict:
         "monthlyCreditLimit": serialize_decimal(deployment.monthly_credit_limit)
         if deployment.monthly_credit_limit is not None
         else None,
-        "creditsThisMonth": serialize_decimal(_month_spend(deployment)),
+        "creditsThisMonth": serialize_decimal(month_spend(deployment)),
+        "autopilot": deployment.autopilot,
+        "schedule": deployment.schedule,
+        "topicQueue": deployment.topic_queue,
+        "nextRunAt": deployment.next_run_at if deployment.autopilot else None,
+        "autopilotNote": deployment.autopilot_note,
         "createdAt": deployment.created_at,
     }
 
@@ -191,8 +186,26 @@ class DeploymentDetailView(_ProjectScoped):
                 deployment.config = _parse_config(data["config"])
             if "monthlyCreditLimit" in data:
                 deployment.monthly_credit_limit = _parse_limit(data["monthlyCreditLimit"])
+            if "schedule" in data:
+                deployment.schedule = clean_schedule(data["schedule"])
+            if "topicQueue" in data:
+                deployment.topic_queue = clean_topics(data["topicQueue"])
+            if "autopilot" in data:
+                deployment.autopilot = bool(data["autopilot"])
+            if deployment.autopilot:
+                spec = get_agent(deployment.agent_type)
+                if not spec or spec.input_kind != "topic":
+                    raise ValueError("Autopilot works with agents that take a topic.")
+                if not deployment.schedule:
+                    raise ValueError("Set the days and time first.")
+                if not deployment.topic_queue and not str(deployment.config.get("niche") or "").strip():
+                    raise ValueError("Add some topics, or set the channel niche so the agent can pick topics.")
         except ValueError as exc:
             return _bad(str(exc))
+        # Any schedule change re-plans the next run from now.
+        deployment.next_run_at = next_slot(deployment.schedule, timezone.now()) if deployment.autopilot else None
+        if not deployment.autopilot:
+            deployment.autopilot_note = ""
         deployment.save()
         return Response(deployment_data(deployment))
 
@@ -217,8 +230,6 @@ class RunListCreateView(_ProjectScoped):
         spec = get_agent(deployment.agent_type)
         if spec is None:
             return _bad("This agent is no longer available.")
-        if deployment.status != "active":
-            return _bad("This agent is paused. Resume it to run.", "AGENT_PAUSED")
         if spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
             if not value or len(value) > 200:
@@ -229,34 +240,51 @@ class RunListCreateView(_ProjectScoped):
             if not value or len(value) > MAX_TEXT_INPUT:
                 return _bad(f"Enter the text to speak (up to {MAX_TEXT_INPUT:,} characters).")
             run_input = {"text": value}
-        if deployment.runs.filter(status__in=OPEN_STATUSES).count() >= MAX_OPEN_RUNS:
-            return _bad("This agent already has jobs in progress. Wait for one to finish.", "AGENT_BUSY")
-
-        credits = estimate_credits(spec, run_input)
-        limit = deployment.monthly_credit_limit
-        if limit is not None and _month_spend(deployment) + credits > limit:
-            return _bad("This run would go over the agent's monthly credit limit.", "AGENT_MONTHLY_LIMIT")
         try:
-            topup = reserve_credits(request.user, credits)
-        except InsufficientCredits:
+            run = start_run(deployment, run_input)
+        except RunRefused as refused:
+            if refused.code != "INSUFFICIENT_CREDITS":
+                return _bad(refused.message, refused.code)
             request.user.refresh_from_db()
             return _bad(
-                "Insufficient credits",
-                "INSUFFICIENT_CREDITS",
+                refused.message,
+                refused.code,
                 http=status.HTTP_402_PAYMENT_REQUIRED,
                 creditsRemaining=request.user.credits_remaining,
                 creditsTotal=request.user.credits_total,
-                creditsRequired=serialize_decimal(credits),
+                creditsRequired=serialize_decimal(refused.credits),
             )
-        run = AgentRun.objects.create(
-            deployment=deployment,
-            project=deployment.project,
-            user=request.user,
-            input=run_input,
-            credits_reserved=credits,
-            topup_reserved=topup,
-        )
         return Response(run_data(run, request), status=status.HTTP_201_CREATED)
+
+
+class InboxView(_ProjectScoped):
+    """GET /api/projects/:pid/agents/inbox — runs waiting for the user, and recent failures."""
+
+    def get(self, request, project_id):
+        project = self.project(request, project_id)
+        since = timezone.now() - timedelta(days=7)
+        runs = (
+            AgentRun.objects.filter(project=project)
+            .filter(Q(status="needs_review") | Q(status="failed", finished_at__gte=since))
+            .select_related("deployment")
+            .order_by("-updated_at")[:30]
+        )
+        items = []
+        for run in runs:
+            spec = get_agent(run.deployment.agent_type)
+            items.append(
+                {
+                    "runId": str(run.id),
+                    "deploymentId": str(run.deployment_id),
+                    "agent": spec.name if spec else run.deployment.agent_type,
+                    "status": run.status,
+                    "step": run.step,
+                    "title": (run.output or {}).get("title") or run.input.get("topic") or "Auto topic",
+                    "error": run.error,
+                    "updatedAt": run.updated_at,
+                }
+            )
+        return Response({"waiting": sum(i["status"] == "needs_review" for i in items), "items": items})
 
 
 class RunDetailView(_ProjectScoped):

@@ -667,3 +667,126 @@ class RetryAndAdminRunTests(_AgentAPITestCase):
         self.assertEqual(self.client.post(cancel).status_code, 400)
         self.user.refresh_from_db()
         self.assertGreater(self.user.credits_remaining, before)
+
+
+class ScheduleTests(SimpleTestCase):
+    def test_next_slot_respects_days_time_and_timezone(self) -> None:
+        from datetime import datetime, timezone as dt_tz
+
+        from agents.runs import next_slot
+
+        sched = {"days": [0, 2], "time": "09:00", "tz": "Asia/Karachi"}  # Mon & Wed 09:00 PKT (UTC+5)
+        tue_noon_utc = datetime(2026, 10, 13, 12, 0, tzinfo=dt_tz.utc)  # Tuesday
+        self.assertEqual(next_slot(sched, tue_noon_utc), datetime(2026, 10, 14, 4, 0, tzinfo=dt_tz.utc))
+        wed_slot = datetime(2026, 10, 14, 4, 0, tzinfo=dt_tz.utc)
+        self.assertEqual(next_slot(sched, wed_slot), datetime(2026, 10, 19, 4, 0, tzinfo=dt_tz.utc))  # next Monday
+        self.assertIsNone(next_slot({}, tue_noon_utc))
+
+    def test_clean_schedule_rejects_bad_values(self) -> None:
+        from agents.runs import clean_schedule
+
+        self.assertEqual(clean_schedule({"days": [4, 0, 0], "time": "18:30", "tz": "Europe/London"}),
+                         {"days": [0, 4], "time": "18:30", "tz": "Europe/London"})
+        for bad in ({"days": [], "time": "09:00"}, {"days": [7], "time": "09:00"}, {"days": [1], "time": "9am"},
+                    {"days": [1], "time": "09:00", "tz": "Mars/Base"}):
+            with self.assertRaises(ValueError):
+                clean_schedule(bad)
+
+
+class AutopilotTests(_AgentAPITestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.deployment = self.deploy(config={"niche": "coffee facts"})
+        self.url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": self.deployment.id})
+
+    def enable(self, **extra):
+        payload = {"autopilot": True, "schedule": {"days": [0, 1, 2, 3, 4, 5, 6], "time": "09:00", "tz": "UTC"}, **extra}
+        return self.client.patch(self.url, payload, format="json")
+
+    def make_due(self):
+        AgentDeployment.objects.filter(id=self.deployment.id).update(next_run_at=timezone.now() - timedelta(minutes=1))
+
+    def test_enabling_plans_the_next_run(self) -> None:
+        response = self.enable(topicQueue=["first topic", "second topic"])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["autopilot"])
+        self.assertIsNotNone(response.data["nextRunAt"])
+        off = self.client.patch(self.url, {"autopilot": False}, format="json").data
+        self.assertIsNone(off["nextRunAt"])
+
+    def test_autopilot_needs_topics_or_a_niche_and_a_topic_agent(self) -> None:
+        self.deployment.config = {}
+        self.deployment.save()
+        self.assertIn("niche", self.enable().data["message"])
+        self.assertEqual(self.enable(topicQueue=["a topic"]).status_code, 200)
+        voice = self.deploy("voiceover")
+        url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": voice.id})
+        bad = self.client.patch(url, {"autopilot": True, "schedule": {"days": [1], "time": "09:00"}}, format="json")
+        self.assertIn("topic", bad.data["message"])
+
+    def test_due_slot_starts_one_run_using_the_queue(self) -> None:
+        from agents.runs import run_due
+
+        self.enable(topicQueue=["first topic", "second topic"])
+        self.make_due()
+        self.assertEqual(run_due(), 1)
+        self.assertEqual(run_due(), 0)  # slot already taken and re-planned into the future
+        run = AgentRun.objects.get(deployment=self.deployment)
+        self.assertEqual(run.input, {"topic": "first topic"})
+        self.deployment.refresh_from_db()
+        self.assertEqual(self.deployment.topic_queue, ["second topic"])
+        self.assertGreater(self.deployment.next_run_at, timezone.now())
+
+    def test_empty_queue_runs_with_an_auto_topic(self) -> None:
+        from agents.runs import run_due
+
+        self.enable()
+        self.make_due()
+        run_due()
+        run = AgentRun.objects.get(deployment=self.deployment)
+        self.assertEqual(run.input, {"topic": "", "auto": True})
+        with override_settings(AGENTS_DRY_RUN=True):
+            self.assertEqual(steps._topic(run), "coffee facts #1")
+        run.refresh_from_db()
+        self.assertEqual(run.input["topic"], "coffee facts #1")  # picked once, then kept
+
+    @patch("agents.providers.requests.post")
+    def test_auto_topic_avoids_recent_topics(self, post) -> None:
+        AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
+                                input={"topic": "Why espresso has crema"})
+        run = AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
+                                      input={"topic": "", "auto": True})
+        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [{"text": '{"topic": "Decaf myths"}'}]}}]})
+        self.assertEqual(steps._topic(run), "Decaf myths")
+        self.assertIn("Why espresso has crema", post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
+
+    def test_skipped_slot_leaves_a_note(self) -> None:
+        from agents.runs import run_due
+
+        self.enable()
+        self.user.credits_remaining = Decimal("0")
+        self.user.save(update_fields=["credits_remaining"])
+        self.make_due()
+        self.assertEqual(run_due(), 0)
+        self.deployment.refresh_from_db()
+        self.assertIn("not enough credits", self.deployment.autopilot_note)
+        self.assertGreater(self.deployment.next_run_at, timezone.now())  # tries again next slot
+
+    def test_paused_agent_is_not_scheduled(self) -> None:
+        from agents.runs import run_due
+
+        self.enable()
+        self.make_due()
+        AgentDeployment.objects.filter(id=self.deployment.id).update(status="paused")
+        self.assertEqual(run_due(), 0)
+
+    def test_inbox_lists_runs_waiting_for_the_user(self) -> None:
+        AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
+                                input={"topic": "t"}, status="needs_review", step="script")
+        AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
+                                input={"topic": "u"}, status="failed", error="Broke.", finished_at=timezone.now())
+        AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
+                                input={"topic": "v"}, status="approved")
+        data = self.client.get(reverse("agent_inbox", kwargs={"project_id": self.project.id})).data
+        self.assertEqual(data["waiting"], 1)
+        self.assertEqual({i["status"] for i in data["items"]}, {"needs_review", "failed"})

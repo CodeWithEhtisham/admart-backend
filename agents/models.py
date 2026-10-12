@@ -48,6 +48,12 @@ class AgentDeployment(models.Model):
     config = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
     monthly_credit_limit = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    # Autopilot: start runs on a schedule. schedule = {"days": [0-6 (Mon=0)], "time": "HH:MM", "tz": "Area/City"}
+    autopilot = models.BooleanField(default=False)
+    schedule = models.JSONField(default=dict, blank=True)
+    topic_queue = models.JSONField(default=list, blank=True)  # used first; empty = agent picks from the niche
+    next_run_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    autopilot_note = models.CharField(max_length=200, blank=True, default="")  # last skip reason, shown to the user
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
