@@ -8,6 +8,7 @@ from content.catalog import (
     NANO_MODELS,
     OPENAI_MODELS,
     REMBG_MODEL_MAP,
+    SEEDREAM_MODELS,
     WAN_IMAGE_MODELS,
 )
 
@@ -26,7 +27,7 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
         if model.startswith("fal-ai/flux-pro/kontext"):
             out["image_url"] = image_urls[0]
         else:
-            # Nano Banana edit + GPT Image 2 edit use image_urls[]
+            # Nano Banana edit + GPT Image 2 edit + Seedream edit use image_urls[]
             out["image_urls"] = image_urls
     elif capability in ("upscale", "removeBackground") and image_urls:
         out["image_url"] = image_urls[0]
@@ -37,6 +38,7 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
         or model.startswith("fal-ai/ideogram")
         or model in OPENAI_MODELS
         or model in WAN_IMAGE_MODELS
+        or model in SEEDREAM_MODELS
     ):
         if data.get("imageSize") is not None:
             out["image_size"] = data["imageSize"]

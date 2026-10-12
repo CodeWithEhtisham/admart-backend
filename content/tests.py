@@ -384,7 +384,7 @@ class MergedCatalogApiTests(APITestCase):
         self.assertTrue(curated)
         self.assertEqual(len(discovered), 1)
         self.assertEqual(discovered[0]["id"], "fal-ai/new-image-model")
-        self.assertFalse(discovered[0]["enabled"])
+        self.assertTrue(discovered[0]["enabled"])
         self.assertEqual(discovered[0]["pricing"]["unitPrice"], "0.03")
         self.assertIn("admartUnitPrice", discovered[0]["pricing"])
 
@@ -416,7 +416,7 @@ class MergedCatalogApiTests(APITestCase):
         discovered = [m for m in response.data["textToVideo"] if m.get("source") == "provider"]
         self.assertEqual(len(discovered), 1)
         self.assertEqual(discovered[0]["id"], "fal-ai/new-video-model")
-        self.assertFalse(discovered[0]["enabled"])
+        self.assertTrue(discovered[0]["enabled"])
         self.assertNotIn("pricing", discovered[0])
 
     @override_settings(FAL_KEY="")
@@ -433,15 +433,20 @@ class MergedCatalogApiTests(APITestCase):
             any(m.get("source") == "provider" for m in response.data["textToImage"])
         )
 
-    def test_discovered_model_ids_are_not_generatable(self):
-        """Allow-lists stay curated; discovery entries must never enable jobs."""
+    def test_new_models_are_generatable(self):
+        """New models are now enabled and generatable."""
         from content.catalog import resolve_model
         from content.video_catalog import resolve_video_model
 
+        self.assertEqual(resolve_model("textToImage", "fal-ai/flux-2-pro"), "fal-ai/flux-2-pro")
+        self.assertEqual(
+            resolve_video_model("textToVideo", "bytedance/seedance-2.5/text-to-video"),
+            "bytedance/seedance-2.5/text-to-video",
+        )
         with self.assertRaises(ValueError):
-            resolve_model("textToImage", "fal-ai/flux-2-pro")
+            resolve_model("textToImage", "non-existent/bogus-model-xyz")
         with self.assertRaises(ValueError):
-            resolve_video_model("textToVideo", "bytedance/seedance-2.5/text-to-video")
+            resolve_video_model("textToVideo", "non-existent/bogus-video-model-xyz")
 
 
 class UrlResolveTests(APITestCase):

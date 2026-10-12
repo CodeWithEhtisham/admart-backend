@@ -22,13 +22,35 @@ MODEL_CATALOG = {
     "textToImage": [
         {"id": "fal-ai/flux/dev", "label": "Flux Dev", "family": "flux", "default": True},
         {"id": "fal-ai/flux/schnell", "label": "Flux Schnell", "family": "flux", "default": False},
+        {"id": "fal-ai/flux-2-pro", "label": "Flux 2 Pro", "family": "flux", "default": False},
+        {"id": "fal-ai/flux-pro/v1.1", "label": "FLUX 1.1 Pro", "family": "flux", "default": False},
         {"id": "fal-ai/nano-banana-2", "label": "Nano Banana 2", "family": "nano", "default": False},
         {"id": "fal-ai/nano-banana-pro", "label": "Nano Banana Pro", "family": "nano", "default": False},
+        {"id": "google/nano-banana-2.1", "label": "Nano Banana 2.1", "family": "nano", "default": False},
+        {"id": "fal-ai/nano-banana", "label": "Nano Banana", "family": "nano", "default": False},
         {"id": "fal-ai/ideogram/v3", "label": "Ideogram V3", "family": "ideogram", "default": False},
         {
             "id": "openai/gpt-image-2",
             "label": "GPT Image 2",
             "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "openai/gpt-image-2.5/flare/text-to-image",
+            "label": "GPT Image 2.5 Flare",
+            "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "openai/gpt-image-2.5/sunburst/text-to-image",
+            "label": "GPT Image 2.5 Sunburst",
+            "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "bytedance/seedream/v5/pro/text-to-image",
+            "label": "Seedream 5.0 Pro",
+            "family": "seedream",
             "default": False,
         },
     ],
@@ -46,6 +68,18 @@ MODEL_CATALOG = {
             "default": False,
         },
         {
+            "id": "google/nano-banana-2.1/edit",
+            "label": "Nano Banana 2.1 Edit",
+            "family": "nano",
+            "default": False,
+        },
+        {
+            "id": "fal-ai/nano-banana/edit",
+            "label": "Nano Banana Edit",
+            "family": "nano",
+            "default": False,
+        },
+        {
             "id": "fal-ai/flux-pro/kontext",
             "label": "Flux Kontext Pro",
             "family": "flux",
@@ -55,6 +89,24 @@ MODEL_CATALOG = {
             "id": "openai/gpt-image-2/edit",
             "label": "GPT Image 2 Edit",
             "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "openai/gpt-image-2.5/flare/edit",
+            "label": "GPT Image 2.5 Flare Edit",
+            "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "openai/gpt-image-2.5/sunburst/edit",
+            "label": "GPT Image 2.5 Sunburst Edit",
+            "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "bytedance/seedream/v5/pro/edit",
+            "label": "Seedream 5.0 Pro Edit",
+            "family": "seedream",
             "default": False,
         },
         {
@@ -78,9 +130,27 @@ MODEL_CATALOG = {
             "default": False,
         },
         {
+            "id": "google/nano-banana-2.1/edit",
+            "label": "Nano Banana 2.1 Edit",
+            "family": "nano",
+            "default": False,
+        },
+        {
             "id": "openai/gpt-image-2/edit",
             "label": "GPT Image 2 Edit",
             "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "openai/gpt-image-2.5/flare/edit",
+            "label": "GPT Image 2.5 Flare Edit",
+            "family": "openai",
+            "default": False,
+        },
+        {
+            "id": "bytedance/seedream/v5/pro/edit",
+            "label": "Seedream 5.0 Pro Edit",
+            "family": "seedream",
             "default": False,
         },
         {
@@ -157,13 +227,18 @@ FLUX_MODELS = {
     "fal-ai/flux-pro/kontext",
     "fal-ai/flux-pro/v1.1",
     "fal-ai/flux-pro/v1.1-ultra",
+    "fal-ai/flux-2-pro",
 }
 
 NANO_MODELS = {
+    "fal-ai/nano-banana",
     "fal-ai/nano-banana-2",
     "fal-ai/nano-banana-pro",
+    "fal-ai/nano-banana/edit",
     "fal-ai/nano-banana-2/edit",
     "fal-ai/nano-banana-pro/edit",
+    "google/nano-banana-2.1",
+    "google/nano-banana-2.1/edit",
 }
 
 # Partner OpenAI models on fal (ids are `openai/…`, not `fal-ai/openai/…`).
@@ -174,6 +249,16 @@ WAN_IMAGE_MODELS = {
 OPENAI_MODELS = {
     "openai/gpt-image-2",
     "openai/gpt-image-2/edit",
+    "openai/gpt-image-2.5/flare/text-to-image",
+    "openai/gpt-image-2.5/sunburst/text-to-image",
+    "openai/gpt-image-2.5/flare/edit",
+    "openai/gpt-image-2.5/sunburst/edit",
+}
+
+SEEDREAM_MODELS = {
+    "bytedance/seedream/v5/pro/text-to-image",
+    "bytedance/seedream/v5/pro/edit",
+    "fal-ai/bytedance/seedream/v4.5/edit",
 }
 
 SINGULAR_IMAGE_URL_MODELS = {
@@ -197,9 +282,17 @@ REMBG_MODEL_MAP = {
 
 def resolve_model(capability: str, model: str | None) -> str:
     chosen = (model or "").strip() or DEFAULT_MODELS[capability]
-    if chosen not in ALLOW_LISTS[capability]:
-        raise ValueError(f"Model not allowed for {capability}: {chosen}")
-    return chosen
+    if chosen in ALLOW_LISTS.get(capability, set()):
+        return chosen
+    # Also permit any active model returned by merged_image_catalog
+    try:
+        from content.fal_models import merged_image_catalog
+        catalog = merged_image_catalog(include_discovery=True)
+        if any(m.get("id") == chosen for m in catalog.get(capability, [])):
+            return chosen
+    except Exception:
+        pass
+    raise ValueError(f"Model not allowed for {capability}: {chosen}")
 
 
 def credit_cost(capability: str, num_images: int = 1) -> Decimal:

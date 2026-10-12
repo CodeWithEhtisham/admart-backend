@@ -343,7 +343,7 @@ def _discovery_entry_from_model(model: dict[str, Any]) -> dict[str, Any]:
         "label": label,
         "family": family,
         "default": False,
-        "enabled": False,
+        "enabled": True,
         "source": "provider",
         "strength": overrides.get("strength")
         or (model.get("description") or "")[:120],

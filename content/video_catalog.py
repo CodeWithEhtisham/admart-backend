@@ -136,6 +136,73 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             aspect_ratio=["16:9", "9:16", "1:1"],
             strength="Fast / low cost",
         ),
+        _m(
+            id="bytedance/seedance-2.5/text-to-video",
+            label="Seedance 2.5",
+            family="seedance",
+            inputs="text",
+            duration=["4s", "6s", "8s", "10s", "12s"],
+            aspect_ratio=["16:9", "9:16", "1:1", "4:3", "3:4"],
+            resolution=["720p", "1080p", "4k"],
+            generate_audio=True,
+            strength="High fidelity dynamic motion",
+        ),
+        _m(
+            id="fal-ai/kling-video/v3/pro/text-to-video",
+            label="Kling 3.0 Pro",
+            family="kling",
+            inputs="text",
+            duration=["5", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            strength="Next-gen cinematic motion",
+        ),
+        _m(
+            id="fal-ai/kling-video/v3/standard/text-to-video",
+            label="Kling 3.0 Standard",
+            family="kling",
+            inputs="text",
+            duration=["5", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            strength="Balanced next-gen motion",
+        ),
+        _m(
+            id="fal-ai/veo3.1/fast",
+            label="Veo 3.1 Fast",
+            family="veo",
+            inputs="text",
+            duration=["4s", "6s", "8s"],
+            aspect_ratio=["16:9", "9:16"],
+            resolution=["720p", "1080p"],
+            generate_audio=True,
+            strength="Rapid generation with audio",
+        ),
+        _m(
+            id="minimax/h3-max/text-to-video",
+            label="MiniMax H3 Max",
+            family="minimax",
+            inputs="text",
+            duration=["6", "10"],
+            strength="Ultra high-res social clips",
+        ),
+        _m(
+            id="minimax/h3-max-turbo/text-to-video",
+            label="MiniMax H3 Max Turbo",
+            family="minimax",
+            inputs="text",
+            duration=["6", "10"],
+            strength="Fast high-res video",
+        ),
+        _m(
+            id="alibaba/wan-3.0/text-to-video",
+            label="Wan 3.0",
+            family="wan",
+            inputs="text",
+            duration=["5", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            resolution=["720p", "1080p"],
+            negative_prompt=True,
+            strength="Next-gen coherent scenes",
+        ),
     ],
     "imageToVideo": [
         _m(
@@ -164,6 +231,36 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             strength="Image + motion",
         ),
         _m(
+            id="bytedance/seedance-2.5/image-to-video",
+            label="Seedance 2.5",
+            family="seedance",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["4s", "6s", "8s", "10s"],
+            aspect_ratio=["auto", "16:9", "9:16", "1:1"],
+            resolution=["720p", "1080p"],
+            generate_audio=True,
+            strength="Smooth image animation",
+        ),
+        _m(
+            id="fal-ai/kling-video/v3/pro/image-to-video",
+            label="Kling 3.0 Pro",
+            family="kling",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "10"],
+            strength="Hyper-realistic animation",
+        ),
+        _m(
+            id="fal-ai/kling-video/v3/standard/image-to-video",
+            label="Kling 3.0 Standard",
+            family="kling",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "10"],
+            strength="Balanced motion from image",
+        ),
+        _m(
             id="fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
             label="Kling 2.5 Turbo Pro",
             family="kling",
@@ -182,6 +279,26 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             strength="High fidelity I2V",
         ),
         _m(
+            id="fal-ai/kling-video/v2.6/pro/image-to-video",
+            label="Kling 2.6 Pro",
+            family="kling",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "10"],
+            strength="Fluid motion",
+        ),
+        _m(
+            id="fal-ai/veo3.1/fast/image-to-video",
+            label="Veo 3.1 Fast",
+            family="veo",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["4s", "6s", "8s"],
+            resolution=["720p", "1080p"],
+            generate_audio=True,
+            strength="Quick animate with sound",
+        ),
+        _m(
             id="fal-ai/minimax/hailuo-02/standard/image-to-video",
             label="Hailuo 02 Standard",
             family="minimax",
@@ -189,6 +306,15 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             fal_image_keys={"start": "image_url"},
             duration=["6", "10"],
             strength="Product / social",
+        ),
+        _m(
+            id="minimax/h3-max/image-to-video",
+            label="MiniMax H3 Max",
+            family="minimax",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["6", "10"],
+            strength="Detailed character animation",
         ),
         _m(
             id="wan/v2.6/image-to-video",
@@ -250,6 +376,27 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             strength="Start + optional end",
         ),
         _m(
+            id="bytedance/seedance-2.5/image-to-video",
+            label="Seedance 2.5 Start→End",
+            family="seedance",
+            inputs="firstLast",
+            fal_image_keys={"start": "image_url", "end": "end_image_url"},
+            duration=["4s", "6s", "8s"],
+            aspect_ratio=["auto", "16:9", "9:16", "1:1"],
+            resolution=["720p", "1080p"],
+            generate_audio=True,
+            strength="Start & end keyframe transition",
+        ),
+        _m(
+            id="fal-ai/kling-video/v3/pro/image-to-video",
+            label="Kling 3.0 Pro Start→End",
+            family="kling",
+            inputs="firstLast",
+            fal_image_keys={"start": "image_url", "end": "tail_image_url"},
+            duration=["5", "10"],
+            strength="Seamless keyframe animation",
+        ),
+        _m(
             id="fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
             label="Kling 2.5 Turbo Start→End",
             family="kling",
@@ -289,14 +436,29 @@ def get_model_entry(capability: str, model_id: str) -> dict[str, Any] | None:
     for entry in VIDEO_MODEL_CATALOG.get(capability, []):
         if entry["id"] == model_id:
             return entry
+    try:
+        from content.fal_models import merged_video_catalog
+        catalog = merged_video_catalog(include_discovery=True)
+        for entry in catalog.get(capability, []):
+            if entry.get("id") == model_id:
+                return entry
+    except Exception:
+        pass
     return None
 
 
 def resolve_video_model(capability: str, model: str | None) -> str:
     chosen = (model or "").strip() or DEFAULT_VIDEO_MODELS[capability]
-    if chosen not in VIDEO_ALLOW_LISTS[capability]:
-        raise ValueError(f"Model not allowed for {capability}: {chosen}")
-    return chosen
+    if chosen in VIDEO_ALLOW_LISTS.get(capability, set()):
+        return chosen
+    try:
+        from content.fal_models import merged_video_catalog
+        catalog = merged_video_catalog(include_discovery=True)
+        if any(m.get("id") == chosen for m in catalog.get(capability, [])):
+            return chosen
+    except Exception:
+        pass
+    raise ValueError(f"Model not allowed for {capability}: {chosen}")
 
 
 def video_credit_cost(capability: str) -> Decimal:
