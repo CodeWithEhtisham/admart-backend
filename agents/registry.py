@@ -16,7 +16,7 @@ from django.conf import settings
 from content.pricing import FALLBACK_PRICES, admart_markup_multiplier, get_fal_prices, quantize_credits
 
 SHORT_SCENES = 6
-SHORT_NARRATION_CHARS = 900  # ~130 words, ~45 seconds of speech
+SHORT_NARRATION_CHARS = 900  # ~130 words: the longest (60 s) Short, for cost quotes
 IMAGE_WIDTH, IMAGE_HEIGHT = 768, 1344  # 9:16, about 1 megapixel; rendered up to 1080x1920
 MAX_TEXT_INPUT = 3000
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}$")
@@ -29,14 +29,14 @@ STYLES = {
     "anime": ("Anime", "anime style, clean line art, cel shading, vibrant colours"),
     "minimal": ("Minimal", "minimalist composition, soft pastel palette, lots of negative space"),
 }
-# Narrator voices: id -> (label, Kokoro voice, Gemini voice, OpenAI voice). Same id works on every provider.
+# Narrator voices: id -> (label, Kokoro voice on fal). British voices use fal's British endpoint.
 VOICES = {
-    "heart": ("Heart: warm female, US", "af_heart", "Kore", "nova"),
-    "bella": ("Bella: bright female, US", "af_bella", "Aoede", "shimmer"),
-    "michael": ("Michael: friendly male, US", "am_michael", "Puck", "echo"),
-    "fenrir": ("Fenrir: deep male, US", "am_fenrir", "Charon", "onyx"),
-    "emma": ("Emma: female, UK", "bf_emma", "Leda", "fable"),
-    "george": ("George: male, UK", "bm_george", "Orus", "alloy"),
+    "heart": ("Heart: warm female, US", "af_heart"),
+    "bella": ("Bella: bright female, US", "af_bella"),
+    "michael": ("Michael: friendly male, US", "am_michael"),
+    "fenrir": ("Fenrir: deep male, US", "am_fenrir"),
+    "emma": ("Emma: female, UK", "bf_emma"),
+    "george": ("George: male, UK", "bm_george"),
 }
 PACES = {"calm": ("Calm", 0.9), "normal": ("Normal", 1.0), "fast": ("Fast", 1.12)}
 TONES = {
@@ -46,12 +46,12 @@ TONES = {
     "calm": ("Calm", "calm, warm and soothing"),
     "motivational": ("Motivational", "energetic and motivational"),
 }
-LENGTHS = {30: 85, 45: 130, 60: 170}  # seconds -> most narration words
+LENGTHS = {30: 65, 45: 100, 60: 130}  # seconds -> most narration words (narrators speak ~2.2 words/s)
 
 
-def voice_settings(config: dict) -> tuple[tuple | None, float]:
-    """(VOICES entry or None for the server default, speed) for a deployment config."""
-    return VOICES.get(config.get("voice")), PACES.get(config.get("pace"), PACES["normal"])[1]
+def voice_settings(config: dict) -> tuple[tuple, float]:
+    """(VOICES entry, speed) for a deployment config; unknown values fall back to the defaults."""
+    return VOICES.get(config.get("voice"), VOICES["heart"]), PACES.get(config.get("pace"), PACES["normal"])[1]
 
 
 # Pause points where a person approves before money is spent on the next stage.
@@ -200,10 +200,6 @@ def validate_recipe(data: dict) -> str | None:
 
 
 def _image_usd() -> Decimal:
-    from agents import providers
-
-    if not providers.image_uses_fal():
-        return Decimal("0")  # Cloudflare free allowance
     model = settings.AGENTS_IMAGE_MODEL
     row = get_fal_prices([model]).get(model) or FALLBACK_PRICES.get(model) or {}
     price = Decimal(str(row.get("unit_price", "0.03")))

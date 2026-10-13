@@ -12,44 +12,28 @@ sudo apt install -y ffmpeg fonts-dejavu-core
 ffmpeg -version | head -1
 ```
 
-## 2. Free local models (voice + caption timing)
+## 2. Backend `.env`
 
-```bash
-cd /srv/admart/backend
-.venv/bin/pip install -r requirements.txt          # deploys do this already
-.venv/bin/python manage.py download_agent_models   # ~250 MB, once
-```
+Agents use two services:
 
-This downloads the Kokoro voice and the faster-whisper caption-timing model into
-`agent_models/` (git-ignored). Both run on the CPU.
-
-## 3. Backend `.env`
-
-Each job tries its providers in order and skips any that aren't set up. Free first:
-
-| Job | Free | Paid fallback |
+| Job | Service | Key |
 |---|---|---|
-| Script, concepts, research | Gemini free tier (`GEMINI_API_KEY`), then Groq free tier (`GROQ_API_KEY`) | — |
-| Voice | Kokoro (local), then Gemini TTS free tier | OpenAI (`OPENAI_API_KEY`) |
-| Images | Cloudflare Workers AI free allowance (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`) | fal (`FAL_KEY`) |
-| Caption timing | faster-whisper (local) | OpenAI; otherwise an even estimate |
-| Stock video | Pexels (`PEXELS_API_KEY`) | — |
-
-Cloudflare token: create one with the "Workers AI" permission in the Cloudflare dashboard.
-
-
-Minimal free setup:
+| Research, ideas, script | OpenRouter (free `:free` models by default) | `OPENROUTER_API_KEY` |
+| Research web search | OpenRouter web search (paid per search; skipped without credit) | same |
+| Voice | fal.ai Kokoro | `FAL_KEY` |
+| Caption timing | fal.ai Whisper (else an even estimate) | same |
+| Images | fal.ai FLUX schnell | same |
+| Stock video (optional) | Pexels, free | `PEXELS_API_KEY` |
 
 ```bash
-GEMINI_API_KEY=...              # free tier (already used for AI suggestions)
-GROQ_API_KEY=...                # optional free fallback for text
-CLOUDFLARE_ACCOUNT_ID=...       # free images
-CLOUDFLARE_API_TOKEN=...
-AGENTS_DRY_RUN=False            # True = free test mode: placeholder images, silent audio, 0 credits
+OPENROUTER_API_KEY=...
+FAL_KEY=...                     # already used by the image/video pages
+AGENTS_DRY_RUN=False            # True = test mode: placeholder images, silent audio, 0 credits
 PEXELS_API_KEY=                 # optional, free: real stock video for suitable scenes
-# Optional paid fallbacks: OPENAI_API_KEY (voice/timings), FAL_KEY (images)
 AGENTS_MUSIC_DIR=/srv/admart/agent_music   # optional: royalty-free tracks for background music
 ```
+
+Nothing is downloaded or run locally except FFmpeg, so the server needs no AI models.
 
 ### Background music
 
@@ -60,7 +44,7 @@ loops or trims it to length, and ducks it under the narration. No tracks = no mu
 `MEDIA_BASE_URL` must be the public API origin (e.g. `https://api.example.com`) so YouTube
 uploads and the library can fetch the rendered video.
 
-## 4. systemd service
+## 3. systemd service
 
 Create `/etc/systemd/system/admart-agents-worker.service`:
 

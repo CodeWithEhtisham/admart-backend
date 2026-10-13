@@ -39,23 +39,17 @@ Topic → Research → 3 concepts (you pick) → Script (you edit)
 ### On the server (once)
 
 - [ ] FFmpeg and fonts: `sudo apt install -y ffmpeg fonts-dejavu-core`
-- [ ] Python packages: `pip install -r requirements.txt` (includes `kokoro-onnx` and `faster-whisper`
-      for the free local voice and captions; the first install is ~150 MB)
-- [ ] Free local models: `python manage.py download_agent_models` (~250 MB: Kokoro voice + Whisper)
 - [ ] The agents worker service — see [agents-worker.md](agents-worker.md)
 - [ ] `MEDIA_BASE_URL` set to the public API address (so YouTube can fetch the video)
 
 ### Keys in the backend `.env`
 
-| Key | Needed? | Cost | Used for |
-|---|---|---|---|
-| `GEMINI_API_KEY` | Yes (or Groq) | Free tier | Research, concepts, script; fallback voice |
-| `GROQ_API_KEY` | Optional | Free tier | Text fallback when Gemini's free limit is used up |
-| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | Yes (or fal) | Free daily allowance | AI images |
-| `PEXELS_API_KEY` | Optional | Free | Real stock video for scenes that suit it |
-| `OPENAI_API_KEY` | Optional | Paid | Premium voice and exact caption timing fallback |
-| `FAL_KEY` | Optional | Paid (cheap) | Image fallback |
-| `AGENTS_DRY_RUN` | — | — | `True` = free test mode (placeholders, 0 credits); `False` for real |
+| Key | Needed? | Used for |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes | Research, ideas, script (and web search with credit) |
+| `FAL_KEY` | Yes | Voice, caption timing, images (also used by the image/video pages) |
+| `PEXELS_API_KEY` | Optional, free | Real stock video for scenes that suit it |
+| `AGENTS_DRY_RUN` | — | `True` = free test mode (placeholders, 0 credits); `False` for real |
 
 ### Files (optional)
 
@@ -70,48 +64,33 @@ Topic → Research → 3 concepts (you pick) → Script (you edit)
 
 ---
 
-## Free vs paid providers
+## Services, models and costs
 
-Each job tries its providers **in order**, skips any that aren't set up, and falls through to the
-next if one fails (for example when a free limit is reached). Order is set in `.env`:
+Agents use two services: **OpenRouter** (text) and **fal.ai** (voice, caption timing, images).
+Models are set in `.env`; a failed step fails the run and refunds it (caption timing alone falls
+back to an estimate).
 
-| Job | Setting | Default order (free first) |
-|---|---|---|
-| Text (research, concepts, script) | `AGENTS_LLM_PROVIDERS` | `gemini,groq` |
-| Voice | `AGENTS_TTS_PROVIDERS` | `kokoro,gemini,openai` |
-| Images | `AGENTS_IMAGE_PROVIDERS` | `cloudflare,fal` |
-| Caption timing | `AGENTS_CAPTION_PROVIDERS` | `local,openai` (else an even estimate) |
+| Purpose | Model now (setting) | Cost | Alternatives (same service) |
+|---|---|---|---|
+| Ideas, script, auto-topics | OpenRouter `google/gemma-4-31b-it:free` → `nvidia/nemotron-3-super-120b-a12b:free` → `google/gemma-4-26b-a4b-it:free` (`AGENTS_OPENROUTER_MODELS`, tried in order) | **$0** (free models; daily limits) | Paid, steadier: `deepseek/deepseek-v4.1-flash` ($0.15/$0.60 per M tokens in/out), `anthropic/claude-haiku-5.5` ($0.10/$0.50), `google/gemini-3.5-flash-lite` ($0.30/$2.50). ~10k tokens per Short ≈ $0.003–0.015 |
+| Research facts | Same models + OpenRouter web search, engine `exa` (`AGENTS_SEARCH_ENGINE`) | ~$0.007 per Short (one search). **Skipped without credit**: research then uses the model's own knowledge | Engines `parallel` (~$0.001), `perplexity` (~$0.005) |
+| Voice | fal `fal-ai/kokoro/american-english` / `british-english` (6 voices picked per agent) | $0.02 per 1,000 characters ≈ **$0.01–0.02** per Short | fal Chatterbox (~$0.025/1K chars), Gemini 3.1 Flash TTS on fal (~$0.15/1K chars) |
+| Caption timing | fal `fal-ai/whisper`, word level (`AGENTS_WHISPER_MODEL`) | Billed per compute second; estimate **~$0.01** per Short | None needed: without it captions use an even estimate |
+| Pictures | fal `fal-ai/flux/schnell` (`AGENTS_IMAGE_MODEL`) | $0.003 per megapixel ≈ $0.003 per picture ≈ **$0.02** per Short (6 scenes) | `fal-ai/flux/dev` (~$0.026/picture, better detail), `fal-ai/flux-pro/v1.1` (~$0.04/picture, best) |
+| Stock video (optional) | Pexels | Free | — |
+| Music (optional) | Your own files in `agent_music/` | Free | — |
 
-| Provider | Type | Notes |
-|---|---|---|
-| Gemini Flash | Free tier | Daily limits apply; on the free tier Google may use prompts to improve its models |
-| Groq (Llama) | Free tier | No web search, so research uses the model's own knowledge |
-| Kokoro | Free, local (CPU) | Good English voice, ~real-time on CPU, Apache-2.0 |
-| Gemini TTS | Free tier | Preview model, daily limits |
-| OpenAI TTS / transcription | Paid | Best voice; exact word timings |
-| Cloudflare Workers AI FLUX schnell | Free daily allowance | Square images, cropped to 9:16 |
-| fal FLUX schnell | Paid (~$0.003/image) | Native 9:16 |
-| faster-whisper | Free, local (CPU) | Exact word timings for captions |
-| Pexels | Free | Stock video; credit added to the description |
+**Per Short:** about **$0.04–0.05** with free text models (voice + captions + 6 pictures + one
+search), or about $0.05–0.07 with a cheap paid text model. Credits charged to users = this
+estimate × Admart markup; picture prices come live from fal's pricing API.
+Set `AGENTS_LLM_USD_PER_RUN` (USD per text call) when you switch to paid text models.
 
-**Voice & style per agent.** Users pick a voice (6 narrators), pace, tone, video length (30/45/60s)
-and picture style when they start an agent, and can change them later under **Settings**. Each
-voice id maps to a Kokoro, Gemini and OpenAI voice (`VOICES` in `agents/registry.py`), so the choice
-holds whichever voice service answers. Agents without a choice use the `AGENTS_*_VOICE` server defaults.
-The preview clips live in the frontend at `public/agent-voices/<id>.mp3` (made with Kokoro); re-record
-them if you change a voice.
+**Voice & style per agent.** Users pick a voice (6 Kokoro narrators), pace, tone, video length
+(30/45/60s) and picture style when they start an agent, and can change them later under
+**Settings** (`VOICES` in `agents/registry.py`). The preview clips live in the frontend at
+`public/agent-voices/<id>.mp3`; re-record them if you change a voice.
 
-Free-tier limits change often — check each provider's dashboard.
-
-### Cost per Short (estimates)
-
-| Setup | Approx. cost |
-|---|---|
-| Free providers only (within free limits) | **$0** + CPU time |
-| Paid (OpenAI voice + fal images + Gemini paid) | about $0.08–0.25 |
-
-Credits charged to users = provider cost × Admart markup. Free providers add 0; set
-`AGENTS_LLM_USD_PER_RUN=0` to make text free too.
+Prices change: check openrouter.ai/models and fal.ai/pricing.
 
 ---
 
@@ -174,9 +153,9 @@ Render time on CPU: roughly 3–4 minutes for a 45-second Short (more with local
 | Symptom | Cause / fix |
 |---|---|
 | Run stays **Queued** | The worker isn't running. Start it (`run_agents_worker`) or check the service. |
-| "No … service is set up" | No provider for that job has a key/model. Add a key or run `download_agent_models`. |
-| "Every … service failed" | All providers for that job errored (often free limits). Try later or add a paid fallback. |
-| Captions slightly off | No timing provider available, so timings are estimated. Install faster-whisper models. |
+| "No … service is set up" | `OPENROUTER_API_KEY` or `FAL_KEY` is missing. |
+| "The … service (…) failed" | The service errored: free OpenRouter models busy, or fal out of balance. Try later, top up, or switch to a paid text model. |
+| Captions slightly off | fal Whisper was unavailable, so timings were estimated. |
 | No music | `agent_music/` is empty or music is off in the agent's settings. |
 | Upload fails / private on YouTube | API quota or app audit — see *Google / YouTube* above. |
 

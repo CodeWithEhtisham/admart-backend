@@ -20,20 +20,29 @@ from projects.models import Project
 
 User = get_user_model()
 NO_PRICES = patch("agents.registry.get_fal_prices", return_value={})
-# Tests never depend on the developer's .env. Real (non-dry) mode with one paid provider per job
-# (fake keys, every HTTP call is patched), no local models, no stock, no music.
+# Tests never depend on the developer's .env. Real (non-dry) mode with fake keys (every HTTP call
+# is patched), no stock, no music.
 HERMETIC = {
-    "AGENTS_DRY_RUN": False, "OPENAI_API_KEY": "k", "GEMINI_API_KEY": "k", "FAL_KEY": "k", "GROQ_API_KEY": "",
-    "PEXELS_API_KEY": "", "CLOUDFLARE_ACCOUNT_ID": "", "CLOUDFLARE_API_TOKEN": "",
-    "AGENTS_LLM_PROVIDERS": "gemini", "AGENTS_TTS_PROVIDERS": "openai", "AGENTS_IMAGE_PROVIDERS": "fal",
-    "AGENTS_CAPTION_PROVIDERS": "openai", "AGENTS_KOKORO_DIR": "/nonexistent-kokoro",
+    "AGENTS_DRY_RUN": False, "OPENROUTER_API_KEY": "k", "FAL_KEY": "k", "PEXELS_API_KEY": "",
+    "AGENTS_OPENROUTER_MODELS": "m:free", "AGENTS_LLM_USD_PER_RUN": "0.002",
     "AGENTS_MUSIC_DIR": "/nonexistent-agent-music",
 }
-FREE_PROVIDERS = {
-    "AGENTS_LLM_PROVIDERS": "groq", "GROQ_API_KEY": "g", "AGENTS_TTS_PROVIDERS": "gemini",
-    "AGENTS_IMAGE_PROVIDERS": "cloudflare", "CLOUDFLARE_ACCOUNT_ID": "a", "CLOUDFLARE_API_TOKEN": "t",
-    "AGENTS_CAPTION_PROVIDERS": "",
-}
+
+
+def chat(content, annotations=None):
+    """A fake OpenRouter chat completion."""
+    message = {"content": content, "annotations": annotations or []}
+    return MagicMock(ok=True, status_code=200, json=lambda: {"choices": [{"message": message}]})
+
+
+def fake_fal(fal, result):
+    fal.submit.return_value = MagicMock(status_url="s", response_url="r")
+    fal.status.return_value = {"status": "COMPLETED"}
+    fal.result.return_value = result
+
+
+SCRIPT_JSON = ('{"title":"T","description":"Facts.","tags":["coffee"],"scenes":[{"narration":"a","image_prompt":"b"},'
+               '{"narration":"c","image_prompt":"d"},{"narration":"e","image_prompt":"f"}]}')
 
 
 class CleanScriptTests(SimpleTestCase):
@@ -49,6 +58,11 @@ class CleanScriptTests(SimpleTestCase):
         self.assertTrue(out["description"].endswith("#Shorts"))
         self.assertEqual(out["tags"], ["coffee", "beans"])
         self.assertEqual(len(out["scenes"]), 7)
+
+    def test_stock_scene_without_a_picture_idea_falls_back_to_its_search(self) -> None:
+        scenes = [{"narration": f"line {i}", "visual": "stock", "stock_query": f"query {i}", "image_prompt": ""} for i in range(3)]
+        out = steps.clean_script({"scenes": scenes}, "x")
+        self.assertEqual([s["image_prompt"] for s in out["scenes"]], ["query 0", "query 1", "query 2"])
 
     def test_rejects_script_without_enough_scenes(self) -> None:
         with self.assertRaises(RuntimeError):
@@ -87,9 +101,10 @@ class EstimateTests(SimpleTestCase):
             self.assertEqual(estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {}), 0)
 
     @NO_PRICES
-    def test_free_providers_only_charge_for_text(self, _prices) -> None:
-        with override_settings(**FREE_PROVIDERS, AGENTS_LLM_USD_PER_RUN="0"):
-            self.assertEqual(estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {}), 0)
+    def test_paid_text_models_raise_the_quote(self, _prices) -> None:
+        free = estimate_credits(BUILTIN_AGENTS["script-writer"], {})
+        with override_settings(AGENTS_LLM_USD_PER_RUN="0.05"):
+            self.assertGreater(estimate_credits(BUILTIN_AGENTS["script-writer"], {}), free)
 
 
 class _AgentAPITestCase(APITestCase):
@@ -234,7 +249,7 @@ class DryRunPipelineTests(_AgentAPITestCase):
 
 
 class ProviderStepTests(_AgentAPITestCase):
-    """Real-mode steps with Gemini, fal and OpenAI faked (no paid calls)."""
+    """Real-mode steps with OpenRouter and fal faked (no paid calls)."""
 
     def _run(self, agent_type="youtube-shorts", run_input=None) -> AgentRun:
         deployment = self.deploy(agent_type)
@@ -243,51 +258,45 @@ class ProviderStepTests(_AgentAPITestCase):
         )
 
     @patch("agents.providers.requests.post")
-    def test_script_uses_gemini_and_brand(self, post) -> None:
-        post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "candidates": [
-                    {
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": '{"title":"Coffee","description":"Facts.","tags":["coffee"],'
-                                    '"scenes":[{"narration":"a","image_prompt":"b"},{"narration":"c","image_prompt":"d"},'
-                                    '{"narration":"e","image_prompt":"f"}]}'
-                                }
-                            ]
-                        }
-                    }
-                ]
-            },
-        )
+    def test_script_uses_openrouter_and_brand(self, post) -> None:
+        post.return_value = chat(SCRIPT_JSON)
         run = self._run()
         run.output = {"concept": {"title": "C", "hook": "Did you know?", "angle": "facts"}, "research": {"notes": "n"}}
         steps.step_script(run)
         self.assertEqual(len(run.output["scenes"]), 3)
-        self.assertIn("Did you know?", post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
-        self.assertIn("Bean Co", post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
-        steps.step_script(run)  # already done: no second paid call
+        body = post.call_args.kwargs["json"]
+        self.assertIn("openrouter.ai", post.call_args.args[0])
+        self.assertEqual(body["models"], ["m:free"])
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertIn("Did you know?", body["messages"][1]["content"])
+        self.assertIn("Bean Co", body["messages"][1]["content"])
+        steps.step_script(run)  # already done: no second call
         self.assertEqual(post.call_count, 1)
 
     @patch("agents.providers.requests.post")
-    def test_research_uses_search_grounding_and_keeps_sources(self, post) -> None:
-        post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "candidates": [
-                    {
-                        "content": {"parts": [{"text": "- Fact one\n- Fact two"}]},
-                        "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://x.org", "title": "X"}}]},
-                    }
-                ]
-            },
-        )
+    def test_garbled_json_is_retried_once(self, post) -> None:
+        post.side_effect = [chat("not json"), chat('```json\n{"ok": true}\n```')]
+        self.assertEqual(providers.text("sys", "user"), {"ok": True})
+        post.side_effect = [chat("nope"), chat("still nope")]
+        with self.assertLogs("agents.providers", "WARNING"), self.assertRaisesMessage(RuntimeError, "AI writer service"):
+            providers.text("sys", "user")
+
+    @patch("agents.providers.requests.post")
+    def test_research_uses_web_search_and_keeps_sources(self, post) -> None:
+        post.return_value = chat("- Fact one\n- Fact two", [{"type": "url_citation", "url_citation": {"url": "https://x.org", "title": "X"}}])
         run = self._run()
         steps.step_research(run)
         self.assertEqual(run.output["research"]["sources"], [{"title": "X", "uri": "https://x.org"}])
-        self.assertIn("google_search", post.call_args.kwargs["json"]["tools"][0])
+        self.assertEqual(post.call_args.kwargs["json"]["tools"][0]["type"], "openrouter:web_search")
+
+    @patch("agents.providers.requests.post")
+    def test_research_without_search_credit_still_runs(self, post) -> None:
+        post.side_effect = [MagicMock(ok=False, status_code=402), chat("- Fact")]
+        run = self._run()
+        with self.assertLogs("agents.providers", "WARNING"):
+            steps.step_research(run)
+        self.assertEqual(run.output["research"]["notes"], "- Fact")
+        self.assertNotIn("tools", post.call_args.kwargs["json"])
 
     @override_settings(PEXELS_API_KEY="p")
     @patch("agents.steps.requests.get")
@@ -308,9 +317,7 @@ class ProviderStepTests(_AgentAPITestCase):
     @patch("agents.providers.requests.get")
     @patch("agents.providers.fal_client")
     def test_images_step_saves_each_scene_once(self, fal, get) -> None:
-        fal.submit.return_value = MagicMock(status_url="s", response_url="r")
-        fal.status.return_value = {"status": "COMPLETED"}
-        fal.result.return_value = {"images": [{"url": "https://cdn/x.png"}]}
+        fake_fal(fal, {"images": [{"url": "https://cdn/x.png"}]})
         get.return_value = MagicMock(content=b"\x89PNG fake", headers={"Content-Type": "image/png"})
         run = self._run()
         run.output = {"scenes": [{"narration": "a", "image_prompt": "b"}, {"narration": "c", "image_prompt": "d"}]}
@@ -319,27 +326,33 @@ class ProviderStepTests(_AgentAPITestCase):
         self.assertEqual(fal.submit.call_count, 2)
         self.assertTrue((Path(self.media) / run.output["scenes"][1]["image"]).exists())
 
-    @patch("agents.providers.requests.post")
-    def test_voice_step_records_duration(self, post) -> None:
+    @patch("agents.providers.requests.get")
+    @patch("agents.providers.fal_client")
+    def test_voice_uses_the_chosen_kokoro_voice_and_records_duration(self, fal, get) -> None:
         sample = Path(self.media) / "sample.mp3"
         render.silent_audio(sample, 2.0)
-        post.return_value = MagicMock(status_code=200, content=sample.read_bytes())
+        fake_fal(fal, {"audio": {"url": "https://cdn/a.wav"}})
+        get.return_value = MagicMock(content=sample.read_bytes())
         run = self._run("voiceover", {"text": "Hello world"})
+        run.deployment.config = {"voice": "george", "pace": "calm"}
         steps.step_voice(run)
         self.assertAlmostEqual(run.output["scenes"][0]["duration"], 2.0, delta=0.2)
-        self.assertEqual(post.call_args.kwargs["json"]["input"], "Hello world")
+        model, args = fal.submit.call_args.args
+        self.assertEqual(model, "fal-ai/kokoro/british-english")
+        self.assertEqual(args, {"prompt": "Hello world", "voice": "bm_george", "speed": 0.9})
 
-    @patch("agents.providers.requests.post")
-    def test_captions_use_word_timings_or_fall_back(self, post) -> None:
+    @patch("agents.providers.fal_client")
+    def test_captions_use_whisper_word_timings_or_fall_back(self, fal) -> None:
         audio = Path(self.media) / "a.mp3"
         render.silent_audio(audio, 2.0)
-        post.return_value = MagicMock(json=lambda: {"words": [{"word": "Hello", "start": 0.1, "end": 0.6}]})
+        fake_fal(fal, {"chunks": [{"text": " Hello", "timestamp": [0.1, 0.6]}, {"text": "world", "timestamp": [0.6, None]}]})
         run = self._run("voiceover", {"text": "Hello"})
         run.output = {"scenes": [{"narration": "Hello world", "audio": "a.mp3", "duration": 2.0}]}
         steps.step_captions(run)
-        self.assertEqual(run.output["scenes"][0]["words"], [{"word": "Hello", "start": 0.1, "end": 0.6}])
-        import requests as real_requests
-        post.side_effect = real_requests.ConnectionError("down")
+        self.assertEqual(run.output["scenes"][0]["words"], [{"word": "Hello", "start": 0.1, "end": 0.6},
+                                                            {"word": "world", "start": 0.6, "end": 0.6}])
+        self.assertEqual(fal.submit.call_args.args[1]["chunk_level"], "word")
+        fal.submit.side_effect = RuntimeError("down")
         del run.output["scenes"][0]["words"]
         with self.assertLogs("agents.providers", "WARNING"):
             steps.step_captions(run)
@@ -362,75 +375,23 @@ class ProviderStepTests(_AgentAPITestCase):
         with self.assertRaisesMessage(render.RenderError, "black"):
             render.check_video(clip, expect_sound=False)
 
-    def test_voice_step_without_key_has_a_clear_error(self) -> None:
+    def test_missing_keys_give_a_clear_message(self) -> None:
         run = self._run("voiceover", {"text": "Hi"})
-        with override_settings(OPENAI_API_KEY=""), self.assertRaisesMessage(RuntimeError, "No voice service is set up"):
+        with override_settings(FAL_KEY=""), self.assertRaisesMessage(RuntimeError, "No voice service is set up"):
             steps.step_voice(run)
+        with override_settings(OPENROUTER_API_KEY=""), self.assertRaisesMessage(RuntimeError, "No AI writer service"):
+            providers.text("sys", "user")
 
+    def test_style_settings_feed_the_script(self) -> None:
+        from agents.registry import VOICES, voice_settings
 
-class ProviderChainTests(_AgentAPITestCase):
-    """Free-first provider lists: skip what isn't set up, fall through on failure."""
-
-    @override_settings(AGENTS_LLM_PROVIDERS="gemini,groq", GROQ_API_KEY="g")
-    @patch("agents.providers.requests.post")
-    def test_text_falls_back_to_groq_when_gemini_fails(self, post) -> None:
-        import requests as real_requests
-
-        groq = MagicMock(json=lambda: {"choices": [{"message": {"content": '{"ok": true}'}}]})
-        post.side_effect = [real_requests.HTTPError("429 free tier used up"), groq]
-        with self.assertLogs("agents.providers", "WARNING"):
-            self.assertEqual(providers.text("sys", "user"), {"ok": True})
-        self.assertIn("groq.com", post.call_args.args[0])
-        self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
-
-    @override_settings(AGENTS_TTS_PROVIDERS="kokoro,gemini")
-    @patch("agents.providers.requests.post")
-    def test_gemini_voice_is_converted_to_mp3_and_missing_kokoro_is_skipped(self, post) -> None:
-        import base64
-
-        pcm = b"\x00\x00" * 24000  # one second of 24 kHz silence
-        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [
-            {"inlineData": {"data": base64.b64encode(pcm).decode()}}]}}]})
-        audio = Path(self.media) / "g.mp3"
-        audio.write_bytes(providers.speech("Hello"))
-        self.assertAlmostEqual(render.duration_of(audio), 1.0, delta=0.15)
-        self.assertEqual(post.call_count, 1)  # Kokoro had no model files, so it was never tried
-
-    @override_settings(AGENTS_TTS_PROVIDERS="gemini")
-    @patch("agents.providers.requests.post")
-    def test_chosen_voice_pace_tone_and_length_are_used(self, post) -> None:
-        import base64
-
-        from agents.registry import voice_settings
-
-        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [
-            {"inlineData": {"data": base64.b64encode(b"\x00\x00" * 2400).decode()}}]}}]})
         config = {"voice": "fenrir", "pace": "calm", "tone": "fun", "length": 30}
-        providers.speech("Hello", *voice_settings(config))
-        body = post.call_args.kwargs["json"]
-        self.assertEqual(body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"], "Charon")
-        self.assertIn("slowly", body["contents"][0]["parts"][0]["text"])
-        self.assertEqual(voice_settings({"voice": "nope"}), (None, 1.0))  # unknown: server default voice
+        self.assertEqual(voice_settings(config), (VOICES["fenrir"], 0.9))
+        self.assertEqual(voice_settings({"voice": "nope"}), (VOICES["heart"], 1.0))
         lines = steps._style_lines(MagicMock(deployment=MagicMock(config=config)))
         self.assertIn("playful", lines)
-        self.assertIn("at most 85 words", lines)
+        self.assertIn("at most 65 words", lines)
         self.assertIn("about 45 seconds", steps._style_lines(MagicMock(deployment=MagicMock(config={}))))
-
-    @override_settings(AGENTS_IMAGE_PROVIDERS="cloudflare,fal", CLOUDFLARE_ACCOUNT_ID="a", CLOUDFLARE_API_TOKEN="t")
-    @patch("agents.providers.requests.post")
-    def test_cloudflare_image_is_decoded(self, post) -> None:
-        import base64
-
-        post.return_value = MagicMock(json=lambda: {"result": {"image": base64.b64encode(b"jpegbytes").decode()}})
-        self.assertEqual(providers.image("a cat", 768, 1344), (b"jpegbytes", ".jpg"))
-        self.assertIn("/accounts/a/ai/run/", post.call_args.args[0])
-
-    @override_settings(AGENTS_IMAGE_PROVIDERS="cloudflare", AGENTS_TTS_PROVIDERS="")
-    def test_nothing_set_up_gives_a_clear_message(self) -> None:
-        with self.assertRaisesMessage(providers.ProviderUnavailable, "No image service is set up"):
-            providers.image("x", 10, 10)
-        with self.assertRaisesMessage(providers.ProviderUnavailable, "No voice service is set up"):
-            providers.speech("x")
 
 
 class EngineTests(_AgentAPITestCase):
@@ -459,11 +420,11 @@ class EngineTests(_AgentAPITestCase):
         from agents import providers
 
         run = self._queued()
-        with patch.dict(steps.STEPS, {"script": MagicMock(side_effect=lambda r: providers.note("gemini"))}):
+        with patch.dict(steps.STEPS, {"script": MagicMock(side_effect=lambda r: providers.note("openrouter"))}):
             engine.process(engine.claim_next())
         run.refresh_from_db()
         entry = run.output["log"]["script"]
-        self.assertEqual(entry["providers"], ["gemini"])
+        self.assertEqual(entry["providers"], ["openrouter"])
         self.assertLessEqual(entry["startedAt"], entry["finishedAt"])
         engine._log(run, "script", timezone.now(), [])  # a skipped (already done) step keeps its entry
         self.assertEqual(run.output["log"]["script"], entry)
@@ -641,13 +602,11 @@ class RecipeTests(_AgentAPITestCase):
         url = reverse("admin_agent_recipe", kwargs={"slug": "script-writer"})
         self.assertEqual(self.client.put(url, {"prompts": {"script": "CUSTOM SCRIPT PROMPT"}}, format="json").status_code, 200)
         self.client.force_authenticate(self.user)
-        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [{"text":
-            '{"title":"T","scenes":[{"narration":"a","image_prompt":"b"},{"narration":"c","image_prompt":"d"},'
-            '{"narration":"e","image_prompt":"f"}]}'}]}}]})
+        post.return_value = chat(SCRIPT_JSON)
         deployment = self.deploy("script-writer")
         run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "x"})
         steps.step_script(run)
-        self.assertEqual(post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"], "CUSTOM SCRIPT PROMPT")
+        self.assertEqual(post.call_args.kwargs["json"]["messages"][0]["content"], "CUSTOM SCRIPT PROMPT")
 
     def test_invalid_edit_is_rejected_and_staff_cannot_edit(self) -> None:
         url = reverse("admin_agent_recipe", kwargs={"slug": "voiceover"})
@@ -795,9 +754,9 @@ class AutopilotTests(_AgentAPITestCase):
                                 input={"topic": "Why espresso has crema"})
         run = AgentRun.objects.create(deployment=self.deployment, project=self.project, user=self.user,
                                       input={"topic": "", "auto": True})
-        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [{"text": '{"topic": "Decaf myths"}'}]}}]})
+        post.return_value = chat('{"topic": "Decaf myths"}')
         self.assertEqual(steps._topic(run), "Decaf myths")
-        self.assertIn("Why espresso has crema", post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"])
+        self.assertIn("Why espresso has crema", post.call_args.kwargs["json"]["messages"][1]["content"])
 
     def test_skipped_slot_leaves_a_note(self) -> None:
         from agents.runs import run_due

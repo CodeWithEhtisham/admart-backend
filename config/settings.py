@@ -384,43 +384,28 @@ PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lit
 PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
 
 # Agents (YouTube Shorts Creator etc.). The worker is `manage.py run_agents_worker`.
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# Two services: OpenRouter for text (research, ideas, script), fal.ai for voice, caption timing
+# and images (FAL_KEY above). See agents/providers.py and docs/AGENTS.md.
 # Dry run: template script, placeholder images, silent audio, no provider calls, 0 credits.
 AGENTS_DRY_RUN = os.getenv("AGENTS_DRY_RUN", "False").lower() in ("true", "1", "yes")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+# Up to 3, tried in order by OpenRouter. ":free" models cost nothing but have daily limits.
+AGENTS_OPENROUTER_MODELS = os.getenv(
+    "AGENTS_OPENROUTER_MODELS", "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-26b-a4b-it:free"
+)
+# OpenRouter web search for research (paid per search; without credit, research skips it).
+AGENTS_SEARCH_ENGINE = os.getenv("AGENTS_SEARCH_ENGINE", "exa")
 AGENTS_IMAGE_MODEL = os.getenv("AGENTS_IMAGE_MODEL", "fal-ai/flux/schnell")
-AGENTS_TTS_MODEL = os.getenv("AGENTS_TTS_MODEL", "gpt-4o-mini-tts")
-AGENTS_TTS_VOICE = os.getenv("AGENTS_TTS_VOICE", "alloy")
-# Provider cost estimates used for credit quotes (USD).
-AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.015")
-AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0.002")
-AGENTS_RESEARCH_USD = os.getenv("AGENTS_RESEARCH_USD", "0.035")  # one search-grounded Gemini call
-AGENTS_TRANSCRIBE_USD_PER_MIN = os.getenv("AGENTS_TRANSCRIBE_USD_PER_MIN", "0.006")  # word timings
-AGENTS_TRANSCRIBE_MODEL = os.getenv("AGENTS_TRANSCRIBE_MODEL", "whisper-1")
-# Free stock footage (https://www.pexels.com/api/). Empty = AI images only.
+AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "fal-ai/whisper")
+# Cost estimates used for credit quotes (USD). Image prices come from fal's pricing API.
+AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0")  # per text call; 0 with free models
+AGENTS_SEARCH_USD = os.getenv("AGENTS_SEARCH_USD", "0.007")  # one Exa web search
+AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.02")  # Kokoro on fal
+AGENTS_CAPTIONS_USD_PER_RUN = os.getenv("AGENTS_CAPTIONS_USD_PER_RUN", "0.01")  # Whisper on fal, all scenes
+# Free stock footage (https://www.pexels.com/api/). Optional; empty = AI images only.
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 # Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.
 AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
-# Provider order per job, free first. Providers without a key/model are skipped; a failing one
-# (e.g. a free-tier limit) falls through to the next. See agents/providers.py.
-AGENTS_LLM_PROVIDERS = os.getenv("AGENTS_LLM_PROVIDERS", "gemini,groq")
-AGENTS_TTS_PROVIDERS = os.getenv("AGENTS_TTS_PROVIDERS", "kokoro,gemini,openai")
-AGENTS_IMAGE_PROVIDERS = os.getenv("AGENTS_IMAGE_PROVIDERS", "cloudflare,fal")
-AGENTS_CAPTION_PROVIDERS = os.getenv("AGENTS_CAPTION_PROVIDERS", "local,openai")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-AGENTS_GROQ_MODEL = os.getenv("AGENTS_GROQ_MODEL", "llama-3.3-70b-versatile")
-AGENTS_GEMINI_TTS_MODEL = os.getenv("AGENTS_GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
-AGENTS_GEMINI_TTS_VOICE = os.getenv("AGENTS_GEMINI_TTS_VOICE", "Kore")
-# Kokoro: free local voice (CPU). Files come from `manage.py download_agent_models`.
-AGENTS_MODELS_DIR = os.getenv("AGENTS_MODELS_DIR") or str(BASE_DIR / "agent_models")
-AGENTS_KOKORO_DIR = str(Path(AGENTS_MODELS_DIR) / "kokoro")
-AGENTS_KOKORO_VOICE = os.getenv("AGENTS_KOKORO_VOICE", "af_heart")
-# faster-whisper: free local word timings for captions (CPU).
-AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "base.en")
-AGENTS_WHISPER_DIR = str(Path(AGENTS_MODELS_DIR) / "whisper")
-# Cloudflare Workers AI: free daily allowance of FLUX schnell images.
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
-AGENTS_CLOUDFLARE_IMAGE_MODEL = os.getenv("AGENTS_CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
 AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Optional Runware-powered preview generation for the owned template seed command.

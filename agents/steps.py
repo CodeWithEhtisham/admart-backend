@@ -34,9 +34,10 @@ class NeedsReview(Exception):
         self.gate = gate
 
 
-RESEARCH_PROMPT = """Research this topic for a 45-second YouTube Short. Using web search, list 5-8
-specific, surprising, verifiable facts or data points (with numbers where possible) and 2-3 angles
-that would make a strong hook. Plain bullet points, no intro, no markdown headings."""
+RESEARCH_PROMPT = """Research this topic for a short YouTube Short. Use web search if you have it. List 5-8
+specific, surprising, verifiable facts and 2-3 angles that would make a strong hook. Only state facts
+you are sure of: no made-up statistics or precise percentages; prefer well-known figures or none.
+Plain bullet points, no intro, no markdown headings."""
 
 CONCEPTS_PROMPT = """You are a YouTube Shorts producer. Propose exactly 3 clearly different concepts for
 a vertical Short (about 45 seconds) on the topic, grounded in the research notes.
@@ -52,13 +53,14 @@ Return JSON only, in this shape:
  "scenes": [{"narration": string, "visual": "stock" | "image", "stock_query": string, "image_prompt": string}]}
 Rules:
 - 4 to 7 scenes. Scene 1 opens with the concept's hook if one is given.
-- Total narration within the word limit given (130 words if none), plain spoken language, no stage
+- Total narration within the word limit given (100 words if none), plain spoken language, no stage
   directions or emojis.
 - Use facts from the research notes when given; never invent statistics.
 - visual: "stock" when real-world footage fits (people, places, nature, food, cities, objects in use);
   "image" for anything abstract, historical, fantastical or hard to film.
 - stock_query: 2-4 plain English words to search stock video for that scene.
-- image_prompt: one vivid picture for that scene, vertical 9:16 framing. Never ask for text,
+- image_prompt: always required, also for stock scenes (used when no clip is found): one vivid
+  picture for that scene, vertical 9:16 framing. Never ask for text,
   letters, captions or logos in the image.
 - title: at most 90 characters, no hashtags. description: 2-3 sentences ending with #Shorts.
 - tags: up to 12 short tags without the # sign.
@@ -218,7 +220,8 @@ def clean_script(raw: dict, topic: str) -> dict:
         if not isinstance(scene, dict):
             continue
         narration = " ".join(str(scene.get("narration") or "").split())[:400]
-        prompt = " ".join(str(scene.get("image_prompt") or "").split())[:600]
+        # Stock scenes still need a picture idea: it's used when no clip is found.
+        prompt = " ".join(str(scene.get("image_prompt") or scene.get("stock_query") or narration).split())[:600]
         if narration and prompt:
             scenes.append(
                 {

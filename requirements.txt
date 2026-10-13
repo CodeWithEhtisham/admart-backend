@@ -11,7 +11,3 @@ PyJWT==2.13.0
 # Production server + PostgreSQL driver
 gunicorn==26.2.0
 psycopg[binary]==3.3.6
-# Agents: free local voice (Kokoro) and caption word timings (faster-whisper), CPU only.
-# Models are fetched once with `manage.py download_agent_models`.
-kokoro-onnx==0.6.1
-faster-whisper==1.2.1
