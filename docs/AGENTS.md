@@ -166,6 +166,10 @@ Credits are refunded automatically whenever a run fails.
 ## For developers
 
 - Code: `agents/` (models, registry, steps, providers, render, engine, views).
+- Hooks and packaging: `agents/hooks.py` has 21 hook formulas, a hook scorer and a title +
+  thumbnail-text linter (no AI calls), ported from the MIT-licensed
+  [youtube-agent-skill](https://github.com/Jakeschincariol/youtube-agent-skill). Ideas write 3 hooks
+  each and keep the best-scoring one; the best idea is listed first.
 - New agent: create a recipe in the admin dashboard (no code). A new *step block* needs code in
   `agents/steps.py` plus an entry in `STEP_BLOCKS` in `agents/registry.py`.
 - New provider: add it to the job's `*_READY` and call maps in `agents/providers.py`.

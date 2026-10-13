@@ -13,7 +13,7 @@ from pathlib import Path
 import requests
 from django.conf import settings
 
-from agents import providers, render
+from agents import hooks, providers, render
 from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, get_agent, voice_settings
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
@@ -39,20 +39,33 @@ specific, surprising, verifiable facts and 2-3 angles that would make a strong h
 you are sure of: no made-up statistics or precise percentages; prefer well-known figures or none.
 Plain bullet points, no intro, no markdown headings."""
 
-CONCEPTS_PROMPT = """You are a YouTube Shorts producer. Propose exactly 3 clearly different concepts for
-a vertical Short (about 45 seconds) on the topic, grounded in the research notes.
-Return JSON only: {"concepts": [{"title": string, "hook": string, "angle": string, "style": string}]}
-- title: at most 90 characters, no hashtags.
-- hook: the first spoken line, under 15 words, that stops the scroll.
-- angle: one sentence on the approach (e.g. countdown, myth vs fact, story, how-to).
-- style: one of: cinematic, photoreal, illustration, anime, minimal."""
+TITLE_RULES = """at most 60 characters with the subject in the first 40, no hashtags, no hype words
+  (amazing, insane, ultimate, secret...): use a number, a name or a date instead"""
 
-SCRIPT_PROMPT = """You write scripts for YouTube Shorts (vertical video, about 40-50 seconds).
+CONCEPTS_PROMPT = f"""You are a YouTube Shorts producer. Propose exactly 3 clearly different concepts for
+a vertical Short on the topic, grounded in the research notes.
+Return JSON only: {{"concepts": [{{"title": string, "formula": string, "hooks": [string, string, string],
+"angle": string, "style": string}}]}}
+- title: {TITLE_RULES}.
+- formula: the name of one hook formula below. The 3 concepts use different formulas.
+- hooks: 3 versions of the first spoken line, built on that formula, 9-24 words each. A hook confirms
+  what the title promises, opens a question the viewer cannot close yet, and talks to "you". Specific
+  beats big. Never open with a greeting, who you are or a subscribe pitch.
+- angle: one sentence on the approach (e.g. countdown, myth vs fact, story, how-to).
+- style: one of: cinematic, photoreal, illustration, anime, minimal.
+Hook formulas (name: shape):
+""" + "\n".join(f"- {name}: {shape}" for name, shape in hooks.FORMULAS)
+
+SCRIPT_PROMPT = f"""You write scripts for YouTube Shorts (vertical video, about 40-50 seconds).
 Return JSON only, in this shape:
-{"title": string, "description": string, "tags": [string],
- "scenes": [{"narration": string, "visual": "stock" | "image", "stock_query": string, "image_prompt": string}]}
+{{"title": string, "thumbnail_text": string, "description": string, "tags": [string],
+ "scenes": [{{"narration": string, "visual": "stock" | "image", "stock_query": string, "image_prompt": string}}]}}
 Rules:
-- 4 to 7 scenes. Scene 1 opens with the concept's hook if one is given.
+- 4 to 7 scenes. Scene 1 opens with the concept's hook, word for word, if one is given. The first
+  sentence confirms what the title promises.
+- No greeting, channel intro or subscribe pitch. One idea per scene. Deliver the payoff the hook
+  promised, clearly. End on one short line that loops back to the opening (so the Short replays
+  smoothly) or on a single ask, never several.
 - Total narration within the word limit given (100 words if none), plain spoken language, no stage
   directions or emojis.
 - Use facts from the research notes when given; never invent statistics.
@@ -62,7 +75,8 @@ Rules:
 - image_prompt: always required, also for stock scenes (used when no clip is found): one vivid
   picture for that scene, vertical 9:16 framing. Never ask for text,
   letters, captions or logos in the image.
-- title: at most 90 characters, no hashtags. description: 2-3 sentences ending with #Shorts.
+- title: {TITLE_RULES}. description: 2-3 sentences ending with #Shorts.
+- thumbnail_text: 2-4 punchy words for the thumbnail that add to the title; never repeat its words.
 - tags: up to 12 short tags without the # sign.
 - Write in the tone given; if there is none, use the brand tone."""
 
@@ -164,24 +178,38 @@ def step_research(run) -> None:
     _save(run)
 
 
+def scored_hook(hook: str) -> dict:
+    """The hook with its score, band and the one fix that would help most."""
+    return {"hook": hook, **{k: v for k, v in hooks.score_hook(hook).items() if k != "weakest"}}
+
+
 def clean_concepts(raw: dict) -> list[dict]:
+    """Bound the concepts, keep each one's best-scoring hook, best concept first."""
     concepts = []
     for item in (raw.get("concepts") or [])[:3]:
         if not isinstance(item, dict):
             continue
+        options = item.get("hooks") if isinstance(item.get("hooks"), list) else [item.get("hook")]
+        options = [" ".join(str(h or "").split())[:200] for h in options[:5]]
+        options = [h for h in options if h]
+        if not options:
+            continue
+        best = max((scored_hook(h) for h in options), key=lambda h: h["score"])
         style = str(item.get("style", "")).strip().lower()
+        formula = str(item.get("formula") or "").strip()
         concepts.append(
             {
                 "title": str(item.get("title") or "").strip()[:90],
-                "hook": str(item.get("hook") or "").strip()[:200],
+                **best,
+                "formula": formula if formula in hooks.FORMULA_NAMES else "",
                 "angle": str(item.get("angle") or "").strip()[:300],
                 "style": style if style in STYLES else "cinematic",
             }
         )
-    concepts = [c for c in concepts if c["title"] and c["hook"]]
+    concepts = [c for c in concepts if c["title"]]
     if not concepts:
         raise RuntimeError("No usable concepts came back. Please try again.")
-    return concepts
+    return sorted(concepts, key=lambda c: -c["score"])
 
 
 def step_concepts(run) -> None:
@@ -191,8 +219,8 @@ def step_concepts(run) -> None:
     if settings.AGENTS_DRY_RUN:
         raw = {
             "concepts": [
-                {"title": f"{topic}: {angle}", "hook": f"Here is {angle.lower()} about {topic}.", "angle": angle,
-                 "style": style}
+                {"title": f"{topic}: {angle}", "hooks": [f"Here is {angle.lower()} about {topic}."], "angle": angle,
+                 "style": style, "formula": "The List"}
                 for angle, style in (("Countdown", "cinematic"), ("Myth vs fact", "illustration"), ("A short story", "photoreal"))
             ]
         }
@@ -240,8 +268,12 @@ def clean_script(raw: dict, topic: str) -> dict:
     description = str(raw.get("description") or "").strip()[:4900]
     if "#shorts" not in description.lower():
         description = f"{description} #Shorts".strip()
+    title = (str(raw.get("title") or "").strip() or topic)[:90]
+    thumb = " ".join(str(raw.get("thumbnail_text") or "").split()[:4])[:40]
     return {
-        "title": (str(raw.get("title") or "").strip() or topic)[:90],
+        "title": title,
+        "thumbnail_text": thumb,
+        "title_check": hooks.lint_title(title, thumb),
         "description": description,
         "tags": [str(t).strip().lstrip("#")[:60] for t in tags if str(t).strip()][:12],
         "scenes": scenes,
@@ -436,7 +468,7 @@ def step_render(run) -> None:
             folder / "short.mp4",
             folder / "thumb.jpg",
             workdir,
-            title=run.output.get("title", ""),
+            title=run.output.get("thumbnail_text") or run.output.get("title", ""),
             highlight_hex=highlight or "#FFD400",
             music=music,
             expect_sound=not settings.AGENTS_DRY_RUN,

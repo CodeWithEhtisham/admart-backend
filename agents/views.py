@@ -18,7 +18,7 @@ from agents import engine
 from agents.models import AgentDeployment, AgentRun
 from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics, month_spend, next_slot, start_run
 from agents.registry import MAX_TEXT_INPUT, STYLES, active_agents, catalog_entry, get_agent, image_credits
-from agents.steps import clean_script
+from agents.steps import clean_script, scored_hook
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
@@ -72,6 +72,8 @@ def run_data(run: AgentRun, request) -> dict:
         "error": run.error,
         "credits": serialize_decimal(run.credits_reserved),
         "title": out.get("title", ""),
+        "thumbnailText": out.get("thumbnail_text", ""),
+        "titleCheck": out.get("title_check", []),
         "description": out.get("description", ""),
         "tags": out.get("tags", []),
         "research": out.get("research"),
@@ -339,6 +341,8 @@ class RunActionView(_ProjectScoped):
                     chosen[key] = data[key].strip()[:limit]
             if data.get("style") in STYLES:
                 chosen["style"] = data["style"]
+            if chosen.get("hook"):
+                chosen.update(scored_hook(chosen["hook"]))  # the user may have rewritten it
             out["concept"] = chosen
         elif run.step == "script":
             if "scenes" in data:

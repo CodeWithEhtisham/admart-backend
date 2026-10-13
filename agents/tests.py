@@ -64,6 +64,27 @@ class CleanScriptTests(SimpleTestCase):
         out = steps.clean_script({"scenes": scenes}, "x")
         self.assertEqual([s["image_prompt"] for s in out["scenes"]], ["query 0", "query 1", "query 2"])
 
+    def test_script_gets_thumbnail_text_and_a_title_check(self) -> None:
+        scenes = [{"narration": f"line {i}", "image_prompt": "p"} for i in range(3)]
+        out = steps.clean_script({"title": "The most amazing crema facts you will ever hear today",
+                                  "thumbnail_text": "crema facts revealed now today", "scenes": scenes}, "x")
+        self.assertEqual(out["thumbnail_text"], "crema facts revealed now")
+        checks = " ".join(out["title_check"])
+        self.assertIn("amazing", checks)
+        self.assertIn("repeats the title", checks)
+
+    def test_concepts_keep_their_best_hook_best_concept_first(self) -> None:
+        weak, strong = "Today we talk about coffee.", "Your espresso is lying to you: crema hides a stale bean for 25 seconds."
+        out = steps.clean_concepts({"concepts": [
+            {"title": "A", "hooks": [weak], "formula": "Made Up"},
+            {"title": "B", "hooks": [weak, strong], "formula": "The Mistake"},
+        ]})
+        self.assertEqual([c["title"] for c in out], ["B", "A"])
+        self.assertEqual(out[0]["hook"], strong)
+        self.assertEqual((out[0]["formula"], out[1]["formula"]), ("The Mistake", ""))
+        self.assertGreater(out[0]["score"], out[1]["score"])
+        self.assertTrue(out[1]["fix"])
+
     def test_rejects_script_without_enough_scenes(self) -> None:
         with self.assertRaises(RuntimeError):
             steps.clean_script({"scenes": [{"narration": "a", "image_prompt": "b"}]}, "x")
@@ -177,6 +198,7 @@ class DryRunPipelineTests(_AgentAPITestCase):
         run.refresh_from_db()
         self.assertEqual((run.status, run.step), ("needs_review", "script"))
         self.assertEqual(run.output["concept"]["hook"], "My own hook.")
+        self.assertIn("score", run.output["concept"])  # rewritten hooks are scored again
 
         edited = {
             "title": "Edited title",
