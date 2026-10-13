@@ -94,6 +94,13 @@ next if one fails (for example when a free limit is reached). Order is set in `.
 | faster-whisper | Free, local (CPU) | Exact word timings for captions |
 | Pexels | Free | Stock video; credit added to the description |
 
+**Voice & style per agent.** Users pick a voice (6 narrators), pace, tone, video length (30/45/60s)
+and picture style when they start an agent, and can change them later under **Settings**. Each
+voice id maps to a Kokoro, Gemini and OpenAI voice (`VOICES` in `agents/registry.py`), so the choice
+holds whichever voice service answers. Agents without a choice use the `AGENTS_*_VOICE` server defaults.
+The preview clips live in the frontend at `public/agent-voices/<id>.mp3` (made with Kokoro); re-record
+them if you change a voice.
+
 Free-tier limits change often — check each provider's dashboard.
 
 ### Cost per Short (estimates)

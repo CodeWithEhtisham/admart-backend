@@ -185,22 +185,25 @@ def _kokoro():
     return Kokoro(str(folder / KOKORO_MODEL), str(folder / KOKORO_VOICES))
 
 
-def _kokoro_speech(text_: str) -> bytes:
+def _kokoro_speech(text_: str, voice: tuple | None, speed: float) -> bytes:
     import numpy as np
 
-    samples, rate = _kokoro().create(text_, voice=settings.AGENTS_KOKORO_VOICE, speed=1.0, lang="en-us")
+    name = voice[1] if voice else settings.AGENTS_KOKORO_VOICE
+    lang = "en-gb" if name.startswith("b") else "en-us"
+    samples, rate = _kokoro().create(text_, voice=name, speed=speed, lang=lang)
     return _to_mp3(np.asarray(samples, dtype="float32").tobytes(), ["-f", "f32le", "-ar", str(rate), "-ac", "1"])
 
 
-def _gemini_speech(text_: str) -> bytes:
+def _gemini_speech(text_: str, voice: tuple | None, speed: float) -> bytes:
+    pace = "slowly and calmly" if speed < 1 else "briskly" if speed > 1 else "clearly"
     response = requests.post(
         GEMINI_ENDPOINT.format(model=settings.AGENTS_GEMINI_TTS_MODEL),
         headers={"Content-Type": "application/json", "x-goog-api-key": settings.GEMINI_API_KEY},
         json={
-            "contents": [{"parts": [{"text": f"Say clearly and with energy, like a friendly narrator: {text_}"}]}],
+            "contents": [{"parts": [{"text": f"Say {pace} and with energy, like a friendly narrator: {text_}"}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
-                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": settings.AGENTS_GEMINI_TTS_VOICE}}},
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice[2] if voice else settings.AGENTS_GEMINI_TTS_VOICE}}},
             },
         },
         timeout=120,
@@ -211,9 +214,9 @@ def _gemini_speech(text_: str) -> bytes:
     return _to_mp3(pcm, ["-f", "s16le", "-ar", "24000", "-ac", "1"])
 
 
-def _openai_speech(text_: str) -> bytes:
-    body = {"model": settings.AGENTS_TTS_MODEL, "voice": settings.AGENTS_TTS_VOICE, "input": text_[:4000],
-            "response_format": "mp3"}
+def _openai_speech(text_: str, voice: tuple | None, speed: float) -> bytes:
+    body = {"model": settings.AGENTS_TTS_MODEL, "voice": voice[3] if voice else settings.AGENTS_TTS_VOICE,
+            "input": text_[:4000], "response_format": "mp3", "speed": speed}
     if settings.AGENTS_TTS_MODEL.startswith("gpt-4o"):
         body["instructions"] = "Speak clearly and with energy, like a friendly YouTube Shorts narrator."
     response = requests.post(
@@ -226,11 +229,11 @@ def _openai_speech(text_: str) -> bytes:
     return response.content
 
 
-def speech(text_: str) -> bytes:
-    """MP3 bytes of the spoken text."""
+def speech(text_: str, voice: tuple | None = None, speed: float = 1.0) -> bytes:
+    """MP3 bytes of the spoken text. `voice` is a registry.VOICES entry (None: the server default)."""
     _, audio = _run_chain(
         "voice", "AGENTS_TTS_PROVIDERS", SPEECH_READY,
-        {"kokoro": _kokoro_speech, "gemini": _gemini_speech, "openai": _openai_speech}, text_,
+        {"kokoro": _kokoro_speech, "gemini": _gemini_speech, "openai": _openai_speech}, text_, voice, speed,
     )
     return audio
 

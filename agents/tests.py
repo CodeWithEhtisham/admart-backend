@@ -396,6 +396,26 @@ class ProviderChainTests(_AgentAPITestCase):
         self.assertAlmostEqual(render.duration_of(audio), 1.0, delta=0.15)
         self.assertEqual(post.call_count, 1)  # Kokoro had no model files, so it was never tried
 
+    @override_settings(AGENTS_TTS_PROVIDERS="gemini")
+    @patch("agents.providers.requests.post")
+    def test_chosen_voice_pace_tone_and_length_are_used(self, post) -> None:
+        import base64
+
+        from agents.registry import voice_settings
+
+        post.return_value = MagicMock(json=lambda: {"candidates": [{"content": {"parts": [
+            {"inlineData": {"data": base64.b64encode(b"\x00\x00" * 2400).decode()}}]}}]})
+        config = {"voice": "fenrir", "pace": "calm", "tone": "fun", "length": 30}
+        providers.speech("Hello", *voice_settings(config))
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"], "Charon")
+        self.assertIn("slowly", body["contents"][0]["parts"][0]["text"])
+        self.assertEqual(voice_settings({"voice": "nope"}), (None, 1.0))  # unknown: server default voice
+        lines = steps._style_lines(MagicMock(deployment=MagicMock(config=config)))
+        self.assertIn("playful", lines)
+        self.assertIn("at most 85 words", lines)
+        self.assertIn("about 45 seconds", steps._style_lines(MagicMock(deployment=MagicMock(config={}))))
+
     @override_settings(AGENTS_IMAGE_PROVIDERS="cloudflare,fal", CLOUDFLARE_ACCOUNT_ID="a", CLOUDFLARE_API_TOKEN="t")
     @patch("agents.providers.requests.post")
     def test_cloudflare_image_is_decoded(self, post) -> None:

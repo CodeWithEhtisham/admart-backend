@@ -29,6 +29,31 @@ STYLES = {
     "anime": ("Anime", "anime style, clean line art, cel shading, vibrant colours"),
     "minimal": ("Minimal", "minimalist composition, soft pastel palette, lots of negative space"),
 }
+# Narrator voices: id -> (label, Kokoro voice, Gemini voice, OpenAI voice). Same id works on every provider.
+VOICES = {
+    "heart": ("Heart: warm female, US", "af_heart", "Kore", "nova"),
+    "bella": ("Bella: bright female, US", "af_bella", "Aoede", "shimmer"),
+    "michael": ("Michael: friendly male, US", "am_michael", "Puck", "echo"),
+    "fenrir": ("Fenrir: deep male, US", "am_fenrir", "Charon", "onyx"),
+    "emma": ("Emma: female, UK", "bf_emma", "Leda", "fable"),
+    "george": ("George: male, UK", "bm_george", "Orus", "alloy"),
+}
+PACES = {"calm": ("Calm", 0.9), "normal": ("Normal", 1.0), "fast": ("Fast", 1.12)}
+TONES = {
+    "fun": ("Fun", "playful and funny, light jokes"),
+    "educational": ("Educational", "clear and informative, like a good teacher"),
+    "story": ("Storytelling", "a gripping story that builds suspense"),
+    "calm": ("Calm", "calm, warm and soothing"),
+    "motivational": ("Motivational", "energetic and motivational"),
+}
+LENGTHS = {30: 85, 45: 130, 60: 170}  # seconds -> most narration words
+
+
+def voice_settings(config: dict) -> tuple[tuple | None, float]:
+    """(VOICES entry or None for the server default, speed) for a deployment config."""
+    return VOICES.get(config.get("voice")), PACES.get(config.get("pace"), PACES["normal"])[1]
+
+
 # Pause points where a person approves before money is spent on the next stage.
 GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard"}
 
@@ -232,5 +257,9 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "estimatedCredits": f"{estimate_credits(spec, {'text': 'x' * 500}):f}",
         "steps": [step for step in spec.steps if step not in GATES],
         "styles": [{"id": key, "label": label} for key, (label, _) in STYLES.items()] if "visuals" in spec.steps else [],
+        "voices": [{"id": key, "label": v[0]} for key, v in VOICES.items()] if "voice" in spec.steps else [],
+        "paces": [{"id": key, "label": label} for key, (label, _) in PACES.items()] if "voice" in spec.steps else [],
+        "tones": [{"id": key, "label": label} for key, (label, _) in TONES.items()] if "script" in spec.steps else [],
+        "lengths": list(LENGTHS) if "script" in spec.steps else [],
         "redoCredits": f"{image_credits():f}" if "visuals" in spec.steps else None,
     }

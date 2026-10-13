@@ -14,7 +14,7 @@ import requests
 from django.conf import settings
 
 from agents import providers, render
-from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, STYLES, get_agent
+from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, get_agent, voice_settings
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
 
@@ -52,7 +52,8 @@ Return JSON only, in this shape:
  "scenes": [{"narration": string, "visual": "stock" | "image", "stock_query": string, "image_prompt": string}]}
 Rules:
 - 4 to 7 scenes. Scene 1 opens with the concept's hook if one is given.
-- Total narration at most 130 words, plain spoken language, no stage directions or emojis.
+- Total narration within the word limit given (130 words if none), plain spoken language, no stage
+  directions or emojis.
 - Use facts from the research notes when given; never invent statistics.
 - visual: "stock" when real-world footage fits (people, places, nature, food, cities, objects in use);
   "image" for anything abstract, historical, fantastical or hard to film.
@@ -61,7 +62,7 @@ Rules:
   letters, captions or logos in the image.
 - title: at most 90 characters, no hashtags. description: 2-3 sentences ending with #Shorts.
 - tags: up to 12 short tags without the # sign.
-- If a brand tone is given, write in that tone."""
+- Write in the tone given; if there is none, use the brand tone."""
 
 
 def media_dir(run) -> tuple[Path, str]:
@@ -136,6 +137,14 @@ def _brand_lines(run) -> str:
         f"Industry: {project.brand_industry or 'none'}\n"
         f"Brand tone: {str(brand.get('toneText') or 'none')[:600]}\n"
     )
+
+
+def _style_lines(run) -> str:
+    """Tone and length the user picked for this agent."""
+    config = _config(run)
+    tone = TONES.get(config.get("tone"))
+    seconds = config.get("length") if config.get("length") in LENGTHS else 45
+    return (f"Tone: {tone[1]}\n" if tone else "") + f"Length: about {seconds} seconds, at most {LENGTHS[seconds]} words of narration\n"
 
 
 # ── pre-production ────────────────────────────────────────────────────────
@@ -259,7 +268,9 @@ def step_script(run) -> None:
             if concept
             else ""
         )
-        raw = providers.text(_prompt(run, "script"), f"Topic: {topic}\n{_brand_lines(run)}{concept_lines}Research notes:\n{notes}")
+        raw = providers.text(
+            _prompt(run, "script"), f"Topic: {topic}\n{_brand_lines(run)}{_style_lines(run)}{concept_lines}Research notes:\n{notes}"
+        )
     run.output.update(clean_script(raw, topic))
     _save(run)
 
@@ -289,7 +300,8 @@ def step_voice(run) -> None:
             seconds = max(1.5, len(scene["narration"].split()) / SPEECH_WORDS_PER_SECOND)
             render.silent_audio(folder / name, seconds)
         else:
-            (folder / name).write_bytes(providers.speech(scene["narration"]))
+            voice, speed = voice_settings(_config(run))
+            (folder / name).write_bytes(providers.speech(scene["narration"], voice, speed))
         scene["audio"] = f"{rel}/{name}"
         scene["duration"] = round(render.duration_of(folder / name), 3)
         _save(run)
