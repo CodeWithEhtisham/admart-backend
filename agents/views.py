@@ -92,6 +92,7 @@ def run_data(run: AgentRun, request) -> dict:
             for s in out.get("scenes", [])
         ],
         "checks": out.get("checks", []),
+        "log": out.get("log", {}),
         "music": out.get("music"),
         "videoUrl": _media(out.get("video"), request),
         "thumbnailUrl": _media(out.get("thumbnail"), request),

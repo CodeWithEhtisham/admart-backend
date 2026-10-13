@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import logging
 import subprocess
+import threading
 import time
 from decimal import Decimal
 from functools import lru_cache
@@ -37,6 +38,21 @@ def _chain(setting: str) -> list[str]:
     return [p.strip().lower() for p in str(getattr(settings, setting, "")).split(",") if p.strip()]
 
 
+_used = threading.local()
+
+
+def track() -> list[str]:
+    """Start recording which services answer on this thread; returns the live list."""
+    _used.names = []
+    return _used.names
+
+
+def note(name: str) -> None:
+    names = getattr(_used, "names", None)
+    if names is not None and name not in names:
+        names.append(name)
+
+
 def _run_chain(job: str, setting: str, ready: dict, call: dict, *args, **kwargs):
     """Try each configured provider in order; return (provider, result)."""
     tried = []
@@ -44,7 +60,9 @@ def _run_chain(job: str, setting: str, ready: dict, call: dict, *args, **kwargs)
         if name not in call or not ready.get(name, lambda: False)():
             continue
         try:
-            return name, call[name](*args, **kwargs)
+            result = call[name](*args, **kwargs)
+            note(name)
+            return name, result
         except Exception as exc:  # noqa: BLE001 — fall through to the next provider
             logger.warning("%s provider %s failed: %s", job, name, exc)
             tried.append(name)

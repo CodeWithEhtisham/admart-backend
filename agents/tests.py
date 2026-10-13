@@ -435,6 +435,19 @@ class EngineTests(_AgentAPITestCase):
         self.assertIn("refunded", run.error)
         self.assertEqual(self.user.credits_remaining, before + Decimal("1.5"))
 
+    def test_each_step_logs_time_and_services(self) -> None:
+        from agents import providers
+
+        run = self._queued()
+        with patch.dict(steps.STEPS, {"script": MagicMock(side_effect=lambda r: providers.note("gemini"))}):
+            engine.process(engine.claim_next())
+        run.refresh_from_db()
+        entry = run.output["log"]["script"]
+        self.assertEqual(entry["providers"], ["gemini"])
+        self.assertLessEqual(entry["startedAt"], entry["finishedAt"])
+        engine._log(run, "script", timezone.now(), [])  # a skipped (already done) step keeps its entry
+        self.assertEqual(run.output["log"]["script"], entry)
+
     def test_unexpected_errors_are_summarised(self) -> None:
         run = self._queued()
         with patch.dict(steps.STEPS, {"script": MagicMock(side_effect=KeyError("secret internals"))}), \

@@ -368,6 +368,7 @@ def _pexels_clip(query: str, min_seconds: float) -> tuple[bytes, dict] | None:
         if len(clip.content) > MAX_STOCK_BYTES:
             continue
         user = video.get("user") or {}
+        providers.note("pexels")
         return clip.content, {"source": "Pexels", "by": str(user.get("name", ""))[:80], "url": str(video.get("url", ""))[:300]}
     return None
 

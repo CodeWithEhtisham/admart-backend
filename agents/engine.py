@@ -10,6 +10,7 @@ import requests
 from django.db.models import F
 from django.utils import timezone
 
+from agents import providers
 from agents.models import AgentRun
 from agents.registry import get_agent
 from agents.steps import STEPS, NeedsReview
@@ -57,7 +58,9 @@ def process(run: AgentRun) -> None:
             run.step = step
             run.locked_until = timezone.now() + LEASE
             run.save(update_fields=["step", "locked_until", "updated_at"])
+            used, started = providers.track(), timezone.now()
             STEPS[step](run)
+            _log(run, step, started, used)
     except NeedsReview as pause:
         # Waiting for a person: nothing failed and no credits move.
         AgentRun.objects.filter(id=run.id, status="running").update(
@@ -73,6 +76,15 @@ def process(run: AgentRun) -> None:
         locked_until=None,
         finished_at=timezone.now(),
     )
+
+
+def _log(run: AgentRun, step: str, started, used: list[str]) -> None:
+    """When each step ran and which services it used. A skipped (already done) step keeps its entry."""
+    log = run.output.setdefault("log", {})
+    if step in log and not used:
+        return
+    log[step] = {"startedAt": started.isoformat(), "finishedAt": timezone.now().isoformat(), "providers": used}
+    run.save(update_fields=["output", "updated_at"])
 
 
 def fail(run: AgentRun, message: str) -> None:
