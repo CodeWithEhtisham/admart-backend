@@ -232,9 +232,11 @@ class RunListCreateView(_ProjectScoped):
             return _bad("This agent is no longer available.")
         if spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
-            if not value or len(value) > 200:
+            if len(value) > 200:
                 return _bad("Enter a topic (up to 200 characters).")
-            run_input = {"topic": value}
+            if not value and not (deployment.config or {}).get("niche"):
+                return _bad("Enter a topic, or set a channel niche so the agent can pick one.")
+            run_input = {"topic": value} if value else {"topic": "", "auto": True}
         else:
             value = str(request.data.get("text", "")).strip()
             if not value or len(value) > MAX_TEXT_INPUT:

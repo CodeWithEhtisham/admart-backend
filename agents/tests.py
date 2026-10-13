@@ -492,6 +492,12 @@ class AgentAPITests(_AgentAPITestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.credits_remaining, before - Decimal(response.data["credits"]))
 
+    def test_blank_topic_uses_an_auto_topic_when_there_is_a_niche(self) -> None:
+        deployment = self.deploy(config={"niche": "coffee facts"})
+        response = self.start(deployment, topic="  ")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(AgentRun.objects.get(id=response.data["id"]).input, {"topic": "", "auto": True})
+
     def test_insufficient_credits_returns_402(self) -> None:
         self.user.credits_remaining = Decimal("0")
         self.user.save(update_fields=["credits_remaining"])
