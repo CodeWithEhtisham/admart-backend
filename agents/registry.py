@@ -56,7 +56,7 @@ def voice_settings(config: dict) -> tuple[tuple, float]:
 
 # Pause points where a person approves before money is spent on the next stage.
 GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard",
-         "review_edit": "edit", "review_post": "post"}
+         "review_edit": "edit", "review_post": "post", "review_clips": "clips"}
 
 # Video Editor choices (per agent, set when starting it or in Settings).
 FORMATS = {  # id -> (label, output size or None to keep the original shape)
@@ -114,10 +114,17 @@ STEP_BLOCKS = {
     "review_post": {"label": "Check-in: user edits the posts and picks a time", "needs": ["write_post"]},
     "wait": {"label": "Wait for the chosen time", "needs": ["review_post"]},
     "post": {"label": "Post to the platforms", "needs": ["review_post"]},
+    "get_video": {"label": "Get the video (YouTube link or upload)", "needs": []},
+    "transcribe_long": {"label": "Transcribe it word by word", "needs": ["get_video"]},
+    "find_clips": {"label": "Find and score the best moments", "needs": ["transcribe_long"]},
+    "review_clips": {"label": "Check-in: user picks and trims the clips", "needs": ["find_clips"]},
+    "render_clips": {"label": "Make the vertical clips", "needs": ["find_clips"]},
+    "finish_clips": {"label": "Save the clips to the library", "needs": ["render_clips"]},
 }
 TOPIC_STEPS = ("research", "concepts", "script", "trends")  # need a topic as input
 VIDEO_STEPS = ("prepare", "transcribe", "clean_audio", "plan_edit", "review_edit", "render_edit", "package")
 POST_STEPS = ("fetch", "listen", "write_post", "review_post", "wait", "post")
+CLIP_STEPS = ("get_video", "transcribe_long", "find_clips", "review_clips", "render_clips", "finish_clips")
 PROMPT_KEYS = ("research", "concepts", "script")
 PLATFORMS = ("youtube", "facebook", "instagram")
 
@@ -211,6 +218,16 @@ BUILTIN_AGENTS: dict[str, AgentSpec] = {
             input_kind="video",
             input_hint="Any video in your Library",
         ),
+        AgentSpec(
+            slug="clip-maker",
+            name="Clip Maker",
+            kind="large",
+            description="Paste a YouTube link or upload a long video: it finds the best moments, scores them "
+            "and turns them into vertical clips with captions for TikTok, Reels and Shorts.",
+            steps=("get_video", "transcribe_long", "find_clips", "review_clips", "render_clips", "finish_clips"),
+            input_kind="video",
+            input_hint="A YouTube link or a video up to 2 hours",
+        ),
     )
 }
 
@@ -266,10 +283,10 @@ def validate_recipe(data: dict) -> str | None:
         return "Input must be a topic, text or a video."
     if input_kind == "text" and any(s in TOPIC_STEPS for s in steps):
         return "Research, concepts and script need a topic as input, not text."
-    edits, posts = any(s in VIDEO_STEPS for s in steps), any(s in POST_STEPS for s in steps)
-    if (input_kind == "video") != (edits or posts) or (edits and posts) or (
-        edits and any(s not in VIDEO_STEPS and s != "finish" for s in steps)
-    ) or (posts and any(s not in POST_STEPS for s in steps)):
+    groups = [g for g in (VIDEO_STEPS, POST_STEPS, CLIP_STEPS) if any(s in g for s in steps)]
+    if (input_kind == "video") != bool(groups) or len(groups) > 1 or (groups and any(
+        s not in groups[0] and not (groups[0] is VIDEO_STEPS and s == "finish") for s in steps
+    )):
         return "Video steps need a video as input, and can't be mixed with other steps."
     if "voice" in steps and input_kind == "topic" and "script" not in steps[: steps.index("voice")]:
         return "'voice' needs a script earlier, or text as the input."
@@ -307,6 +324,13 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
         minutes = Decimal(str(run_input.get("seconds") or MAX_VIDEO_SECONDS)) / Decimal(60)
         audio = AUDIO_LEVELS[video_settings(config or {})[2]][2]
         usd += minutes * (Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN) + Decimal(audio))
+    if "get_video" in spec.steps:  # Clip Maker: transcription by length, AI reading, our render time
+        from agents.clips import WINDOW_SECONDS, clip_settings
+
+        seconds = Decimal(str(run_input.get("seconds") or 3600))
+        usd += seconds / Decimal(60) * Decimal(settings.CLIPS_TRANSCRIBE_USD_PER_MIN)
+        llm_calls += int(seconds // WINDOW_SECONDS) + 1
+        usd += Decimal(settings.CLIPS_RENDER_USD_PER_CLIP) * clip_settings(config or {})[1]
     if "listen" in spec.steps:  # only the first 3 minutes are transcribed
         seconds = min(Decimal(str(run_input.get("seconds") or 180)), Decimal(180))
         usd += seconds / Decimal(60) * Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
@@ -352,6 +376,21 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "lengths": list(LENGTHS) if "script" in spec.steps else [],
         "redoCredits": f"{image_credits():f}" if "visuals" in spec.steps else None,
         **(_video_catalog(spec) if "prepare" in spec.steps else {}),
+        **(_clip_catalog(spec) if "get_video" in spec.steps else {}),
+    }
+
+
+def _clip_catalog(spec: AgentSpec) -> dict:
+    """Choices for the Clip Maker, priced per hour of source video."""
+    from agents.clips import CLIP_COUNTS, CLIP_LENGTHS, FREE_MAX_SECONDS, LAYOUTS, PAID_MAX_SECONDS
+
+    return {
+        "estimatedCredits": f"{estimate_credits(spec, {'seconds': 3600}):f}",
+        "creditUnit": "hour",
+        "maxSeconds": {"free": FREE_MAX_SECONDS, "paid": PAID_MAX_SECONDS},
+        "clipLengths": [{"id": key, "label": label} for key, (label, _, _) in CLIP_LENGTHS.items()],
+        "clipCounts": list(CLIP_COUNTS),
+        "layouts": [{"id": key, "label": label} for key, label in LAYOUTS.items()],
     }
 
 

@@ -6,6 +6,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import SimpleTestCase, override_settings
@@ -612,7 +614,7 @@ class RecipeTests(_AgentAPITestCase):
 
     def test_builtin_recipes_are_seeded_and_listed(self) -> None:
         slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
-        self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "video-editor", "cross-poster", "script-writer", "voiceover"])
+        self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "video-editor", "cross-poster", "clip-maker", "script-writer", "voiceover"])
         editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
 
@@ -1184,3 +1186,250 @@ class WorkerTests(_AgentAPITestCase):
         steps.keep_alive(run)
         run.refresh_from_db()
         self.assertGreater(run.locked_until, timezone.now() + timedelta(minutes=14))
+
+
+def _w(text: str, start: float, step: float = 0.5) -> list[dict]:
+    """Words of `text`, one every `step` seconds from `start`."""
+    return [{"word": w, "start": round(start + i * step, 3), "end": round(start + i * step + step * 0.8, 3)}
+            for i, w in enumerate(text.split())]
+
+
+class ClipHelperTests(SimpleTestCase):
+    def test_youtube_links_are_normalised(self) -> None:
+        from agents import clips
+
+        canonical = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        for link in ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "youtu.be/dQw4w9WgXcQ?si=x",
+                     "https://m.youtube.com/watch?v=dQw4w9WgXcQ", "https://youtube.com/shorts/dQw4w9WgXcQ",
+                     "https://www.youtube.com/live/dQw4w9WgXcQ", " https://www.youtube.com/embed/dQw4w9WgXcQ "):
+            self.assertEqual(clips.parse_youtube_url(link), canonical, link)
+        for bad in ("https://vimeo.com/123", "https://www.youtube.com/playlist?list=PL1", "file:///etc/passwd",
+                    "https://evil.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com.evil.com/watch?v=dQw4w9WgXcQ",
+                    "https://www.youtube.com/watch?v=short", ""):
+            self.assertIsNone(clips.parse_youtube_url(bad), bad)
+
+    def test_long_audio_is_split_at_the_silence_nearest_each_mark(self) -> None:
+        from agents import clips
+
+        self.assertEqual(clips.chunk_bounds(500, []), [(0, 500)])
+        bounds = clips.chunk_bounds(1500, [100.0, 590.0, 615.0, 1195.0], target=600, window=30)
+        self.assertEqual(bounds, [(0, 590.0), (590.0, 1195.0), (1195.0, 1500)])
+        self.assertEqual(clips.chunk_bounds(1300, [5.0], target=600, window=30), [(0, 600), (600, 1200), (1200, 1300)])
+
+    def test_sentences_split_on_punctuation_and_long_gaps(self) -> None:
+        from agents import clips
+
+        words = _w("Coffee is great. Why? Because", 0) + _w("it wakes you up", 10)
+        out = clips.sentences(words)
+        self.assertEqual([s["text"] for s in out], ["Coffee is great.", "Why?", "Because", "it wakes you up"])
+        self.assertEqual((out[0]["first"], out[0]["last"], out[0]["start"]), (0, 2, 0))
+        self.assertEqual(out[3]["start"], 10)
+
+    def test_clip_grows_to_the_minimum_and_ends_on_a_sentence(self) -> None:
+        from agents import clips
+
+        sents = [{"start": i * 5.0, "end": i * 5.0 + 4.5, "text": f"s{i}."} for i in range(20)]
+        clip = clips.fit_clip(2, 3, sents, 15, 30, 100)  # 10 s of speech: too short
+        self.assertEqual((clip["from"], clip["to"]), (2, 5))
+        self.assertAlmostEqual(clip["start"], 9.75)  # 0.25 s lead-in, after the previous sentence
+        self.assertAlmostEqual(clip["end"], 29.85)  # 0.35 s tail, before the next sentence
+        clip = clips.fit_clip(0, 19, sents, 15, 30, 100)  # far too long: trimmed to whole sentences
+        self.assertEqual((clip["from"], clip["to"]), (0, 5))
+        self.assertEqual(clip["start"], 0)
+        self.assertIsNone(clips.fit_clip(0, 0, [{"start": 0, "end": 50, "text": "x"}], 15, 30, 50))
+
+    def test_overlapping_moments_keep_the_higher_score(self) -> None:
+        from agents import clips
+
+        kept = clips.dedupe([
+            {"start": 0, "end": 30, "score": 60}, {"start": 10, "end": 40, "score": 90},
+            {"start": 35, "end": 60, "score": 50}, {"start": 100, "end": 130, "score": 10},
+        ])
+        self.assertEqual([c["score"] for c in kept], [90, 50, 10])
+
+    def test_punctuation_from_segments_is_put_back_on_words(self) -> None:
+        from agents import clips
+
+        words = _w("hello there how are you", 0)
+        segments = [{"start": 0, "end": 1, "text": " Hello there."}, {"start": 1, "end": 3, "text": " How are you?"}]
+        self.assertEqual([w["word"] for w in clips.punctuate(words, segments)],
+                         ["Hello", "there.", "How", "are", "you?"])
+        odd = [{"start": 0, "end": 3, "text": " Hello there, how are you doing?"}]  # counts differ: mark the end
+        self.assertEqual(clips.punctuate(_w("hello there how are you", 0), odd)[-1]["word"], "you?")
+
+    def test_length_limit_depends_on_the_plan(self) -> None:
+        from agents import clips
+
+        self.assertEqual(clips.max_seconds(MagicMock(plan="free")), 30 * 60)
+        self.assertEqual(clips.max_seconds(MagicMock(plan="plus")), 2 * 60 * 60)
+
+
+@override_settings(**HERMETIC, GROQ_API_KEY="g", CLIPS_TRANSCRIBE_PROVIDERS="groq,local,fal")
+class ClipTranscribeTests(SimpleTestCase):
+    def setUp(self) -> None:
+        self.audio = Path(tempfile.mkdtemp()) / "chunk.mp3"
+        self.addCleanup(shutil.rmtree, self.audio.parent, ignore_errors=True)
+        self.audio.write_bytes(b"x")
+
+    @patch("agents.clips.requests.post")
+    def test_groq_words_are_punctuated_and_offset(self, post) -> None:
+        from agents import clips
+
+        post.return_value = MagicMock(status_code=200, json=lambda: {
+            "words": [{"word": "Hi", "start": 0.0, "end": 0.4}, {"word": "there", "start": 0.5, "end": 0.9}],
+            "segments": [{"start": 0, "end": 1, "text": " Hi there."}]})
+        words, used = clips.transcribe_chunk(self.audio, offset=600)
+        self.assertEqual(used, "groq")
+        self.assertEqual(words, [{"word": "Hi", "start": 600.0, "end": 600.4}, {"word": "there.", "start": 600.5, "end": 600.9}])
+        self.assertEqual(post.call_args.kwargs["data"]["timestamp_granularities[]"], ["word", "segment"])
+        self.assertEqual(post.call_args.kwargs["data"]["language"], "en")  # one language for every piece
+
+    @patch("agents.clips._local_words", return_value=None)
+    @patch("agents.clips.providers._fal", return_value={"chunks": [{"text": "Yo.", "timestamp": [1.0, 1.5]}]})
+    @patch("agents.clips.requests.post", side_effect=requests.ConnectionError("down"))
+    def test_falls_back_to_the_next_service(self, _post, _fal, _local) -> None:
+        from agents import clips
+
+        with self.assertLogs("agents.clips", "WARNING"):
+            words, used = clips.transcribe_chunk(self.audio, offset=0)
+        self.assertEqual((words, used), ([{"word": "Yo.", "start": 1.0, "end": 1.5}], "fal"))
+
+    @override_settings(GROQ_API_KEY="", FAL_KEY="", CLIPS_TRANSCRIBE_PROVIDERS="groq,fal")
+    def test_no_service_is_a_clear_error(self) -> None:
+        from agents import clips
+
+        with self.assertRaisesMessage(RuntimeError, "No transcription service"):
+            clips.transcribe_chunk(self.audio, offset=0)
+
+
+class ClipMakerPipelineTests(_AgentAPITestCase):
+    """Upload → transcript → moments → pick → real FFmpeg render of vertical clips, at zero cost."""
+
+    dry_run = True
+    _action = DryRunPipelineTests._action
+    _work = DryRunPipelineTests._work
+
+    def _upload(self, seconds=40) -> "LibraryAsset":
+        from content.models import LibraryAsset
+
+        folder = Path(self.media) / "projects" / str(self.project.id) / "library"
+        folder.mkdir(parents=True)
+        clip = folder / "talk.mp4"
+        render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc2=s=640x360:d={seconds}:r=30", "-f", "lavfi",
+                     "-i", f"sine=f=330:d={seconds}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                     "-shortest", str(clip)])
+        return LibraryAsset.objects.create(
+            project=self.project, user=self.user, media_type="video", title="My podcast", status="ready",
+            source_url=f"http://testserver/media/projects/{self.project.id}/library/talk.mp4", capability="upload",
+        )
+
+    def test_pick_two_moments_and_get_vertical_clips(self) -> None:
+        asset = self._upload()
+        deployment = self.deploy("clip-maker", config={"clipLength": "short", "clipCount": 3, "layout": "fit"})
+        response = self.start(deployment, assetId=str(asset.id))
+        self.assertEqual(response.status_code, 201, response.data)
+        run_id = response.data["id"]
+
+        self._work()
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual((run.status, run.step), ("needs_review", "clips"), run.error)
+        moments = run.output["moments"]
+        self.assertGreaterEqual(len(moments), 2)
+        for m in moments:
+            self.assertTrue(15 <= m["end"] - m["start"] <= 30.5, m)
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertEqual(detail["sourceSeconds"], run.output["clip_info"]["duration"])
+        self.assertEqual(len(detail["moments"]), len(moments))
+
+        bad = self._action(deployment, run_id, "continue", {"clips": [{"index": 0, "keep": True, "start": 5, "end": 999}]})
+        self.assertEqual(bad.status_code, 400)
+        picks = [{"index": 0, "keep": True, "hook": "Watch this"}, {"index": 1, "keep": True, "start": 20, "end": 36}]
+        picks += [{"index": i, "keep": False} for i in range(2, len(moments))]
+        self.assertEqual(self._action(deployment, run_id, "continue", {"clips": picks}).status_code, 200)
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "succeeded", run.error)
+        made = run.output["clips"]
+        self.assertEqual(len(made), 2)
+        self.assertEqual(made[0]["hook"], "Watch this")
+        self.assertAlmostEqual(made[1]["duration"], 16, delta=0.3)
+        for clip in made:
+            self.assertTrue((Path(self.media) / clip["video"]).exists())
+            self.assertTrue(clip["thumbnail"].endswith(".jpg"))
+        from content.models import LibraryAsset
+
+        assets = LibraryAsset.objects.filter(model="agent:clip-maker")
+        self.assertEqual(assets.count(), 2)
+        self.assertEqual({(a.width, a.height) for a in assets}, {(1080, 1920)})
+        self.assertEqual(run.library_asset_id, made[0]["assetId"] and assets.get(id=made[0]["assetId"]).id)
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertTrue(detail["clips"][0]["videoUrl"].endswith(".mp4"))
+
+    def test_youtube_link_needs_rights_and_fits_the_plan(self) -> None:
+        deployment = self.deploy("clip-maker")
+        link = "https://youtu.be/dQw4w9WgXcQ"
+        self.assertEqual(self.start(deployment, url=link).data["code"], "RIGHTS_REQUIRED")
+        self.assertEqual(self.start(deployment, url="https://vimeo.com/1", rights=True).status_code, 400)
+        info = {"title": "Talk", "duration": 3 * 60 * 60, "live": False}
+        with patch("agents.views.youtube_info", return_value=info):
+            self.assertEqual(self.start(deployment, url=link, rights=True).data["code"], "VIDEO_TOO_LONG")
+        with patch("agents.views.youtube_info", return_value={**info, "duration": 600, "live": True}):
+            self.assertEqual(self.start(deployment, url=link, rights=True).status_code, 400)
+        with patch("agents.views.youtube_info", return_value={**info, "duration": 600}):
+            response = self.start(deployment, url=link, rights=True)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["input"], {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                                                  "seconds": 600, "title": "Talk", "rights": True})
+
+    def test_youtube_video_is_downloaded_by_the_first_step(self) -> None:
+        from agents import clips
+
+        deployment = self.deploy("clip-maker")
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
+                                      input={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "seconds": 40})
+
+        def fake_download(url, folder, run=None):
+            target = folder / "source.mp4"
+            render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:d=12:r=30", "-f", "lavfi",
+                         "-i", "sine=d=12", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest",
+                         str(target)])
+            return target
+
+        with patch("agents.clips.download_youtube", side_effect=fake_download) as download:
+            clips.step_get_video(run)
+        download.assert_called_once()
+        self.assertEqual(download.call_args.args[0], "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertAlmostEqual(run.output["clip_info"]["duration"], 12, delta=0.2)
+        self.assertTrue(run.output["clip_audio"].endswith("audio.mp3"))
+
+
+class ClipRecipeValidationTests(SimpleTestCase):
+    def test_clip_steps_need_a_video_and_cannot_mix_with_other_video_steps(self) -> None:
+        clip = {"kind": "large", "input_kind": "video", "steps": list(BUILTIN_AGENTS["clip-maker"].steps)}
+        self.assertIsNone(validate_recipe(clip))
+        self.assertIn("need a video", validate_recipe({**clip, "input_kind": "topic"}))
+        self.assertIn("can't be mixed", validate_recipe({**clip, "steps": ["get_video", "transcribe_long", "prepare"]}))
+        self.assertIn("needs transcribe_long", validate_recipe({**clip, "steps": ["get_video", "find_clips"]}))
+
+
+class ClipLocalWhisperTests(SimpleTestCase):
+    def test_local_whisper_gets_decoded_samples_not_a_file(self) -> None:
+        """faster-whisper's own file decoding breaks with PyAV 19, so we decode with FFmpeg."""
+        import numpy
+
+        from agents import clips
+
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        audio = folder / "a.mp3"
+        render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=d=2", "-ac", "1", str(audio)])
+        word = MagicMock(word=" Hi.", start=0.1, end=0.4)
+        model = MagicMock()
+        model.transcribe.return_value = ([MagicMock(words=[word])], None)
+        with patch("agents.clips._local_model", return_value=model):
+            self.assertEqual(clips._local_words(audio, "en"), [{"word": "Hi.", "start": 0.1, "end": 0.4}])
+        self.assertEqual(model.transcribe.call_args.kwargs["language"], "en")
+        samples = model.transcribe.call_args.args[0]
+        self.assertIsInstance(samples, numpy.ndarray)
+        self.assertEqual(samples.dtype, numpy.float32)
+        self.assertAlmostEqual(len(samples) / 16000, 2, delta=0.1)

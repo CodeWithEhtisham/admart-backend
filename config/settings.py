@@ -413,6 +413,22 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
 AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Clip Maker (long video -> vertical clips). See agents/clips.py and docs/plans/2026-10-14-clip-maker-agent.md.
+# Transcription services tried in order: groq (free tier, GROQ_API_KEY), local (faster-whisper on this
+# server's CPU, free, slower), fal (paid, FAL_KEY).
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+CLIPS_GROQ_MODEL = os.getenv("CLIPS_GROQ_MODEL", "whisper-large-v3-turbo")
+CLIPS_TRANSCRIBE_PROVIDERS = os.getenv("CLIPS_TRANSCRIBE_PROVIDERS", "groq,local,fal")
+CLIPS_LOCAL_WHISPER_MODEL = os.getenv("CLIPS_LOCAL_WHISPER_MODEL", "base")  # tiny/base/small/medium
+# YouTube downloads (yt-dlp). A datacenter IP is often blocked by YouTube: a residential proxy fixes it.
+CLIPS_YTDLP_JS_RUNTIMES = os.getenv("CLIPS_YTDLP_JS_RUNTIMES", "deno,node")
+CLIPS_YTDLP_PROXY = os.getenv("CLIPS_YTDLP_PROXY", "")
+CLIPS_YTDLP_COOKIES = os.getenv("CLIPS_YTDLP_COOKIES", "")  # path to a cookies.txt file
+CLIPS_MAX_DOWNLOAD_BYTES = int(os.getenv("CLIPS_MAX_DOWNLOAD_BYTES", str(4 * 1024 * 1024 * 1024)))
+# Cost estimates for credit quotes (USD): 0 with Groq's free tier or local; fal Whisper is ~0.006.
+CLIPS_TRANSCRIBE_USD_PER_MIN = os.getenv("CLIPS_TRANSCRIBE_USD_PER_MIN", "0.001")
+CLIPS_RENDER_USD_PER_CLIP = os.getenv("CLIPS_RENDER_USD_PER_CLIP", "0.002")  # our CPU time
+
 # Optional Runware-powered preview generation for the owned template seed command.
 # The gallery works without this; set these when generating fresh preview_url assets.
 RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")

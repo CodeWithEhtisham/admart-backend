@@ -11,3 +11,6 @@ PyJWT==2.13.0
 # Production server + PostgreSQL driver
 gunicorn==26.2.0
 psycopg[binary]==3.3.6
+# Clip Maker: YouTube downloads and free local transcription (CPU)
+yt-dlp==2026.8.19
+faster-whisper==1.2.1

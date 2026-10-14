@@ -11,6 +11,7 @@ deploy it, and run it. Every run is processed in the background by the **agents 
 | **Video Editor** | Full automation | Your own video (up to 3 min) → cut, cleaned, captioned and reframed, with your approval |
 | **Trend Finder** | Single task | Your niche → 5–8 topics rising this week, each with why, a scored hook and a source; make a Short or add it to Autopilot in one click |
 | **Cross-poster** | Full automation | A Library video → a post for YouTube, Instagram and Facebook; you check them, it posts now or later |
+| **Clip Maker** | Full automation | A YouTube link or a long upload (30 min Free, 2 h paid) → the best moments, scored, as vertical clips with captions |
 
 ---
 
@@ -63,6 +64,24 @@ Upload / pick a Library video → Check (length, sound) → Transcript (fal Whis
 - **Make a Short** starts the project's YouTube Shorts Creator with that topic; **Add to Autopilot**
   appends it to that agent's topic queue. About 0.01 credits per run.
 - Code: `step_trends` in `agents/steps.py`, UI `AgentTrendList.jsx`.
+
+## How the Clip Maker works
+
+```
+YouTube link (user ticks "I have the rights") or Library video → Download (yt-dlp, ≤1080p) / copy
+      → Transcript in 10-min pieces cut at pauses (Groq free → local faster-whisper → fal), one language
+      → AI reads ~20-min windows of numbered sentences, returns moments (from/to sentence, 0-100 score,
+        title, hook, reason) → edges snapped to whole sentences, fitted to the length, duplicates dropped
+      → You pick, trim and edit hooks (check-in) → Render: 1080×1920 crop or blurred fit, word captions,
+        hook box for 3.5 s, -14 LUFS, quality checks → Every clip saved to the Library
+```
+
+- Settings per agent: clip length (15–30 / 30–60 / 60–90 s), up to 3–10 clips, framing, check-in on/off.
+- Long jobs: run a separate worker with `run_agents_worker --only clip-maker` (and `--exclude clip-maker`
+  on the main one) so Shorts and posts never wait behind a 2-hour video.
+- Local transcription speed on a 12-core CPU: about 6× real time with the `base` model (`small` is slower,
+  more accurate). Groq is much faster.
+- Code: `agents/clips.py`; plan: `docs/plans/2026-10-14-clip-maker-agent.md`.
 
 ## How the Cross-poster works
 

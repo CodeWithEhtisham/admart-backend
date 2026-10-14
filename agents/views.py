@@ -22,6 +22,7 @@ from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics,
 from agents.registry import (
     MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, get_agent, image_credits,
 )
+from agents.clips import max_seconds, parse_youtube_url, youtube_info
 from agents.cross_post import connected
 from agents.hooks import lint_title
 from agents.steps import clean_script, scored_hook
@@ -115,6 +116,23 @@ def _post_data(out: dict) -> dict:
     }
 
 
+def _clips_data(out: dict, request) -> dict:
+    """Clip Maker fields."""
+    return {
+        "sourceUrl": _media(out.get("clip_source"), request),
+        "sourceSeconds": (out.get("clip_info") or {}).get("duration"),
+        "sourceTitle": out.get("source_title", ""),
+        "transcribedWith": out.get("transcribed_with", []),
+        "moments": out.get("moments", []),
+        "clips": [
+            {**{k: c.get(k) for k in ("start", "end", "score", "title", "hook", "reason", "text", "duration",
+                                     "checks", "error", "assetId")},
+             "videoUrl": _media(c.get("video"), request), "thumbnailUrl": _media(c.get("thumbnail"), request)}
+            for c in out.get("clips") or []
+        ],
+    }
+
+
 def run_data(run: AgentRun, request) -> dict:
     out = run.output or {}
     spec = get_agent(run.deployment.agent_type)
@@ -162,6 +180,7 @@ def run_data(run: AgentRun, request) -> dict:
         "updatedAt": run.updated_at,
         "finishedAt": run.finished_at,
         **(_post_data(out) if "short" in out else {}),
+        **(_clips_data(out, request) if "clip_source" in out or run.input.get("url") else {}),
         **({"thumbnailUrl": out["thumbnail_url"]} if out.get("thumbnail_url") else {}),
     }
 
@@ -293,7 +312,11 @@ class RunListCreateView(_ProjectScoped):
         spec = get_agent(deployment.agent_type)
         if spec is None:
             return _bad("This agent is no longer available.")
-        if spec.input_kind == "video":
+        if "get_video" in spec.steps:
+            run_input = self._clip_input(request, deployment)
+            if isinstance(run_input, Response):
+                return run_input
+        elif spec.input_kind == "video":
             run_input = self._video_input(request, deployment, spec)
             if isinstance(run_input, Response):
                 return run_input
@@ -347,6 +370,34 @@ class RunListCreateView(_ProjectScoped):
         if "post" in spec.steps and not connected(deployment.project_id):
             return _bad("Connect YouTube, Instagram or Facebook on Social Accounts first.", "NOT_CONNECTED")
         return {"assetId": str(asset.id), "seconds": seconds, "title": asset.title[:120]}
+
+
+    @classmethod
+    def _clip_input(cls, request, deployment):
+        """Clip Maker: a YouTube link (with the user's rights confirmation) or a library video."""
+        limit = max_seconds(request.user)
+        too_long = _bad(f"Your plan takes videos up to {limit // 60} minutes.", "VIDEO_TOO_LONG")
+        if "url" not in request.data:
+            run_input = cls._video_input(request, deployment, get_agent(deployment.agent_type))
+            if not isinstance(run_input, Response) and (run_input["seconds"] or 0) > limit + 5:
+                return too_long
+            return run_input
+        if request.data.get("rights") is not True:
+            return _bad("Confirm that you own this video or have the rights to use it.", "RIGHTS_REQUIRED")
+        url = parse_youtube_url(str(request.data.get("url") or ""))
+        if url is None:
+            return _bad("Paste a link to a single YouTube video.")
+        try:
+            info = youtube_info(url)
+        except RuntimeError as exc:
+            return _bad(str(exc), "VIDEO_UNAVAILABLE")
+        if info["live"]:
+            return _bad("Live streams can't be clipped until they have ended.")
+        if info["duration"] > limit + 5:
+            return too_long
+        if info["duration"] < 10:
+            return _bad("This video is too short to make clips from.")
+        return {"url": url, "seconds": round(info["duration"]), "title": info["title"], "rights": True}
 
 
 class InboxView(_ProjectScoped):
@@ -414,7 +465,7 @@ class RunActionView(_ProjectScoped):
         run.save(update_fields=["status", "attempts", "output", "updated_at"])
 
     def _continue(self, run, data):
-        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit", "post"):
+        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit", "post", "clips"):
             return _bad("This run isn't waiting at a checkpoint.")
         out = run.output
         if run.step == "concept":
@@ -448,6 +499,11 @@ class RunActionView(_ProjectScoped):
             if problem:
                 return _bad(problem)
             out["post_ok"] = True
+        elif run.step == "clips":
+            problem = self._apply_clips(out, data)
+            if problem:
+                return _bad(problem)
+            out["clips_ok"] = True
         else:
             out["storyboard_ok"] = True
         self._resume(run)
@@ -493,6 +549,33 @@ class RunActionView(_ProjectScoped):
                 return "Scheduled posting is not included in your plan. Post it now, or upgrade."
         out["chosen"] = chosen
         out["post_at"] = at.isoformat() if at else None
+        return None
+
+    @staticmethod
+    def _apply_clips(out: dict, data: dict) -> str | None:
+        """The user's pick of moments, with their trimmed edges and hook text."""
+        moments = out.get("moments") or []
+        duration = (out.get("clip_info") or {}).get("duration") or 0
+        picks = data.get("clips")
+        if not isinstance(picks, list) or len(picks) > len(moments):
+            return "Invalid clip list."
+        changed = [dict(m) for m in moments]
+        for pick in picks:
+            try:
+                moment = changed[int(pick["index"])]
+                start = float(pick.get("start", moment["start"]))
+                end = float(pick.get("end", moment["end"]))
+            except (KeyError, TypeError, ValueError, IndexError):
+                return "Invalid clip list."
+            if not 0 <= start < end <= duration + 0.01 or not 3 <= end - start <= 180:
+                return "A clip must be 3 seconds to 3 minutes long and inside the video."
+            moment.update({"start": round(start, 3), "end": round(end, 3), "keep": bool(pick.get("keep"))})
+            for key, limit in (("hook", 80), ("title", 90)):
+                if isinstance(pick.get(key), str):
+                    moment[key] = " ".join(pick[key].split())[:limit]
+        if not any(m["keep"] for m in changed):
+            return "Pick at least one clip."
+        out["moments"] = changed
         return None
 
     @staticmethod
