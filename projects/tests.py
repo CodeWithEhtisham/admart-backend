@@ -1260,33 +1260,29 @@ class YoutubeSuggestTests(APITestCase):
         )
         self.url = reverse("project_youtube_suggest", kwargs={"project_id": self.project.id})
 
-    @override_settings(GEMINI_API_KEY="")
-    def test_suggest_requires_gemini_key(self) -> None:
+    @override_settings(OPENROUTER_API_KEY="")
+    def test_suggest_requires_openrouter_key(self) -> None:
         response = self.client.post(
             self.url,
             {"title": "Summer drop", "prompt": "cinematic product launch for a clothing brand"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
-        self.assertIn("GEMINI_API_KEY", response.data["message"])
+        self.assertIn("OPENROUTER_API_KEY", response.data["message"])
 
-    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
-    @patch("projects.youtube_suggest.requests.post")
-    def test_suggest_uses_gemini_json(self, mock_post) -> None:
-        mock_post.return_value.status_code = 200
+    @override_settings(OPENROUTER_API_KEY="test-key")
+    @patch("agents.providers.requests.post")
+    def test_suggest_uses_openrouter_json(self, mock_post) -> None:
+        mock_post.return_value.ok = True
         mock_post.return_value.json.return_value = {
-            "candidates": [
+            "choices": [
                 {
-                    "content": {
-                        "parts": [
-                            {
-                                "text": (
-                                    '{"title":"Summer Drop Official","description":"New arrivals '
-                                    'this season.","tags":["sale","fashion","brand"],'
-                                    '"categoryId":"26","language":"en"}'
-                                )
-                            }
-                        ]
+                    "message": {
+                        "content": (
+                            '{"title":"Summer Drop Official","description":"New arrivals '
+                            'this season.","tags":["sale","fashion","brand"],'
+                            '"categoryId":"26","language":"en"}'
+                        )
                     }
                 }
             ]
@@ -1302,19 +1298,19 @@ class YoutubeSuggestTests(APITestCase):
         self.assertEqual(response.data["tags"], ["sale", "fashion", "brand"])
         self.assertEqual(response.data["categoryId"], "26")
         self.assertEqual(response.data["language"], "en")
+        self.assertIn("Brand: Shop Co", mock_post.call_args.kwargs["json"]["messages"][1]["content"])
 
-    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
-    @patch("projects.youtube_suggest.requests.post")
-    def test_suggest_gemini_error_is_not_hidden(self, mock_post) -> None:
-        mock_post.return_value.status_code = 404
-        mock_post.return_value.text = "model not found"
+    @override_settings(OPENROUTER_API_KEY="test-key")
+    @patch("agents.providers.requests.post")
+    def test_suggest_ai_error_is_not_hidden(self, mock_post) -> None:
+        mock_post.return_value.raise_for_status.side_effect = RuntimeError("HTTP 429")
         response = self.client.post(
             self.url,
             {"title": "clip", "prompt": "summer fashion haul"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn("Gemini", response.data["message"])
+        self.assertIn("failed", response.data["message"])
 
     def test_suggest_requires_prompt_or_title(self) -> None:
         response = self.client.post(self.url, {}, format="json")
