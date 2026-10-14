@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -17,8 +18,12 @@ from rest_framework.views import APIView
 from agents import engine
 from agents.models import AgentDeployment, AgentRun
 from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics, month_spend, next_slot, start_run
-from agents.registry import MAX_TEXT_INPUT, STYLES, active_agents, catalog_entry, get_agent, image_credits
+from agents.registry import (
+    MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, get_agent, image_credits,
+)
 from agents.steps import clean_script, scored_hook
+from agents.video_edit import asset_file, merge_cuts, probe
+from content.models import LibraryAsset
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
@@ -26,6 +31,14 @@ from projects.models import Project
 
 # Stopping at these checkpoints refunds the run: nothing expensive has been made yet.
 REFUNDABLE_GATES = ("concept", "script")
+
+
+def _is_uuid(value) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _bad(message: str, code: str = "INVALID", http=status.HTTP_400_BAD_REQUEST, **extra) -> Response:
@@ -56,6 +69,26 @@ def deployment_data(deployment: AgentDeployment) -> dict:
         "nextRunAt": deployment.next_run_at if deployment.autopilot else None,
         "autopilotNote": deployment.autopilot_note,
         "createdAt": deployment.created_at,
+    }
+
+
+def _edit_data(out: dict, request) -> dict:
+    """Video Editor fields."""
+    info = out.get("source_info") or {}
+    return {
+        "sourceUrl": _media(out.get("source"), request),
+        "sourceSeconds": info.get("duration"),
+        "audioUrl": _media(out.get("audio"), request),
+        "audioCleanUrl": _media(out.get("audio_clean"), request),
+        "audioLevel": out.get("audio_level"),
+        "audioLevelUsed": out.get("audio_level_used"),
+        "audioFallback": bool(out.get("audio_fallback")),
+        "transcript": out.get("captions") or out.get("words") or [],
+        "captionFixes": out.get("caption_fixes", []),
+        "cuts": out.get("cuts", []),
+        "removedSeconds": out.get("removed_seconds"),
+        "width": out.get("width"),
+        "height": out.get("height"),
     }
 
 
@@ -94,6 +127,7 @@ def run_data(run: AgentRun, request) -> dict:
             for s in out.get("scenes", [])
         ],
         "checks": out.get("checks", []),
+        **(_edit_data(out, request) if "source" in out else {}),
         "log": out.get("log", {}),
         "music": out.get("music"),
         "videoUrl": _media(out.get("video"), request),
@@ -233,7 +267,11 @@ class RunListCreateView(_ProjectScoped):
         spec = get_agent(deployment.agent_type)
         if spec is None:
             return _bad("This agent is no longer available.")
-        if spec.input_kind == "topic":
+        if spec.input_kind == "video":
+            run_input = self._video_input(request, deployment)
+            if isinstance(run_input, Response):
+                return run_input
+        elif spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
             if len(value) > 200:
                 return _bad("Enter a topic (up to 200 characters).")
@@ -260,6 +298,27 @@ class RunListCreateView(_ProjectScoped):
                 creditsRequired=serialize_decimal(refused.credits),
             )
         return Response(run_data(run, request), status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _video_input(request, deployment):
+        """{"assetId", "seconds"} for a video from this project's library, or an error response."""
+        asset_id = request.data.get("assetId")
+        asset = (
+            LibraryAsset.objects.filter(id=asset_id, project=deployment.project, media_type="video").first()
+            if _is_uuid(asset_id) else None
+        )
+        if asset is None:
+            return _bad("Pick a video from your library.")
+        seconds = None
+        path = asset_file(asset)
+        if path:
+            try:
+                seconds = probe(path)["duration"]
+            except RuntimeError as exc:
+                return _bad(str(exc))
+            if seconds > MAX_VIDEO_SECONDS + 1:
+                return _bad("The Video Editor takes videos up to 3 minutes.", "VIDEO_TOO_LONG")
+        return {"assetId": str(asset.id), "seconds": seconds, "title": asset.title[:120]}
 
 
 class InboxView(_ProjectScoped):
@@ -327,7 +386,7 @@ class RunActionView(_ProjectScoped):
         run.save(update_fields=["status", "attempts", "output", "updated_at"])
 
     def _continue(self, run, data):
-        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard"):
+        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit"):
             return _bad("This run isn't waiting at a checkpoint.")
         out = run.output
         if run.step == "concept":
@@ -351,9 +410,47 @@ class RunActionView(_ProjectScoped):
                 except RuntimeError as exc:
                     return _bad(str(exc))
             out["script_ok"] = True
+        elif run.step == "edit":
+            problem = self._apply_edit(out, data)
+            if problem:
+                return _bad(problem)
+            out["edit_ok"] = True
         else:
             out["storyboard_ok"] = True
         self._resume(run)
+        return None
+
+    @staticmethod
+    def _apply_edit(out: dict, data: dict) -> str | None:
+        """The user's cut list and caption corrections from the edit review."""
+        duration = (out.get("source_info") or {}).get("duration") or 0
+        if "cuts" in data:
+            raw = data["cuts"]
+            if not isinstance(raw, list) or len(raw) > 1000:
+                return "Invalid cut list."
+            cuts = []
+            for c in raw:
+                try:
+                    start, end = float(c["start"]), float(c["end"])
+                except (KeyError, TypeError, ValueError):
+                    return "Invalid cut list."
+                if not 0 <= start < end <= duration + 0.01:
+                    return "A cut is outside the video."
+                reasons = [r for r in c.get("reasons") or [] if r in ("pause", "filler", "retake", "black frames",
+                                                                     "frozen frames", "manual")] or ["manual"]
+                cuts.append({"start": start, "end": end, "reasons": reasons, "keep": bool(c.get("keep"))})
+            removed = [c for c in cuts if not c["keep"]]
+            kept = [c for c in cuts if c["keep"]]
+            out["cuts"] = sorted(merge_cuts(removed, duration) + kept, key=lambda c: c["start"])
+        captions = out.get("captions") or []
+        for edit in data.get("captions") or []:
+            try:
+                index, word = int(edit["index"]), " ".join(str(edit["word"]).split())[:40]
+            except (KeyError, TypeError, ValueError):
+                return "Invalid caption edit."
+            if not 0 <= index < len(captions) or not word:
+                return "Invalid caption edit."
+            captions[index]["word"] = word
         return None
 
     def _regenerate(self, run, data):

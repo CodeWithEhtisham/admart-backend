@@ -444,6 +444,12 @@ def _music_track(run) -> Path | None:
     return tracks[index]
 
 
+def highlight(run) -> str:
+    """The brand colour for captions and the thumbnail box."""
+    colors = (run.project.brand_settings or {}).get("colors") or []
+    return (colors[0]["hex"] if colors and isinstance(colors[0], dict) else run.project.brand_color_hex) or "#FFD400"
+
+
 def step_render(run) -> None:
     if run.output.get("video"):
         return
@@ -458,8 +464,6 @@ def step_render(run) -> None:
         }
         for s in run.output["scenes"]
     ]
-    colors = (run.project.brand_settings or {}).get("colors") or []
-    highlight = colors[0]["hex"] if colors and isinstance(colors[0], dict) else run.project.brand_color_hex
     music = _music_track(run)
     workdir = folder / "work"
     try:
@@ -469,7 +473,7 @@ def step_render(run) -> None:
             folder / "thumb.jpg",
             workdir,
             title=run.output.get("thumbnail_text") or run.output.get("title", ""),
-            highlight_hex=highlight or "#FFD400",
+            highlight_hex=highlight(run),
             music=music,
             expect_sound=not settings.AGENTS_DRY_RUN,
         )
@@ -507,8 +511,8 @@ def step_finish(run) -> None:
         model=f"agent:{run.deployment.agent_type}",
         capability="agent",
         duration_seconds=round(out.get("duration") or 0),
-        width=render.WIDTH,
-        height=render.HEIGHT,
+        width=out.get("width") or render.WIDTH,
+        height=out.get("height") or render.HEIGHT,
     )
     run.library_asset = asset
     _save(run, fields=("library_asset",))
@@ -527,3 +531,8 @@ STEPS = {
     "render": step_render,
     "finish": step_finish,
 }
+
+# The Video Editor's steps live in their own module (it imports this one).
+from agents import video_edit  # noqa: E402
+
+STEPS.update(video_edit.STEPS)

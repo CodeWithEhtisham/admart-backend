@@ -8,6 +8,7 @@ deploy it, and run it. Every run is processed in the background by the **agents 
 | **YouTube Shorts Creator** | Full automation | Topic → finished vertical Short, with your approval before anything is posted |
 | **Script Writer** | Single task | Topic → Short script (scenes, title, description, tags) |
 | **Voiceover** | Single task | Text → MP3 voice recording |
+| **Video Editor** | Full automation | Your own video (up to 3 min) → cut, cleaned, captioned and reframed, with your approval |
 
 ---
 
@@ -31,6 +32,25 @@ Topic → Research → 3 concepts (you pick) → Script (you edit)
   the concept or script check-in. An agent can have a monthly credit limit.
 - A run that stops half-way (restart, crash) resumes from its last finished step and never pays
   twice for the same step.
+
+---
+
+## How the Video Editor works
+
+```
+Upload / pick a Library video → Check (length, sound) → Transcript (fal Whisper)
+      → Clean audio (Basic free / Standard / Studio) → Edit plan: pauses, um/uh, restarts,
+        black or frozen frames + caption spelling fixes → You review the cuts (keep, cut, fix spelling)
+      → Render in your format (9:16, 1:1, 4:5 or original), captions, -14 LUFS → Title & thumbnail
+      → You approve → Publish page opens pre-filled
+```
+
+- Choices per agent (start screen or **Settings**): format, cut style (Gentle / Normal / Tight),
+  audio cleanup level with its price per minute, captions, music, review of the cuts.
+- Credits depend on the video's length and the audio level (Basic ≈ 0.013, Standard ≈ 0.04,
+  Studio ≈ 0.22 credits per minute at today's fal prices, before any change to the markup).
+- If a paid audio service fails, the free filter is used and the workflow says so.
+- Code: `agents/video_edit.py`; plan: `docs/plans/2026-10-13-video-editor-agent.md`.
 
 ---
 

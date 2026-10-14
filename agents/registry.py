@@ -55,7 +55,37 @@ def voice_settings(config: dict) -> tuple[tuple, float]:
 
 
 # Pause points where a person approves before money is spent on the next stage.
-GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard"}
+GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard",
+         "review_edit": "edit"}
+
+# Video Editor choices (per agent, set when starting it or in Settings).
+FORMATS = {  # id -> (label, output size or None to keep the original shape)
+    "9:16": ("Vertical 9:16 · Reels, Shorts, TikTok", (1080, 1920)),
+    "1:1": ("Square 1:1 · feed posts", (1080, 1080)),
+    "4:5": ("Portrait 4:5 · Instagram & Facebook feed", (1080, 1350)),
+    "original": ("Keep original shape", None),
+}
+CUT_STYLES = {  # id -> (label, cut pauses longer than this many seconds)
+    "gentle": ("Gentle · only long pauses", 1.0),
+    "normal": ("Normal · pauses, um/uh, restarts", 0.6),
+    "tight": ("Tight · fast, punchy pace", 0.35),
+}
+AUDIO_LEVELS = {  # id -> (label, fal model or None for FFmpeg on our server, USD per minute)
+    "basic": ("Basic · free noise filter", None, "0"),
+    "standard": ("Standard · clean studio voice", "veed/clean-audio", "0.0125"),
+    "studio": ("Studio · strongest voice isolation", "fal-ai/elevenlabs/audio-isolation", "0.10"),
+}
+MAX_VIDEO_SECONDS = 180
+
+
+def video_settings(config: dict) -> tuple[str, str, str]:
+    """(format, cut style, audio level) ids for a deployment config, with defaults."""
+    config = config or {}
+    return (
+        config.get("format") if config.get("format") in FORMATS else "9:16",
+        config.get("cut") if config.get("cut") in CUT_STYLES else "normal",
+        config.get("audio") if config.get("audio") in AUDIO_LEVELS else "standard",
+    )
 
 # Step blocks a recipe can use, and what each needs earlier in the recipe.
 STEP_BLOCKS = {
@@ -69,9 +99,17 @@ STEP_BLOCKS = {
     "visuals": {"label": "Make visuals (stock video / AI images)", "needs": ["script"]},
     "review_storyboard": {"label": "Check-in: user reviews the storyboard", "needs": ["visuals"]},
     "render": {"label": "Edit the video", "needs": ["voice", "captions", "visuals"]},
-    "finish": {"label": "Save the video to the library", "needs": ["render"]},
+    "prepare": {"label": "Check the uploaded video", "needs": []},
+    "transcribe": {"label": "Transcribe it word by word", "needs": ["prepare"]},
+    "clean_audio": {"label": "Clean up the audio", "needs": ["prepare"]},
+    "plan_edit": {"label": "Plan the cuts and caption fixes", "needs": ["transcribe", "clean_audio"]},
+    "review_edit": {"label": "Check-in: user reviews the cuts", "needs": ["plan_edit"]},
+    "render_edit": {"label": "Render the edited video", "needs": ["plan_edit"]},
+    "package": {"label": "Write title, description and thumbnail", "needs": ["render_edit"]},
+    "finish": {"label": "Save the video to the library", "needs": []},
 }
 TOPIC_STEPS = ("research", "concepts", "script")  # need a topic as input
+VIDEO_STEPS = ("prepare", "transcribe", "clean_audio", "plan_edit", "review_edit", "render_edit", "package")
 PROMPT_KEYS = ("research", "concepts", "script")
 PLATFORMS = ("youtube", "facebook", "instagram")
 
@@ -84,7 +122,7 @@ class AgentSpec:
     description: str
     steps: tuple[str, ...]
     needs: tuple[str, ...] = ()  # connected platforms the outcome needs
-    input_kind: str = "topic"  # "topic" (one line) or "text" (text to speak)
+    input_kind: str = "topic"  # "topic" (one line), "text" (text to speak) or "video" (an uploaded video)
     input_hint: str = ""
     review: bool = False  # stop at needs_review for human approval of the final result
     uses: tuple[str, ...] = ()  # other agents this one is built from (shown on its card)
@@ -92,7 +130,7 @@ class AgentSpec:
 
     @property
     def input_label(self) -> str:
-        return "Topic" if self.input_kind == "topic" else "Text to speak"
+        return {"topic": "Topic", "text": "Text to speak", "video": "Your video"}.get(self.input_kind, "Input")
 
 
 BUILTIN_AGENTS: dict[str, AgentSpec] = {
@@ -130,6 +168,18 @@ BUILTIN_AGENTS: dict[str, AgentSpec] = {
             steps=("voice",),
             input_kind="text",
             input_hint="Paste up to 3,000 characters",
+        ),
+        AgentSpec(
+            slug="video-editor",
+            name="Video Editor",
+            kind="large",
+            description="Upload your video: it cuts pauses, ums and restarts, cleans the audio, fixes caption "
+            "spelling and reframes it for each platform. You approve it before anything is posted.",
+            steps=("prepare", "transcribe", "clean_audio", "plan_edit", "review_edit", "render_edit", "package",
+                   "finish"),
+            input_kind="video",
+            input_hint="A video up to 3 minutes",
+            review=True,
         ),
     )
 }
@@ -179,11 +229,17 @@ def validate_recipe(data: dict) -> str | None:
         missing = [need for need in STEP_BLOCKS[step]["needs"] if need not in steps[:i]]
         if missing:
             return f"'{step}' needs {', '.join(missing)} earlier in the recipe."
+    if "finish" in steps and not any(v in steps[: steps.index("finish")] for v in ("render", "render_edit")):
+        return "'finish' needs render or render_edit earlier in the recipe."
     input_kind = data.get("input_kind")
-    if input_kind not in ("topic", "text"):
-        return "Input must be a topic or text."
+    if input_kind not in ("topic", "text", "video"):
+        return "Input must be a topic, text or a video."
     if input_kind == "text" and any(s in TOPIC_STEPS for s in steps):
         return "Research, concepts and script need a topic as input, not text."
+    if (input_kind == "video") != any(s in VIDEO_STEPS for s in steps) or (
+        input_kind == "video" and any(s not in VIDEO_STEPS and s != "finish" for s in steps)
+    ):
+        return "Video steps need a video as input, and can't be mixed with other steps."
     if "voice" in steps and input_kind == "topic" and "script" not in steps[: steps.index("voice")]:
         return "'voice' needs a script earlier, or text as the input."
     if data.get("kind") not in ("small", "large"):
@@ -208,14 +264,18 @@ def _image_usd() -> Decimal:
     return price
 
 
-def estimate_credits(spec: AgentSpec, run_input: dict) -> Decimal:
+def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = None) -> Decimal:
     """Credits to reserve for one run: provider cost estimate x Admart markup."""
     if settings.AGENTS_DRY_RUN:
         return Decimal("0")
     usd = Decimal("0")
     from agents import providers
 
-    llm_calls = sum(step in spec.steps for step in ("concepts", "script"))
+    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package"))
+    if "prepare" in spec.steps:  # video: priced by length (seconds probed when the run starts)
+        minutes = Decimal(str(run_input.get("seconds") or MAX_VIDEO_SECONDS)) / Decimal(60)
+        audio = AUDIO_LEVELS[video_settings(config or {})[2]][2]
+        usd += minutes * (Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN) + Decimal(audio))
     usd += providers.text_usd() * llm_calls
     if "research" in spec.steps:
         usd += providers.research_usd()
@@ -258,4 +318,21 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "tones": [{"id": key, "label": label} for key, (label, _) in TONES.items()] if "script" in spec.steps else [],
         "lengths": list(LENGTHS) if "script" in spec.steps else [],
         "redoCredits": f"{image_credits():f}" if "visuals" in spec.steps else None,
+        **(_video_catalog(spec) if spec.input_kind == "video" else {}),
+    }
+
+
+def _video_catalog(spec: AgentSpec) -> dict:
+    """Choices for the Video Editor, priced per minute of video."""
+    per_minute = {"seconds": 60}
+    return {
+        "estimatedCredits": f"{estimate_credits(spec, per_minute):f}",
+        "creditUnit": "minute",
+        "maxSeconds": MAX_VIDEO_SECONDS,
+        "formats": [{"id": key, "label": label} for key, (label, _) in FORMATS.items()],
+        "cutStyles": [{"id": key, "label": label} for key, (label, _) in CUT_STYLES.items()],
+        "audioLevels": [
+            {"id": key, "label": label, "creditsPerMinute": f"{estimate_credits(spec, per_minute, {'audio': key}):f}"}
+            for key, (label, _, _) in AUDIO_LEVELS.items()
+        ],
     }

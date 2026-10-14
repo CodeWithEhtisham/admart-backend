@@ -158,6 +158,11 @@ def _to_mp3(raw: bytes) -> bytes:
     return done.stdout
 
 
+def _data_uri(audio: Path) -> str:
+    """Local audio as a data URI fal can read (our media isn't reachable from fal)."""
+    return "data:audio/mpeg;base64," + base64.b64encode(audio.read_bytes()).decode()
+
+
 def speech(text_: str, voice: tuple | None = None, speed: float = 1.0) -> bytes:
     """MP3 bytes of the spoken text, read by Kokoro on fal. `voice` is a registry.VOICES entry."""
     from agents.registry import VOICES
@@ -177,8 +182,7 @@ def word_times(audio: Path) -> list[dict] | None:
     if not settings.FAL_KEY:
         return None
     try:
-        data_uri = "data:audio/mpeg;base64," + base64.b64encode(audio.read_bytes()).decode()
-        out = _fal(settings.AGENTS_WHISPER_MODEL, {"audio_url": data_uri, "chunk_level": "word", "language": "en"})
+        out = _fal(settings.AGENTS_WHISPER_MODEL, {"audio_url": _data_uri(audio), "chunk_level": "word", "language": "en"})
     except Exception:  # noqa: BLE001 — estimated timing is good enough
         logger.warning("Word timings unavailable; using estimated caption timing", exc_info=True)
         return None
@@ -190,6 +194,15 @@ def word_times(audio: Path) -> list[dict] | None:
             words.append({"word": word, "start": round(float(start), 3), "end": round(float(end if end is not None else start), 3)})
     note("fal")
     return words or None
+
+
+def clean_audio(audio: Path, model: str) -> bytes:
+    """Speech with background noise removed, as MP3 (fal audio cleanup model, e.g. veed/clean-audio)."""
+    def run():
+        out = _fal(model, {"audio_url": _data_uri(audio)})
+        return _to_mp3(_download(out["audio"]["url"]).content)
+
+    return _call("audio cleanup", "fal", bool(settings.FAL_KEY), run)
 
 
 def image(prompt: str, width: int, height: int) -> tuple[bytes, str]:

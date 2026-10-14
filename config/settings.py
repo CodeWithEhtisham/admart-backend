@@ -402,6 +402,7 @@ AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0")  # per text ca
 AGENTS_SEARCH_USD = os.getenv("AGENTS_SEARCH_USD", "0.007")  # one Exa web search
 AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.02")  # Kokoro on fal
 AGENTS_CAPTIONS_USD_PER_RUN = os.getenv("AGENTS_CAPTIONS_USD_PER_RUN", "0.01")  # Whisper on fal, all scenes
+AGENTS_TRANSCRIBE_USD_PER_MIN = os.getenv("AGENTS_TRANSCRIBE_USD_PER_MIN", "0.006")  # Whisper on fal, uploaded videos
 # Free stock footage (https://www.pexels.com/api/). Optional; empty = AI images only.
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 # Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.

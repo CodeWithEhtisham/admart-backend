@@ -29,6 +29,12 @@ STEP_LABELS = {
     "visuals": "making the visuals",
     "render": "editing the video",
     "finish": "saving the video",
+    "prepare": "reading your video",
+    "transcribe": "transcribing your video",
+    "clean_audio": "cleaning up the audio",
+    "plan_edit": "planning the cuts",
+    "render_edit": "editing your video",
+    "package": "writing the title and thumbnail",
 }
 
 

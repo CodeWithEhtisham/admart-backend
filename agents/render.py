@@ -88,15 +88,16 @@ def _ass_text(word: str) -> str:
     return re.sub(r"[{}\\]", "", word)
 
 
-def build_captions(scenes: list[dict], highlight_hex: str) -> str:
+def build_captions(scenes: list[dict], highlight_hex: str, size: tuple[int, int] = (WIDTH, HEIGHT)) -> str:
     """ASS subtitles: 3-word lines, the word being spoken highlighted in the brand colour."""
+    width, height = size
     head = (
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 0\n\n"
+        f"[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\n\n"
         "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Cap,DejaVu Sans,78,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,"
-        "7,2,2,60,60,520,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Style: Cap,DejaVu Sans,{round(78 * width / WIDTH)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,"
+        f"100,100,0,0,1,7,2,2,60,60,{round(height * 0.27)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     color = _ass_color(highlight_hex)
     lines, offset = [], 0.0
@@ -221,8 +222,11 @@ def render_short(
     return check_video(out_path, expect_sound=expect_sound)
 
 
-def check_video(path: Path, *, expect_sound: bool) -> dict:
-    """Quality gate before a person sees the video. Raises RenderError on a hard failure."""
+def check_video(path: Path, *, expect_sound: bool, size: tuple[int, int] | None = (WIDTH, HEIGHT)) -> dict:
+    """Quality gate before a person sees the video. Raises RenderError on a hard failure.
+
+    `size` is the expected (width, height); None skips the shape check (original shape kept).
+    """
     duration = duration_of(path)
     if duration < 1:
         raise RenderError("The rendered video is empty.")
@@ -231,9 +235,11 @@ def check_video(path: Path, *, expect_sound: bool) -> dict:
     probe = _run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "json", str(path)])
     if '"audio"' not in probe.stdout:
         raise RenderError("The rendered video has no audio track.")
-    if f'"width": {WIDTH}' not in probe.stdout or f'"height": {HEIGHT}' not in probe.stdout:
-        raise RenderError("The rendered video is not vertical 1080x1920.")
-    checks = [f"Length {duration:.0f}s", "Vertical 1080×1920"]
+    checks = [f"Length {duration:.0f}s"]
+    if size:
+        if f'"width": {size[0]}' not in probe.stdout or f'"height": {size[1]}' not in probe.stdout:
+            raise RenderError(f"The rendered video is not {size[0]}x{size[1]}.")
+        checks.append(f"{'Vertical' if size[1] > size[0] else 'Square' if size[0] == size[1] else 'Landscape'} {size[0]}×{size[1]}")
     analysis = _run(["ffmpeg", "-i", str(path), "-vf", "blackdetect=d=1.0:pic_th=0.98", "-af",
                      "silencedetect=noise=-45dB:d=2.5,volumedetect", "-f", "null", "-"]).stderr
     if "black_start" in analysis:

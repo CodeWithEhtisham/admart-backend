@@ -592,6 +592,13 @@ class RecipeValidationTests(SimpleTestCase):
         self.assertIn("Final approval", self.check(steps=["script"], review=True))
         self.assertIn("platform", self.check(steps=["script"], needs=["myspace"]))
         self.assertIn("Prompts", self.check(steps=["script"], prompts={"evil": "x"}))
+        self.assertIn("finish' needs render", self.check(steps=["script", "finish"]))
+        self.assertIn("Video steps", self.check(steps=["prepare", "transcribe"]))
+        self.assertIn("Video steps", self.check(steps=["prepare", "script"], input_kind="video"))
+
+    def test_video_editor_recipe_is_valid(self) -> None:
+        editor = BUILTIN_AGENTS["video-editor"]
+        self.assertIsNone(self.check(steps=list(editor.steps), kind="large", review=True, input_kind="video"))
 
 
 class RecipeTests(_AgentAPITestCase):
@@ -604,7 +611,9 @@ class RecipeTests(_AgentAPITestCase):
 
     def test_builtin_recipes_are_seeded_and_listed(self) -> None:
         slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
-        self.assertEqual(slugs, ["youtube-shorts", "script-writer", "voiceover"])
+        self.assertEqual(slugs, ["youtube-shorts", "video-editor", "script-writer", "voiceover"])
+        editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
+        self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
 
     def test_owner_creates_an_agent_that_users_can_deploy_and_run(self) -> None:
         self.client.force_authenticate(self.owner)
@@ -810,3 +819,149 @@ class AutopilotTests(_AgentAPITestCase):
         data = self.client.get(reverse("agent_inbox", kwargs={"project_id": self.project.id})).data
         self.assertEqual(data["waiting"], 1)
         self.assertEqual({i["status"] for i in data["items"]}, {"needs_review", "failed"})
+
+
+# ── Video Editor ──────────────────────────────────────────────────────────
+
+from agents import video_edit  # noqa: E402
+
+
+class CutPlanningTests(SimpleTestCase):
+    def test_overlapping_cuts_merge_and_slivers_are_absorbed(self) -> None:
+        cuts = [{"start": 1.0, "end": 2.0, "reasons": ["pause"]}, {"start": 1.8, "end": 2.5, "reasons": ["filler"]},
+                {"start": 2.6, "end": 3.0, "reasons": ["retake"]}, {"start": 0.0, "end": 0.01, "reasons": ["pause"]},
+                {"start": 9.8, "end": 9.9, "reasons": ["pause"]}]
+        out = video_edit.merge_cuts(cuts, 10.0)
+        self.assertEqual([(c["start"], c["end"]) for c in out], [(1.0, 3.0), (9.8, 10.0)])  # 0.1 s gaps absorbed
+        self.assertEqual(out[0]["reasons"], ["filler", "pause", "retake"])
+        self.assertFalse(out[0]["keep"])
+
+    def test_kept_segments_skip_cuts_and_snap_to_frames(self) -> None:
+        cuts = [{"start": 1.01, "end": 2.0, "keep": False}, {"start": 3.0, "end": 4.0, "keep": True}]
+        self.assertEqual(video_edit.kept_segments(cuts, 5.0), [(0.0, 1.0), (2.0, 5.0)])
+
+    def test_words_are_retimed_to_the_edit(self) -> None:
+        words = [{"word": "a", "start": 0.2, "end": 0.5}, {"word": "cut", "start": 1.2, "end": 1.5},
+                 {"word": "b", "start": 2.1, "end": 2.4}]
+        out = video_edit.retime(words, [(0.0, 1.0), (2.0, 3.0)])
+        self.assertEqual(out, [{"word": "a", "start": 0.2, "end": 0.5}, {"word": "b", "start": 1.1, "end": 1.4}])
+
+    def test_fillers_never_clip_neighbouring_words(self) -> None:
+        words = [{"word": "so", "start": 0.0, "end": 0.3}, {"word": "Um,", "start": 0.32, "end": 0.6},
+                 {"word": "like", "start": 0.62, "end": 0.8}]
+        self.assertEqual(video_edit.filler_cuts(words, "normal", 1.0), [{"start": 0.3, "end": 0.62, "reasons": ["filler"]}])
+        self.assertEqual(len(video_edit.filler_cuts(words, "tight", 1.0)), 2)
+
+    @patch("agents.video_edit.providers.text")
+    def test_ai_review_validates_retakes_and_fixes(self, text) -> None:
+        words = [{"word": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("I went I went to Admrt".split())]
+        text.return_value = {"retakes": [{"from": 0, "to": 1}, {"from": 4, "to": 99}, {"from": "x"}],
+                             "fixes": [{"index": 5, "word": "Admart"}, {"index": 50, "word": "no"}, {"index": 2, "word": "I"}]}
+        run = MagicMock(project=MagicMock(brand_settings={}, brand_name="Admart", brand_industry=""),
+                        deployment=MagicMock(config={}))
+        cuts, fixes = video_edit.ai_review(run, words, "tight", 20.0)
+        self.assertEqual([(c["start"], round(c["end"], 3)) for c in cuts], [(0.0, 0.94)])
+        self.assertEqual(fixes, [{"index": 5, "from": "Admrt", "to": "Admart"}])
+
+
+@override_settings(**HERMETIC)
+class VideoEstimateTests(SimpleTestCase):
+    @NO_PRICES
+    def test_video_price_follows_length_and_audio_level(self, _prices) -> None:
+        editor = BUILTIN_AGENTS["video-editor"]
+        one, three = ({"seconds": s} for s in (60, 180))
+        self.assertGreater(estimate_credits(editor, three), estimate_credits(editor, one))
+        basic, standard, studio = (estimate_credits(editor, three, {"audio": a}) for a in ("basic", "standard", "studio"))
+        self.assertLess(basic, standard)
+        self.assertLess(standard, studio)
+
+
+class VideoEditorPipelineTests(_AgentAPITestCase):
+    """Upload → plan → review → render, with a real FFmpeg render at zero cost."""
+
+    dry_run = True
+    _action = DryRunPipelineTests._action
+    _work = DryRunPipelineTests._work
+
+    def _upload(self, seconds=6, size="1280x720") -> "LibraryAsset":
+        from content.models import LibraryAsset
+
+        folder = Path(self.media) / "projects" / str(self.project.id) / "library"
+        folder.mkdir(parents=True)
+        clip = folder / "clip.mp4"
+        # Tone with a 2-second silent gap in the middle (2 s to 4 s).
+        render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc2=s={size}:d={seconds}:r=30", "-f", "lavfi",
+                     "-i", f"aevalsrc='if(between(t,2,4),0,0.5*sin(440*2*PI*t))':s=44100:d={seconds}",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(clip)])
+        return LibraryAsset.objects.create(
+            project=self.project, user=self.user, media_type="video", title="My clip", status="ready",
+            source_url=f"http://testserver/media/projects/{self.project.id}/library/clip.mp4", capability="upload",
+        )
+
+    def test_review_keep_a_cut_then_render(self) -> None:
+        asset = self._upload()
+        deployment = self.deploy("video-editor", config={"format": "1:1", "audio": "basic"})
+        response = self.start(deployment, assetId=str(asset.id))
+        self.assertEqual(response.status_code, 201, response.data)
+        run_id = response.data["id"]
+
+        self._work()
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual((run.status, run.step), ("needs_review", "edit"), run.error)
+        pause = next(c for c in run.output["cuts"] if "pause" in c["reasons"])
+        self.assertAlmostEqual(pause["start"], 2.2, delta=0.15)
+        self.assertAlmostEqual(pause["end"], 3.8, delta=0.15)
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertTrue(detail["sourceUrl"].endswith(".mp4"))
+        self.assertEqual(detail["audioLevelUsed"], "basic")
+
+        cuts = [{**c, "keep": True} for c in run.output["cuts"]]  # keep everything: no cuts
+        self.assertEqual(self._action(deployment, run_id, "continue", {"cuts": [{"start": 9, "end": 99}]}).status_code, 400)
+        self._action(deployment, run_id, "continue", {"cuts": cuts, "captions": [{"index": 0, "word": "Hello"}]})
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual((run.status, run.step), ("needs_review", "final"), run.error)
+        self.assertEqual((run.output["width"], run.output["height"]), (1080, 1080))
+        self.assertAlmostEqual(run.output["duration"], 6.0, delta=0.2)
+        self.assertEqual(run.output["captions"][0]["word"], "Hello")
+        self.assertTrue(run.output["thumbnail"].endswith("thumb.jpg"))
+        self.assertEqual((run.library_asset.width, run.library_asset.height), (1080, 1080))
+
+    def test_cuts_shorten_the_video(self) -> None:
+        asset = self._upload()
+        deployment = self.deploy("video-editor", config={"checkpoints": "final", "audio": "basic"})
+        run_id = self.start(deployment, assetId=str(asset.id)).data["id"]
+        self._work()
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual((run.status, run.step), ("needs_review", "final"), run.error)
+        self.assertEqual((run.output["width"], run.output["height"]), (1080, 1920))
+        self.assertAlmostEqual(run.output["duration"], 6.0 - 1.6, delta=0.25)  # the 2 s pause kept to 0.4 s
+        self.assertAlmostEqual(run.output["removed_seconds"], 1.6, delta=0.25)
+
+    def test_only_this_projects_short_videos(self) -> None:
+        deployment = self.deploy("video-editor")
+        self.assertEqual(self.start(deployment, assetId="not-a-uuid").status_code, 400)
+        other = Project.objects.create(owner=self.user, name="Other")
+        from content.models import LibraryAsset
+
+        foreign = LibraryAsset.objects.create(project=other, user=self.user, media_type="video", source_url="x")
+        self.assertEqual(self.start(deployment, assetId=str(foreign.id)).status_code, 400)
+        asset = self._upload()
+        with patch("agents.views.probe", return_value={"duration": 240}):
+            response = self.start(deployment, assetId=str(asset.id))
+        self.assertEqual(response.data["code"], "VIDEO_TOO_LONG")
+
+
+class VideoCleanAudioTests(_AgentAPITestCase):
+    @patch("agents.video_edit.providers.clean_audio", side_effect=RuntimeError("fal down"))
+    def test_paid_cleanup_falls_back_to_the_free_filter(self, _clean) -> None:
+        deployment = self.deploy("video-editor", config={"audio": "studio"})
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={})
+        folder, rel = steps.media_dir(run)
+        render.silent_audio(folder / "audio.mp3", 1.0)
+        run.output = {"audio": f"{rel}/audio.mp3"}
+        with self.assertLogs("agents.video_edit", "WARNING"):
+            video_edit.step_clean_audio(run)
+        self.assertEqual((run.output["audio_level"], run.output["audio_level_used"]), ("studio", "basic"))
+        self.assertTrue(run.output["audio_fallback"])
+        self.assertTrue((folder / "audio-clean.mp3").exists())
