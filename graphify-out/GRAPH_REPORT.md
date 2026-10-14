@@ -1,12 +1,18 @@
-# Graph Report - .  (2026-06-20)
+# Graph Report - admart-backend  (2026-07-19)
 
 ## Corpus Check
-- Corpus is ~20,851 words - fits in a single context window. You may not need a graph.
+- 72 files · ~215,244 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 122 nodes · 173 edges · 28 communities (7 shown, 21 thin omitted)
-- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 20 edges (avg confidence: 0.83)
+- 1143 nodes · 1624 edges · 133 communities (76 shown, 57 thin omitted)
+- Extraction: 74% EXTRACTED · 26% INFERRED · 0% AMBIGUOUS · INFERRED: 416 edges (avg confidence: 0.57)
 - Token cost: 0 input · 0 output
+
+## Graph Freshness
+- Built from commit: `ab523a4e`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - [[_COMMUNITY_Flux Client & Proxy Services|Flux Client & Proxy Services]]
@@ -36,28 +42,121 @@
 - [[_COMMUNITY_DataLoader Pattern implementation|DataLoader Pattern implementation]]
 - [[_COMMUNITY_API Versioning Strategies|API Versioning Strategies]]
 - [[_COMMUNITY_Rate Limiting Patterns|Rate Limiting Patterns]]
+- [[_COMMUNITY_Community 28|Community 28]]
+- [[_COMMUNITY_Community 29|Community 29]]
+- [[_COMMUNITY_Community 30|Community 30]]
+- [[_COMMUNITY_Community 31|Community 31]]
+- [[_COMMUNITY_Community 32|Community 32]]
+- [[_COMMUNITY_Community 33|Community 33]]
+- [[_COMMUNITY_Community 34|Community 34]]
+- [[_COMMUNITY_Community 35|Community 35]]
+- [[_COMMUNITY_Community 36|Community 36]]
+- [[_COMMUNITY_Community 37|Community 37]]
+- [[_COMMUNITY_Community 38|Community 38]]
+- [[_COMMUNITY_Community 39|Community 39]]
+- [[_COMMUNITY_Community 40|Community 40]]
+- [[_COMMUNITY_Community 41|Community 41]]
+- [[_COMMUNITY_Community 42|Community 42]]
+- [[_COMMUNITY_Community 43|Community 43]]
+- [[_COMMUNITY_Community 44|Community 44]]
+- [[_COMMUNITY_Community 45|Community 45]]
+- [[_COMMUNITY_Community 46|Community 46]]
+- [[_COMMUNITY_Community 47|Community 47]]
+- [[_COMMUNITY_Community 48|Community 48]]
+- [[_COMMUNITY_Community 49|Community 49]]
+- [[_COMMUNITY_Community 50|Community 50]]
+- [[_COMMUNITY_Community 51|Community 51]]
+- [[_COMMUNITY_Community 52|Community 52]]
+- [[_COMMUNITY_Community 53|Community 53]]
+- [[_COMMUNITY_Community 54|Community 54]]
+- [[_COMMUNITY_Community 55|Community 55]]
+- [[_COMMUNITY_Community 56|Community 56]]
+- [[_COMMUNITY_Community 57|Community 57]]
+- [[_COMMUNITY_Community 58|Community 58]]
+- [[_COMMUNITY_Community 59|Community 59]]
+- [[_COMMUNITY_Community 60|Community 60]]
+- [[_COMMUNITY_Community 61|Community 61]]
+- [[_COMMUNITY_Community 62|Community 62]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 64|Community 64]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 68|Community 68]]
+- [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 71|Community 71]]
+- [[_COMMUNITY_Community 72|Community 72]]
+- [[_COMMUNITY_Community 73|Community 73]]
+- [[_COMMUNITY_Community 74|Community 74]]
+- [[_COMMUNITY_Community 75|Community 75]]
+- [[_COMMUNITY_Community 76|Community 76]]
+- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 81|Community 81]]
+- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 84|Community 84]]
+- [[_COMMUNITY_Community 85|Community 85]]
+- [[_COMMUNITY_Community 86|Community 86]]
+- [[_COMMUNITY_Community 87|Community 87]]
+- [[_COMMUNITY_Community 88|Community 88]]
+- [[_COMMUNITY_Community 89|Community 89]]
+- [[_COMMUNITY_Community 90|Community 90]]
+- [[_COMMUNITY_Community 91|Community 91]]
+- [[_COMMUNITY_Community 92|Community 92]]
+- [[_COMMUNITY_Community 93|Community 93]]
+- [[_COMMUNITY_Community 94|Community 94]]
+- [[_COMMUNITY_Community 95|Community 95]]
+- [[_COMMUNITY_Community 96|Community 96]]
+- [[_COMMUNITY_Community 97|Community 97]]
+- [[_COMMUNITY_Community 98|Community 98]]
+- [[_COMMUNITY_Community 99|Community 99]]
+- [[_COMMUNITY_Community 100|Community 100]]
+- [[_COMMUNITY_Community 101|Community 101]]
+- [[_COMMUNITY_Community 102|Community 102]]
+- [[_COMMUNITY_Community 103|Community 103]]
+- [[_COMMUNITY_Community 104|Community 104]]
+- [[_COMMUNITY_Community 105|Community 105]]
+- [[_COMMUNITY_Community 106|Community 106]]
+- [[_COMMUNITY_Community 107|Community 107]]
+- [[_COMMUNITY_Community 108|Community 108]]
+- [[_COMMUNITY_Community 109|Community 109]]
+- [[_COMMUNITY_Community 110|Community 110]]
+- [[_COMMUNITY_Community 111|Community 111]]
+- [[_COMMUNITY_Community 112|Community 112]]
+- [[_COMMUNITY_Community 113|Community 113]]
+- [[_COMMUNITY_Community 114|Community 114]]
+- [[_COMMUNITY_Community 115|Community 115]]
+- [[_COMMUNITY_Community 116|Community 116]]
+- [[_COMMUNITY_Community 117|Community 117]]
+- [[_COMMUNITY_Community 125|Community 125]]
+- [[_COMMUNITY_Community 126|Community 126]]
+- [[_COMMUNITY_Community 128|Community 128]]
+- [[_COMMUNITY_Community 129|Community 129]]
+- [[_COMMUNITY_Community 130|Community 130]]
+- [[_COMMUNITY_Community 132|Community 132]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `run_text2img()` - 9 edges
-2. `Settings` - 8 edges
-3. `FluxClientError` - 8 edges
-4. `start_text_to_image()` - 8 edges
-5. `get_text_to_image_status()` - 8 edges
-6. `text_to_image()` - 7 edges
-7. `FastAPI App Instance` - 7 edges
-8. `list_users()` - 6 edges
-9. `TextToImageRequest` - 6 edges
-10. `fetch_text_to_image_file()` - 6 edges
+1. `Project` - 46 edges
+2. `SocialAccount` - 37 edges
+3. `SocialAccount` - 29 edges
+4. `ImageJob` - 28 edges
+5. `LibraryAsset` - 21 edges
+6. `UserAuthTests` - 20 edges
+7. `2.2 Route Map & Page Details` - 20 edges
+8. `UserSerializer` - 19 edges
+9. `RegisterSerializer` - 19 edges
+10. `Admart (Vidify) — Complete Backend Agent Specification` - 19 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `TextToImageRequest` --semantically_similar_to--> `generate`  [INFERRED] [semantically similar]
-  app/schemas.py → dgx_flux_text2image_server.py
-- `FastAPI Proxy Architecture` --rationale_for--> `FastAPI App Instance`  [EXTRACTED]
-  README_FASTAPI.md → app/main.py
 - `normalize_style()` --semantically_similar_to--> `AD_STYLES`  [INFERRED] [semantically similar]
+  app/schemas.py → dgx_flux_text2image_server.py
+- `TextToImageRequest` --semantically_similar_to--> `generate`  [INFERRED] [semantically similar]
   app/schemas.py → dgx_flux_text2image_server.py
 - `Flux AI Image Generation Integration` --conceptually_related_to--> `start_text_to_image()`  [EXTRACTED]
   admart_backend_spec.md → app/services/flux_client.py
+- `FastAPI Proxy Architecture` --rationale_for--> `FastAPI App Instance`  [EXTRACTED]
+  README_FASTAPI.md → app/main.py
 - `FastAPI Proxy Architecture` --conceptually_related_to--> `FastAPI DGX1 Flux API App Instance`  [EXTRACTED]
   README_FASTAPI.md → dgx_flux_text2image_server.py
 
@@ -67,11 +166,11 @@
 - **API Design and Implementation Template Flow** — api_design_principles_skill, resources_implementation_playbook, assets_rest_api_template [INFERRED 0.85]
 - **Full Stack Orchestration Subagent Collaboration** — full_stack_orchestration_full_stack_feature_skill, backend_architect_skill, security_auditor_skill [EXTRACTED 1.00]
 
-## Communities (28 total, 21 thin omitted)
+## Communities (133 total, 57 thin omitted)
 
 ### Community 0 - "Flux Client & Proxy Services"
-Cohesion: 0.15
-Nodes (19): Flux AI Image Generation Integration, Settings, _split_csv(), FastAPI DGX1 Flux API App Instance, generate, get_status, health, run_text2img (+11 more)
+Cohesion: 0.06
+Nodes (35): Flux AI Image Generation Integration, Settings, _split_csv(), FastAPI App Instance, health(), text_to_image(), text_to_image_alias(), text_to_image_file() (+27 more)
 
 ### Community 1 - "REST API Template Endpoint"
 Cohesion: 0.17
@@ -82,8 +181,8 @@ Cohesion: 0.2
 Nodes (14): _build_prompt(), _clear_cuda_cache(), generate(), _generation_attempt_sizes(), get_t2i_pipe(), _gpu_max_memory(), _is_cuda_oom(), Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has (+6 more)
 
 ### Community 3 - "FastAPI App & Schemas"
-Cohesion: 0.27
-Nodes (12): FastAPI App Instance, health(), text_to_image(), text_to_image_alias(), text_to_image_file(), text_to_image_status(), normalize_style(), TextToImageJobResponse (+4 more)
+Cohesion: 0.13
+Nodes (14): 11. File Storage, 12. Environment Variables, 13. CORS Configuration, 14. Error Response Format, 15. Database Schema (PostgreSQL), 17. Key Implementation Notes, 18. Development Order (Suggested), 1. Project Overview (+6 more)
 
 ### Community 4 - "API Design Principles & Best Practices"
 Cohesion: 0.29
@@ -93,21 +192,253 @@ Nodes (7): API Design Principles Skill, API Design Checklist, REST API FastAPI T
 Cohesion: 0.5
 Nodes (4): Backend Architect Skill, Full-Stack Orchestration Skill, Python Project Scaffolding Skill, Security Auditor Skill
 
+### Community 27 - "Rate Limiting Patterns"
+Cohesion: 0.4
+Nodes (5): code:block15 (X-RateLimit-Limit: 1000), code:python (from fastapi import HTTPException, Request), Headers, Implementation Pattern, Rate Limiting
+
+### Community 28 - "Community 28"
+Cohesion: 0.06
+Nodes (31): 8.10 Social Accounts, 8.11 Publishing Schedule, 8.12 Analytics, 8.13 Brand Kit, 8.14 Billing, 8.15 Notifications, 8.1 Auth, 8.2 Users (+23 more)
+
+### Community 29 - "Community 29"
+Cohesion: 0.06
+Nodes (30): API Contract & Documentation, API Design & Patterns, API Gateway & Load Balancing, Asynchronous Processing, Authentication & Authorization, Behavioral Traits, Caching Strategies, Capabilities (+22 more)
+
+### Community 30 - "Community 30"
+Cohesion: 0.07
+Nodes (29): 1. RESTful Design Principles, 2. GraphQL Design Principles, 3. API Versioning Strategies, API Design Principles Implementation Playbook, Best Practices, code:block1 (/api/v1/users), code:python (from aiodataloader import DataLoader), code:block2 (Accept: application/vnd.api+json; version=1) (+21 more)
+
+### Community 31 - "Community 31"
+Cohesion: 0.07
+Nodes (26): 1. Analyze Project Type, 2. Initialize Project with uv, 3. Generate FastAPI Project Structure, 4. Generate Django Project Structure, 5. Generate Python Library Structure, 6. Generate CLI Tool Structure, 7. Configure Development Tools, code:bash (# Create new project with uv) (+18 more)
+
+### Community 32 - "Community 32"
+Cohesion: 0.09
+Nodes (23): 2.1 Application Shell, 2.2 Route Map & Page Details, 2. Complete Frontend Anatomy, `/analytics` — AnalyticsPage, `/auth` — AuthPage, `/billing` — BillingPage, `/brand-kit` — BrandKitPage, `/calendar` — CalendarPage (+15 more)
+
+### Community 33 - "Community 33"
+Cohesion: 0.09
+Nodes (22): API Design Checklist, Authentication & Authorization, Documentation, Documentation, Error Handling, Filtering & Sorting, GraphQL-Specific Checks, HTTP Methods (+14 more)
+
+### Community 34 - "Community 34"
+Cohesion: 0.09
+Nodes (22): 10. Infrastructure & CI/CD Setup, 11. Observability & Monitoring, 12. Performance Optimization, 1. Database Architecture Design, 2. Backend Service Architecture, 3. Frontend Component Architecture, 4. Backend Service Implementation, 5. Frontend Implementation (+14 more)
+
+### Community 35 - "Community 35"
+Cohesion: 0.09
+Nodes (21): Application Security Testing, Behavioral Traits, Capabilities, Cloud Security, Compliance & Governance, DevSecOps & Security Automation, Do not use this skill when, Emerging Security Technologies (+13 more)
+
+### Community 36 - "Community 36"
+Cohesion: 0.13
+Nodes (15): 3.1 User, 3.2 Video, 3.3 GeneratedImage, 3.4 Job, 3.5 SocialAccount, 3.6 AnalyticsRecord, 3.7 Plan/Credit Tiers, 3. Data Models (+7 more)
+
+### Community 37 - "Community 37"
+Cohesion: 0.14
+Nodes (13): Agent Behavior & Guardrails, Agent Skills (invoke when the task matches), AGENTS.md — Backend (Django + DRF), API Documentation (Swagger / OpenAPI) — required for every endpoint, Code Documentation, Code Quality, Commands, Database & Migrations (safety) (+5 more)
+
+### Community 38 - "Community 38"
+Cohesion: 0.14
+Nodes (13): Cache Headers, Caching, code:block20 (# Client caching), code:python (from fastapi.middleware.cors import CORSMiddleware), code:python (from fastapi import FastAPI), code:python (@app.get("/health")), code:block8 (# Filtering), CORS Configuration (+5 more)
+
+### Community 39 - "Community 39"
+Cohesion: 0.15
+Nodes (13): 5.1 Overview, 5.2 API Flow, 5.3 Flux API Call (via Replicate), 5.4 Status Polling, 5.5 All Image Generation Endpoints, 5.6 SDXL Fallback, 5.7 Credit Deduction Rules, 5. ⭐ Flux AI Image Generation — Critical Feature (+5 more)
+
+### Community 40 - "Community 40"
+Cohesion: 0.15
+Nodes (12): 1. Run the DGX1 Flux API, 2. Run the local FastAPI proxy, 3. Frontend environment, Admart FastAPI Text-to-Image Backend, code:bash (pip install fastapi uvicorn diffusers transformers accelerat), code:bash (curl http://100.104.174.12:8001/health), code:powershell (python -m venv .venv), code:powershell (curl http://127.0.0.1:8000/health) (+4 more)
+
+### Community 41 - "Community 41"
+Cohesion: 0.18
+Nodes (11): code:block3 (GET /api/users              → 200 OK (with list)), code:block4 (POST /api/users), code:block5 (PUT /api/users/{id}), code:block6 (PATCH /api/users/{id}), code:block7 (DELETE /api/users/{id}), DELETE - Remove Resources, GET - Retrieve Resources, HTTP Methods and Status Codes (+3 more)
+
+### Community 42 - "Community 42"
+Cohesion: 0.22
+Nodes (9): 1. Non-Null Types, 2. Interfaces for Polymorphism, 3. Unions for Heterogeneous Results, 4. Input Types, code:graphql (type User {), code:graphql (interface Node {), code:graphql (union SearchResult = User | Post | Comment), code:graphql (input CreateUserInput {) (+1 more)
+
+### Community 43 - "Community 43"
+Cohesion: 0.2
+Nodes (9): Best Practices Summary, code:graphql (# user.graphql), code:graphql (type Subscription {), code:graphql (scalar DateTime), Custom Scalars, GraphQL Schema Design Patterns, Modular Schema Structure, Schema Organization (+1 more)
+
+### Community 44 - "Community 44"
+Cohesion: 0.29
+Nodes (7): 1. Input/Payload Pattern, 2. Optimistic Response Support, 3. Batch Mutations, code:graphql (input BatchCreateUserInput {), code:graphql (input CreatePostInput {), code:graphql (type UpdateUserPayload {), Mutation Design Patterns
+
+### Community 45 - "Community 45"
+Cohesion: 0.29
+Nodes (7): code:python (from aiodataloader import DataLoader), code:python (from graphql import GraphQLError), code:python (def complexity_limit_validator(max_complexity: int):), DataLoader Pattern, N+1 Query Problem Solutions, Query Complexity Analysis, Query Depth Limiting
+
+### Community 46 - "Community 46"
+Cohesion: 0.29
+Nodes (7): code:python (GET /api/users?limit=20&cursor=eyJpZCI6MTIzfQ), code:block11 (GET /api/users?page=2), code:python (GET /api/users?page=2&page_size=20), Cursor-Based Pagination (for large datasets), Link Header Pagination (RESTful), Offset-Based Pagination, Pagination Patterns
+
+### Community 47 - "Community 47"
+Cohesion: 0.29
+Nodes (7): code:block12 (/api/v1/users), code:block13 (GET /api/users), code:block14 (GET /api/users?version=2), Header Versioning, Query Parameter, URL Versioning (Recommended), Versioning Strategies
+
+### Community 48 - "Community 48"
+Cohesion: 0.33
+Nodes (5): API Design Principles, Do not use this skill when, Instructions, Resources, Use this skill when
+
+### Community 49 - "Community 49"
+Cohesion: 0.4
+Nodes (5): Arguments and Filtering, code:graphql (type Query {), code:graphql (type User {), Computed Fields, Field Design
+
+### Community 50 - "Community 50"
+Cohesion: 0.4
+Nodes (5): Built-in Directives, code:graphql (type User {), code:graphql (directive @auth(requires: Role = USER) on FIELD_DEFINITION), Custom Directives, Directives
+
+### Community 51 - "Community 51"
+Cohesion: 0.4
+Nodes (5): code:graphql (type User {), code:graphql (type CreateUserPayload {), Error Handling, Errors in Payload, Union Error Pattern
+
+### Community 52 - "Community 52"
+Cohesion: 0.4
+Nodes (5): code:graphql (type User {), code:graphql (# v1 - Initial), Field Deprecation, Schema Evolution, Schema Versioning
+
+### Community 53 - "Community 53"
+Cohesion: 0.4
+Nodes (5): code:graphql (type UserConnection {), code:graphql (type UserList {), Offset Pagination (Simpler), Pagination Patterns, Relay Cursor Pagination (Recommended)
+
+### Community 54 - "Community 54"
+Cohesion: 0.4
+Nodes (5): API Keys, Authentication and Authorization, Bearer Token, code:block17 (Authorization: Bearer eyJhbGciOiJIUzI1NiIs...), code:block18 (X-API-Key: your-api-key-here)
+
+### Community 55 - "Community 55"
+Cohesion: 0.4
+Nodes (5): code:block1 (# Good - Plural nouns), code:block2 (# Shallow nesting (preferred)), Nested Resources, Resource Naming, URL Structure
+
+### Community 56 - "Community 56"
+Cohesion: 0.5
+Nodes (4): code:json ({), Consistent Structure, Error Response Format, Status Code Guidelines
+
+### Community 57 - "Community 57"
+Cohesion: 0.05
+Nodes (87): TokenObtainPairSerializer, TokenObtainPairView, Returns the onboarding brand kit as a dictionary., SocialAccount, AuthResponseSerializer, CustomTokenObtainPairSerializer, ForgotPasswordSerializer, GoogleAuthSerializer (+79 more)
+
+### Community 58 - "Community 58"
+Cohesion: 0.09
+Nodes (12): Test forgot password request responds with success regardless of user existence., Test resetting password with a valid signed token., Test resetting password with an invalid token fails., Test suite for User Authentication and registration endpoints., Test logout returns standard success message., Test successful registration returns user profile and JWT tokens., Test successful login with email/password returns tokens., Test login fails with incorrect password. (+4 more)
+
+### Community 59 - "Community 59"
+Cohesion: 0.24
+Nodes (9): AbstractBaseUser, BaseUserAdmin, PermissionsMixin, Admin for connected social media accounts., Custom UserAdmin class to support our custom User model in Django Admin., SocialAccountAdmin, UserAdmin, Custom User model matching the Admart specification. (+1 more)
+
+### Community 62 - "Community 62"
+Cohesion: 0.29
+Nodes (4): AppConfig, ContentConfig, ProjectsConfig, UsersConfig
+
+### Community 63 - "Community 63"
+Cohesion: 0.29
+Nodes (7): 7.1 Platform APIs, 7.2 Publish Endpoint, 7.3 OAuth Flows, 7. Publishing Pipeline, code:block16 (TikTok:    TikTok for Developers - Content Posting API v2), code:block17 (POST /videos/:id/publish), code:block18 (GET  /social/connect/tiktok      → redirect to TikTok OAuth)
+
+### Community 64 - "Community 64"
+Cohesion: 0.4
+Nodes (5): 10. Real-time Communication, code:block35 (GET /jobs/:jobId/stream), code:block36 (ws://api/ws), Option A: Server-Sent Events (SSE) — Recommended, Option B: WebSocket
+
+### Community 75 - "Community 75"
+Cohesion: 0.4
+Nodes (5): 6.1 Models & Credit Costs, 6.2 Video Generation Flow, 6.3 Job Status Stages, 6. Video Generation Pipeline, code:block15 (POST /videos/generate)
+
+### Community 76 - "Community 76"
+Cohesion: 0.4
+Nodes (5): 9.1 Credit Costs Summary, 9.2 Credit Operations, 9.3 Credit Reset, 9. Credits System, code:block34 (POST /credits/deduct      — internal, called by generation s)
+
+### Community 77 - "Community 77"
+Cohesion: 0.5
+Nodes (4): 4.1 Strategy, 4.2 Endpoints, 4. Authentication & Authorization, code:block9 (POST   /auth/register          — email + password signup, cr)
+
+### Community 78 - "Community 78"
+Cohesion: 0.67
+Nodes (3): 16. Recommended Tech Stack, Option A — Node.js (Express/Fastify), Option B — Python (FastAPI)
+
+### Community 79 - "Community 79"
+Cohesion: 0.05
+Nodes (63): APIView, BaseCommand, Command, ImageJobAdmin, ImageUploadAdmin, LibraryAssetAdmin, credit_cost(), Model allow-lists, defaults, and credit costs for image capabilities. (+55 more)
+
+### Community 80 - "Community 80"
+Cohesion: 0.67
+Nodes (3): Batch Endpoints, Bulk Operations, code:python (POST /api/users/batch)
+
+### Community 86 - "Community 86"
+Cohesion: 0.67
+Nodes (3): code:block22 (POST /api/orders), Idempotency, Idempotency Keys
+
+### Community 95 - "Community 95"
+Cohesion: 0.06
+Nodes (52): ProjectAdmin, Admin for connected social media accounts., Inline editor for a project's connected social accounts., SocialAccountAdmin, SocialAccountInline, decrypt(), encrypt(), _fernet() (+44 more)
+
+### Community 96 - "Community 96"
+Cohesion: 0.07
+Nodes (16): ensure_fresh_access_token(), InstagramProvider, MetaProvider, Provider-specific OAuth logic for social account connections.  Each provider kno, Exchange the auth code for a short-lived token, then upgrade to long-lived., Google OAuth 2.0 for the YouTube Data API (read profile + upload videos)., Re-extend a still-valid long-lived token (Meta has no refresh token)., Facebook profile (the connected user/account name). (+8 more)
+
+### Community 97 - "Community 97"
+Cohesion: 0.12
+Nodes (10): MetaOAuthConnectionTests, Test suite for the real OAuth connect-url + provider callback flow., Test suite for the shared Meta (Facebook + Instagram) OAuth flow., test_callback_exchange_failure_redirects_with_error(), test_callback_success_creates_connected_account(), test_facebook_callback_success(), test_facebook_connect_url_includes_publish_scopes_when_enabled(), test_instagram_callback_success() (+2 more)
+
+### Community 98 - "Community 98"
+Cohesion: 0.1
+Nodes (19): Admart, API map (authoritative), Backend, code:block1 (User ──owns──► Project ──► SocialAccount (youtube|tiktok|ins), code:block2 (src/), code:bash (# Admart-frontend/.env  (name must match code)), code:bash (cd admart-backend), code:bash (cd Admart-frontend) (+11 more)
+
+### Community 99 - "Community 99"
+Cohesion: 0.1
+Nodes (10): OnboardingAndSocialTests, Test completing onboarding saves brand kit and connected platforms., Test completing onboarding with no data (user skipped all steps)., Test PATCH /api/auth/me with snake_case brand fields (as sent by frontend onboar, Test connecting a social platform., Test connecting an invalid platform returns 400., Test disconnecting a social platform., Test disconnecting a platform that was never connected returns 404. (+2 more)
+
+### Community 100 - "Community 100"
+Cohesion: 0.2
+Nodes (15): _auth_headers(), _error_message(), FalError, _queue_base_for_model(), Thin fal.ai queue client over HTTPS (uses existing `requests`)., Return completed fal result payload., Raised when fal submit/status/result fails., Best-effort fallback when status_url was not stored.      fal apps with a subpat (+7 more)
+
+### Community 101 - "Community 101"
+Cohesion: 0.15
+Nodes (3): FalSubmission, LibraryApiTests, _submission()
+
+### Community 102 - "Community 102"
+Cohesion: 0.23
+Nodes (3): ProjectSocialTests, Test suite for project-scoped social account endpoints., Two projects can each connect the same platform independently.
+
+### Community 103 - "Community 103"
+Cohesion: 0.2
+Nodes (6): APITestCase, OnboardingTests, Test suite for the onboarding endpoint (now creates the first project)., Onboarding creates a project that owns the brand kit and platforms., With no project/brand name, a default project is still created., Test PATCH /api/auth/me with snake_case brand fields.
+
+### Community 104 - "Community 104"
+Cohesion: 0.22
+Nodes (6): BaseUserManager, Meta, Create and save a regular User with the given email and password., Create and save a SuperUser with the given email and password., Custom manager for the custom User model where email is the unique identifier., UserManager
+
+### Community 105 - "Community 105"
+Cohesion: 0.29
+Nodes (5): build_fal_input(), _maybe(), Map camelCase FE payloads to fal snake_case inputs., Build fal `arguments` dict from a validated create-job payload., MappingTests
+
+### Community 107 - "Community 107"
+Cohesion: 0.32
+Nodes (5): UrlResolveTests, Make image URLs reachable by fal (localhost media → data URI)., Rewrite local / private media URLs into data URIs fal can consume., resolve_url_for_fal(), resolve_urls_for_fal()
+
+### Community 109 - "Community 109"
+Cohesion: 0.29
+Nodes (5): 1. Think Before Coding, 2. Simplicity First, 3. Surgical Changes, 4. Goal-Driven Execution, code:block1 (1. [Step] → verify: [check])
+
+### Community 110 - "Community 110"
+Cohesion: 0.29
+Nodes (6): 1. Think Before Coding, 2. Simplicity First, 3. Surgical Changes, 4. Goal-Driven Execution, code:block1 (1. [Step] → verify: [check]), Karpathy Guidelines
+
 ## Knowledge Gaps
-- **39 isolated node(s):** `Run administrative tasks.`, `Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.` (+34 more)
+- **519 isolated node(s):** `Run administrative tasks.`, `Production-ready REST API template using FastAPI. Includes pagination, filtering`, `List users with pagination and filtering.`, `Partially update user.`, `Provider-specific OAuth logic for social account connections.  Each provider kno` (+514 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **57 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `start_text_to_image()` connect `Flux Client & Proxy Services` to `FastAPI App & Schemas`?**
-  _High betweenness centrality (0.100) - this node is a cross-community bridge._
-- **Why does `run_text2img()` connect `Flux Image Generation Engine` to `FastAPI App & Schemas`?**
-  _High betweenness centrality (0.067) - this node is a cross-community bridge._
-- **Why does `list_users()` connect `REST API Template Endpoint` to `FastAPI App & Schemas`?**
-  _High betweenness centrality (0.064) - this node is a cross-community bridge._
-- **Are the 9 inferred relationships involving `str` (e.g. with `_is_cuda_oom()` and `run_text2img()`) actually correct?**
-  _`str` has 9 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Run administrative tasks.`, `Admart DGX1 FLUX text-to-image API.  Copy this file to the DGX1 server that has`, `Production-ready REST API template using FastAPI. Includes pagination, filtering` to the rest of the system?**
-  _39 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Why does `Project` connect `Community 95` to `Flux Client & Proxy Services`, `Community 97`, `Community 101`, `Community 102`, `Community 103`, `Community 105`, `Community 106`, `Community 107`, `Community 108`, `Community 79`, `Community 57`, `Community 58`?**
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `SocialAccount` connect `Community 57` to `Community 104`, `Community 59`, `Community 58`, `Community 99`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **Why does `ImageJob` connect `Community 79` to `Community 101`, `Community 103`, `Community 105`, `Community 106`, `Community 107`, `Community 108`, `Community 58`?**
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Are the 42 inferred relationships involving `Project` (e.g. with `ProjectCRUDTests` and `ProjectSocialTests`) actually correct?**
+  _`Project` has 42 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 31 inferred relationships involving `SocialAccount` (e.g. with `ProjectCRUDTests` and `ProjectSocialTests`) actually correct?**
+  _`SocialAccount` has 31 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 32 inferred relationships involving `str` (e.g. with `.test_create_project_becomes_active()` and `.test_list_ordered_by_recency()`) actually correct?**
+  _`str` has 32 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 26 inferred relationships involving `SocialAccount` (e.g. with `UserAuthTests` and `OnboardingAndSocialTests`) actually correct?**
+  _`SocialAccount` has 26 INFERRED edges - model-reasoned connections that need verification._
