@@ -65,6 +65,7 @@ urlpatterns = [
     path("api/templates/<uuid:template_id>/favorite", TemplateFavoriteView.as_view(), name="template_favorite"),
     # Superadmin panel API
     path("api/admin/agents/", include("agents.admin_urls")),
+    path("", include("blog.urls")),  # /api/blog and /api/admin/blog/
     path("api/admin/", include("admin_panel.urls")),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),

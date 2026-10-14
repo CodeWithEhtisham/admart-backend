@@ -324,6 +324,7 @@ function avatar(u,sz=''){return u?.avatarUrl?`<div class="avatar ${sz}"><img src
 function csrf(){const m=document.cookie.match(/csrftoken=([^;]+)/);return m?m[1]:''}
 function api(method,url,body){return fetch(url,{method,headers:{'Content-Type':'application/json','X-CSRFToken':csrf()},credentials:'same-origin',body:body?JSON.stringify(body):undefined}).then(r=>{if(!r.ok)throw new Error(r.status+' '+r.statusText);return r.json()})}
 const IS_OWNER={% if is_owner %}true{% else %}false{% endif %};
+const FRONTEND_URL="{{ frontend_url|escapejs }}";
 
 let toastTimer;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2800)}
@@ -339,6 +340,7 @@ const ICONS={
   packs:'<svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
   usage:'<svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-8M21 19H3"/></svg>',
   agents:'<svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/><circle cx="12" cy="3.5" r="1"/></svg>',
+  blog:'<svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 12h8M8 16h8M8 8h4"/></svg>',
   settings:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1.11-1.56 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.56-1.03H3a2 2 0 110-4h.09a1.7 1.7 0 001.56-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001.03-1.56V3a2 2 0 114 0v.09a1.7 1.7 0 001.03 1.56h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.56 1.03H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.56 1.03z"/></svg>',
 };
 const TABS=[
@@ -348,6 +350,7 @@ const TABS=[
   {id:'plans',label:'Subscriptions',group:'Manage',sub:'Create and edit billing plans'},
   {id:'packs',label:'Credit packs',group:'Manage',sub:'Edit top-up booster packs'},
   {id:'agents',label:'Agents',group:'Manage',sub:'Agent recipes, runs, failures and costs'},
+  {id:'blog',label:'Blog',group:'Manage',sub:'Write and publish blog posts'},
   {id:'usage',label:'Usage & Credits',group:'Analytics',sub:'Credits used and fal.ai costs'},
   {id:'settings',label:'Settings',group:'System',sub:'Platform defaults and toggles'},
 ];
@@ -392,6 +395,7 @@ function renderContent(){
     case'plans':renderPlans(el);break;
     case'packs':renderPacks(el);break;
     case'agents':renderAgents(el);break;
+    case'blog':renderBlog(el);break;
     case'usage':renderUsage(el);break;
     case'settings':renderSettings(el);break;
   }
@@ -1088,6 +1092,95 @@ async function submitRecipe(encodedSlug){
   }catch(e){err.textContent='Could not save the agent.';return}
   finally{if(g('rcBtn'))g('rcBtn').disabled=false}
   await loadAgents();renderContent();
+}
+
+/* ================================================================
+   BLOG
+   ================================================================ */
+let blogPosts=null;
+async function loadBlog(){try{blogPosts=await api('GET','/api/admin/blog/posts')}catch(e){blogPosts=blogPosts||[];toast('Could not load blog posts.')}}
+function renderBlog(el){
+  if(!blogPosts){
+    el.innerHTML='<div class="skel" style="height:240px"></div>';
+    loadBlog().then(()=>{if(activeTab==='blog')renderContent()});
+    return;
+  }
+  el.innerHTML=`
+  <div class="flex justify-between items-center mb-3"><p class="text-xs" style="color:var(--text-muted)">Published posts appear at <a href="${esc(FRONTEND_URL)}/blog" target="_blank" rel="noopener" style="color:var(--accent-blue)">${esc(FRONTEND_URL)}/blog</a>. Drafts are only visible here.</p>
+    <button class="btn btn-primary" onclick="openPostModal('')">+ New post</button></div>
+  <div class="card" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th>Title</th><th>Status</th><th>Published</th><th>Updated</th><th>Actions</th></tr></thead>
+      <tbody>${blogPosts.map(p=>`<tr>
+        <td class="primary">${esc(p.title)}<p class="mono text-xs" style="color:var(--text-muted)">/blog/${esc(p.slug)}</p></td>
+        <td><span class="pill ${p.status==='published'?'pill-paid':'pill-pending'}">${esc(p.status)}</span></td>
+        <td>${fmtDate(p.publishedAt)}</td>
+        <td style="color:var(--text-muted)">${timeAgo(p.updatedAt)}</td>
+        <td class="flex gap-2"><button class="btn btn-sm btn-primary" onclick="openPostModal('${p.id}')">Edit</button>
+          ${p.status==='published'?`<a class="btn btn-sm btn-ghost" href="${esc(FRONTEND_URL)}/blog/${encodeURIComponent(p.slug)}" target="_blank" rel="noopener">View</a>`:''}
+          <button class="btn btn-sm btn-danger" onclick="deletePost('${p.id}')">Delete</button></td>
+      </tr>`).join('')}
+      ${!blogPosts.length?'<tr><td colspan="5" class="empty">No posts yet. Write the first one.</td></tr>':''}</tbody>
+    </table>
+  </div>`;
+}
+async function blogSend(method,url,body){
+  const isForm=body instanceof FormData;
+  const res=await fetch(url,{method,headers:isForm?{'X-CSRFToken':csrf()}:{'Content-Type':'application/json','X-CSRFToken':csrf()},credentials:'same-origin',body:isForm?body:body?JSON.stringify(body):undefined});
+  const data=res.status===204?{}:await res.json().catch(()=>({}));
+  if(!res.ok)throw new Error(data.message||'Something went wrong.');
+  return data;
+}
+async function openPostModal(id){
+  let p={title:'',slug:'',summary:'',author:'',body:'',status:'draft',cover:'',coverUrl:''};
+  if(id){try{p=await api('GET',`/api/admin/blog/posts/${id}`)}catch(e){toast('Could not load this post.');return}}
+  document.getElementById('modalWrap').innerHTML=`
+  <div class="modal-bg" onclick="closeModal()"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="bpTitle" onclick="event.stopPropagation()" style="max-width:760px;max-height:92vh;overflow-y:auto">
+    <h2 id="bpTitle" style="font-family:&#39;Space Grotesk&#39;,sans-serif;font-size:20px;font-weight:700">${id?'Edit post':'New post'}</h2>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
+      <div><label class="section-title" for="bpT">Title</label><input class="inp" id="bpT" maxlength="160" value="${esc(p.title)}"></div>
+      <div class="flex gap-2">
+        <div style="flex:2"><label class="section-title" for="bpS">Web address (empty = from the title)</label><input class="inp mono" id="bpS" maxlength="80" value="${esc(p.slug)}" placeholder="how-to-make-shorts"></div>
+        <div style="flex:1"><label class="section-title" for="bpA">Author</label><input class="inp" id="bpA" maxlength="80" value="${esc(p.author)}"></div>
+      </div>
+      <div><label class="section-title" for="bpSum">Summary (shown on the card and in Google, up to 300 characters)</label><textarea class="inp" id="bpSum" rows="2" maxlength="300">${esc(p.summary)}</textarea></div>
+      <div><span class="section-title">Cover image</span>
+        <div class="flex gap-3 items-center mt-2"><img id="bpCoverImg" src="${esc(p.coverUrl||'')}" alt="" style="height:64px;border-radius:8px;${p.coverUrl?'':'display:none'}">
+          <input type="file" id="bpCover" accept="image/jpeg,image/png,image/webp" aria-label="Cover image"></div>
+        <input type="hidden" id="bpCoverPath" value="${esc(p.cover||'')}"></div>
+      <div><label class="section-title" for="bpB">Text</label>
+        <p class="text-xs" style="color:var(--text-muted);margin-bottom:6px">Formatting: <span class="mono">## Heading</span>, <span class="mono">### Smaller heading</span>, <span class="mono">- list item</span>, <span class="mono">1. numbered</span>, <span class="mono">**bold**</span>, <span class="mono">*italic*</span>, <span class="mono">[link text](https://...)</span>, <span class="mono">&gt; quote</span>. Leave an empty line between paragraphs.</p>
+        <textarea class="inp mono" id="bpB" rows="16">${esc(p.body)}</textarea>
+        <label class="btn btn-sm btn-ghost mt-2" style="display:inline-block;cursor:pointer">Insert image<input type="file" id="bpImg" accept="image/jpeg,image/png,image/webp" style="display:none"></label></div>
+      <div><label class="section-title" for="bpSt">Status</label><select class="inp" id="bpSt" style="max-width:200px"><option value="draft"${p.status==='draft'?' selected':''}>Draft</option><option value="published"${p.status==='published'?' selected':''}>Published</option></select></div>
+      <p id="bpErr" class="text-xs" role="alert" style="color:var(--error)"></p>
+    </div>
+    <div class="flex mt-5" style="justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="bpBtn" onclick="submitPost('${id}')">${id?'Save changes':'Create post'}</button>
+    </div>
+  </div></div>`;
+  const g=x=>document.getElementById(x);
+  const upload=async file=>{const fd=new FormData();fd.append('file',file);return blogSend('POST','/api/admin/blog/images',fd)};
+  g('bpCover').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const r=await upload(f);g('bpCoverPath').value=r.path;g('bpCoverImg').src=r.url;g('bpCoverImg').style.display=''}catch(err){g('bpErr').textContent=err.message}};
+  g('bpImg').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const r=await upload(f);const t=g('bpB');t.value+=`${t.value&&!t.value.endsWith('\n')?'\n\n':''}![${f.name.replace(/\.[^.]+$/,'')}](${r.url})\n`;toast('Image added at the end of the text.')}catch(err){g('bpErr').textContent=err.message}e.target.value=''};
+}
+async function submitPost(id){
+  const g=x=>document.getElementById(x),err=g('bpErr');
+  const payload={title:g('bpT').value.trim(),slug:g('bpS').value.trim(),author:g('bpA').value.trim(),summary:g('bpSum').value.trim(),
+    body:g('bpB').value,cover:g('bpCoverPath').value,status:g('bpSt').value};
+  g('bpBtn').disabled=true;err.textContent='';
+  try{
+    await blogSend(id?'PATCH':'POST',id?`/api/admin/blog/posts/${id}`:'/api/admin/blog/posts',payload);
+    toast(id?'Post saved.':'Post created.');closeModal();
+  }catch(e){err.textContent=e.message;return}
+  finally{if(g('bpBtn'))g('bpBtn').disabled=false}
+  await loadBlog();renderContent();
+}
+async function deletePost(id){
+  if(!confirm('Delete this post permanently?'))return;
+  try{await blogSend('DELETE',`/api/admin/blog/posts/${id}`);toast('Post deleted.')}catch(e){toast(e.message)}
+  await loadBlog();renderContent();
 }
 
 /* ================================================================

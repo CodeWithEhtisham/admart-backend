@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "content.apps.ContentConfig",
     "admin_panel.apps.AdminPanelConfig",
     "agents.apps.AgentsConfig",
+    "blog.apps.BlogConfig",
 ]
 
 MIDDLEWARE = [
