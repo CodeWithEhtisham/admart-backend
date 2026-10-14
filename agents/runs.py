@@ -45,7 +45,8 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         raise RunRefused("This agent is no longer available.")
     if deployment.status != "active":
         raise RunRefused("This agent is paused. Resume it to run.", "AGENT_PAUSED")
-    if deployment.runs.filter(status__in=OPEN_STATUSES).count() >= MAX_OPEN_RUNS:
+    open_runs = deployment.runs.filter(status__in=OPEN_STATUSES).exclude(status="queued", step="wait")  # scheduled
+    if open_runs.count() >= MAX_OPEN_RUNS:
         raise RunRefused("This agent already has jobs in progress. Wait for one to finish.", "AGENT_BUSY")
     credits = estimate_credits(spec, run_input, deployment.config)
     limit = deployment.monthly_credit_limit

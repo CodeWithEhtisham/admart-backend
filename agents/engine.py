@@ -7,14 +7,19 @@ from datetime import timedelta
 from decimal import Decimal
 
 import requests
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from agents import providers
 from agents.models import AgentRun
 from agents.registry import get_agent
-from agents.steps import STEPS, NeedsReview
+from agents import cross_post, video_edit
+from agents.steps import STEPS, NeedsReview, WaitUntil
 from content.credits import refund_credits, reserve_credits
+
+# The Video Editor's and Cross-poster's steps live in their own modules (they import agents.steps).
+STEPS.update(video_edit.STEPS)
+STEPS.update(cross_post.STEPS)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +40,10 @@ STEP_LABELS = {
     "plan_edit": "planning the cuts",
     "render_edit": "editing your video",
     "package": "writing the title and thumbnail",
+    "fetch": "reading your video",
+    "listen": "transcribing your video",
+    "write_post": "writing the posts",
+    "post": "posting",
 }
 
 
@@ -42,7 +51,8 @@ def claim_next() -> AgentRun | None:
     """Atomically take the oldest queued run (safe with several workers)."""
     now = timezone.now()
     AgentRun.objects.filter(status="running", locked_until__lt=now).update(status="queued")
-    for run_id in AgentRun.objects.filter(status="queued").order_by("created_at").values_list("id", flat=True)[:10]:
+    due = Q(locked_until__isnull=True) | Q(locked_until__lte=now)  # a scheduled post waits until its time
+    for run_id in AgentRun.objects.filter(due, status="queued").order_by("created_at").values_list("id", flat=True)[:10]:
         taken = AgentRun.objects.filter(id=run_id, status="queued").update(
             status="running", locked_until=now + LEASE, attempts=F("attempts") + 1
         )
@@ -71,6 +81,11 @@ def process(run: AgentRun) -> None:
         # Waiting for a person: nothing failed and no credits move.
         AgentRun.objects.filter(id=run.id, status="running").update(
             status="needs_review", step=pause.gate, locked_until=None
+        )
+        return
+    except WaitUntil as wait:
+        AgentRun.objects.filter(id=run.id, status="running").update(
+            status="queued", step=run.step, locked_until=wait.when, attempts=0
         )
         return
     except Exception as exc:  # noqa: BLE001 — every failure must end in a refunded, readable state

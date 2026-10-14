@@ -611,7 +611,7 @@ class RecipeTests(_AgentAPITestCase):
 
     def test_builtin_recipes_are_seeded_and_listed(self) -> None:
         slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
-        self.assertEqual(slugs, ["youtube-shorts", "video-editor", "script-writer", "voiceover"])
+        self.assertEqual(slugs, ["youtube-shorts", "video-editor", "cross-poster", "script-writer", "voiceover"])
         editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
 
@@ -965,3 +965,128 @@ class VideoCleanAudioTests(_AgentAPITestCase):
         self.assertEqual((run.output["audio_level"], run.output["audio_level_used"]), ("studio", "basic"))
         self.assertTrue(run.output["audio_fallback"])
         self.assertTrue((folder / "audio-clean.mp3").exists())
+
+
+from agents import cross_post  # noqa: E402
+from projects.models import PublishJob, SocialAccount  # noqa: E402
+
+
+class CrossPosterTests(_AgentAPITestCase):
+    """Library video → posts → review → post, with the platform publishers mocked."""
+
+    dry_run = True
+    _action = DryRunPipelineTests._action
+    _work = DryRunPipelineTests._work
+    _upload = VideoEditorPipelineTests._upload
+
+    def setUp(self) -> None:
+        super().setUp()
+        for platform in ("youtube", "instagram"):
+            SocialAccount.objects.create(project=self.project, platform=platform)
+        self.calls = []
+        fake = lambda name: lambda account, **kw: self.calls.append((name, kw)) or {"status": "succeeded"}  # noqa: E731
+        publishers = patch.dict(cross_post.PUBLISHERS, {"youtube": fake("youtube"), "instagram": fake("instagram")})
+        publishers.start()
+        self.addCleanup(publishers.stop)
+
+    def _to_review(self, size="720x1280"):
+        asset = self._upload(size=size)
+        deployment = self.deploy("cross-poster")
+        response = self.start(deployment, assetId=str(asset.id))
+        self.assertEqual(response.status_code, 201, response.data)
+        self._work()
+        run = AgentRun.objects.get(id=response.data["id"])
+        self.assertEqual((run.status, run.step), ("needs_review", "post"), run.error)
+        return deployment, run
+
+    def test_review_then_post_to_the_chosen_platforms(self) -> None:
+        deployment, run = self._to_review()
+        self.assertEqual(run.output["platforms"], ["youtube", "instagram"])
+        self.assertTrue(run.output["short"])
+        self.assertIn("#Shorts", run.output["posts"]["youtube"]["description"])
+        self.assertTrue(run.output["thumbnail"].endswith("thumb.jpg"))
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertEqual(detail["posts"]["instagram"]["caption"], "My clip")
+
+        self.assertEqual(self._action(deployment, run.id, "continue", {"platforms": []}).status_code, 400)
+        self._action(deployment, run.id, "continue", {
+            "platforms": ["youtube", "facebook"],  # facebook isn't connected: ignored
+            "posts": {"youtube": {"title": "My new title", "privacy": "unlisted", "tags": ["#coffee"]}},
+        })
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "succeeded", run.error)
+        self.assertEqual([name for name, _ in self.calls], ["youtube"])
+        sent = self.calls[0][1]
+        self.assertEqual((sent["title"], sent["privacy"], sent["tags"]), ("My new title", "unlisted", ["coffee"]))
+        self.assertFalse(sent["synthetic_media"])  # an upload, not AI-made
+        job = PublishJob.objects.get(id=run.output["publish_job"])
+        self.assertEqual((job.status, job.platforms), ("succeeded", ["youtube"]))
+
+    def test_retry_reposts_only_what_failed_and_never_an_interrupted_upload(self) -> None:
+        deployment, run = self._to_review(size="1280x720")
+        self.assertFalse(run.output["short"])
+        self._action(deployment, run.id, "continue", {"platforms": ["youtube", "instagram"]})
+        run.refresh_from_db()
+        run.output["posted"] = {"youtube": {"status": "running"}}  # the worker died mid-upload
+        run.save()
+        with patch.dict(cross_post.PUBLISHERS, {"instagram": MagicMock(side_effect=RuntimeError("IG down"))}):
+            self._work()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "failed")  # nothing confirmed posted: refunded
+        self.assertEqual(run.output["posted"]["youtube"]["status"], "unknown")
+        self.assertEqual(run.output["posted"]["instagram"]["error"], "IG down")
+
+        self._action(deployment, run.id, "retry")
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "succeeded", run.error)
+        self.assertEqual([name for name, _ in self.calls], ["instagram"])  # youtube never re-uploaded
+        self.assertEqual(PublishJob.objects.get(id=run.output["publish_job"]).status, "partial")
+
+    def test_scheduled_post_waits_and_can_be_cancelled(self) -> None:
+        deployment, run = self._to_review()
+        past = (timezone.now() - timedelta(hours=1)).isoformat()
+        self.assertEqual(self._action(deployment, run.id, "continue",
+                                      {"platforms": ["youtube"], "postAt": past}).status_code, 400)
+        at = timezone.now() + timedelta(days=1)
+        self._action(deployment, run.id, "continue", {"platforms": ["youtube"], "postAt": at.isoformat()})
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual((run.status, run.step), ("queued", "wait"))
+        self.assertEqual(run.locked_until, at)
+        self._work()  # not due yet: nothing happens
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.start(deployment, assetId=run.input["assetId"]).status_code, 201)  # not "busy"
+
+        self.assertEqual(self._action(deployment, run.id, "discard").status_code, 200)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "discarded")
+
+    def test_scheduled_post_goes_out_when_due(self) -> None:
+        deployment, run = self._to_review()
+        self._action(deployment, run.id, "continue", {"platforms": ["instagram"],
+                                                      "postAt": (timezone.now() + timedelta(minutes=5)).isoformat()})
+        self._work()
+        AgentRun.objects.filter(id=run.id).update(locked_until=timezone.now() - timedelta(seconds=1))
+        run.output["post_at"] = (timezone.now() - timedelta(seconds=1)).isoformat()
+        AgentRun.objects.filter(id=run.id).update(output=run.output | {"chosen": ["instagram"], "post_ok": True})
+        self._work()
+        run.refresh_from_db()
+        self.assertEqual(run.status, "succeeded", run.error)
+        self.assertEqual(self.calls[0][1]["caption"], "My clip")
+
+    def test_scheduling_needs_the_plan(self) -> None:
+        self.user.plan = "basic"
+        self.user.save()
+        deployment, run = self._to_review()
+        response = self._action(deployment, run.id, "continue", {
+            "platforms": ["youtube"], "postAt": (timezone.now() + timedelta(days=1)).isoformat()})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("plan", response.data["message"])
+
+    def test_needs_a_connected_platform(self) -> None:
+        SocialAccount.objects.all().delete()
+        asset = self._upload()
+        response = self.start(self.deploy("cross-poster"), assetId=str(asset.id))
+        self.assertEqual(response.data["code"], "NOT_CONNECTED")

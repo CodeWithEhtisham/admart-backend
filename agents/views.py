@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -21,6 +22,8 @@ from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics,
 from agents.registry import (
     MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, get_agent, image_credits,
 )
+from agents.cross_post import connected
+from agents.hooks import lint_title
 from agents.steps import clean_script, scored_hook
 from agents.video_edit import asset_file, merge_cuts, probe
 from content.models import LibraryAsset
@@ -28,9 +31,12 @@ from content.credits import InsufficientCredits, refund_credits, reserve_credits
 from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
 from projects.models import Project
+from projects.publish import PLATFORM_LABELS
+from users.plans import get_plan
 
 # Stopping at these checkpoints refunds the run: nothing expensive has been made yet.
-REFUNDABLE_GATES = ("concept", "script")
+REFUNDABLE_GATES = ("concept", "script", "post")
+MAX_SCHEDULE_DAYS = 60
 
 
 def _is_uuid(value) -> bool:
@@ -92,6 +98,23 @@ def _edit_data(out: dict, request) -> dict:
     }
 
 
+def _post_data(out: dict) -> dict:
+    """Cross-poster fields."""
+    info = out.get("source_info") or {}
+    return {
+        "sourceUrl": out.get("asset_url"),
+        "sourceSeconds": info.get("duration"),
+        "short": out.get("short", False),
+        "transcript": out.get("words") or [],
+        "platforms": out.get("platforms", []),
+        "chosen": out.get("chosen") or out.get("platforms", []),
+        "posts": out.get("posts", {}),
+        "postAt": out.get("post_at"),
+        "posted": {p: {k: v for k, v in r.items() if k in ("status", "error", "externalId")}
+                   for p, r in (out.get("posted") or {}).items()},
+    }
+
+
 def run_data(run: AgentRun, request) -> dict:
     out = run.output or {}
     spec = get_agent(run.deployment.agent_type)
@@ -137,6 +160,8 @@ def run_data(run: AgentRun, request) -> dict:
         "createdAt": run.created_at,
         "updatedAt": run.updated_at,
         "finishedAt": run.finished_at,
+        **(_post_data(out) if "short" in out else {}),
+        **({"thumbnailUrl": out["thumbnail_url"]} if out.get("thumbnail_url") else {}),
     }
 
 
@@ -268,7 +293,7 @@ class RunListCreateView(_ProjectScoped):
         if spec is None:
             return _bad("This agent is no longer available.")
         if spec.input_kind == "video":
-            run_input = self._video_input(request, deployment)
+            run_input = self._video_input(request, deployment, spec)
             if isinstance(run_input, Response):
                 return run_input
         elif spec.input_kind == "topic":
@@ -300,7 +325,7 @@ class RunListCreateView(_ProjectScoped):
         return Response(run_data(run, request), status=status.HTTP_201_CREATED)
 
     @staticmethod
-    def _video_input(request, deployment):
+    def _video_input(request, deployment, spec):
         """{"assetId", "seconds"} for a video from this project's library, or an error response."""
         asset_id = request.data.get("assetId")
         asset = (
@@ -316,8 +341,10 @@ class RunListCreateView(_ProjectScoped):
                 seconds = probe(path)["duration"]
             except RuntimeError as exc:
                 return _bad(str(exc))
-            if seconds > MAX_VIDEO_SECONDS + 1:
+            if "prepare" in spec.steps and seconds > MAX_VIDEO_SECONDS + 1:
                 return _bad("The Video Editor takes videos up to 3 minutes.", "VIDEO_TOO_LONG")
+        if "post" in spec.steps and not connected(deployment.project_id):
+            return _bad("Connect YouTube, Instagram or Facebook on Social Accounts first.", "NOT_CONNECTED")
         return {"assetId": str(asset.id), "seconds": seconds, "title": asset.title[:120]}
 
 
@@ -386,7 +413,7 @@ class RunActionView(_ProjectScoped):
         run.save(update_fields=["status", "attempts", "output", "updated_at"])
 
     def _continue(self, run, data):
-        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit"):
+        if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit", "post"):
             return _bad("This run isn't waiting at a checkpoint.")
         out = run.output
         if run.step == "concept":
@@ -415,9 +442,56 @@ class RunActionView(_ProjectScoped):
             if problem:
                 return _bad(problem)
             out["edit_ok"] = True
+        elif run.step == "post":
+            problem = self._apply_post(run, out, data)
+            if problem:
+                return _bad(problem)
+            out["post_ok"] = True
         else:
             out["storyboard_ok"] = True
         self._resume(run)
+        return None
+
+    @staticmethod
+    def _apply_post(run, out: dict, data: dict) -> str | None:
+        """The user's edits to the Cross-poster's posts, platforms and time."""
+        chosen = [p for p in out.get("platforms", []) if p in (data.get("platforms") or [])]
+        if not chosen:
+            return "Pick at least one platform."
+        edits = data.get("posts") if isinstance(data.get("posts"), dict) else {}
+        for platform in chosen:
+            post, edit = out["posts"][platform], edits.get(platform)
+            edit = edit if isinstance(edit, dict) else {}
+            if platform == "youtube":
+                for key, limit in (("title", 100), ("description", 5000)):
+                    if isinstance(edit.get(key), str):
+                        post[key] = edit[key].strip()[:limit]
+                if isinstance(edit.get("tags"), list):
+                    post["tags"] = [str(t).strip().lstrip("#")[:60] for t in edit["tags"] if str(t).strip()][:15]
+                if edit.get("privacy") in ("public", "unlisted", "private"):
+                    post["privacy"] = edit["privacy"]
+                if not post["title"]:
+                    return "Give the YouTube video a title."
+                out["title"] = post["title"]
+                out["title_check"] = lint_title(post["title"], post.get("thumbnail_text", ""))
+            else:
+                if isinstance(edit.get("caption"), str):
+                    post["caption"] = edit["caption"].strip()[:2200 if platform == "instagram" else 5000]
+                if not post["caption"]:
+                    return f"Write a caption for {PLATFORM_LABELS[platform]}."
+        at = None
+        if data.get("postAt"):
+            at = parse_datetime(str(data["postAt"]))
+            if at is None or timezone.is_naive(at):
+                return "Pick a valid date and time."
+            if at <= timezone.now():
+                return "Pick a time in the future."
+            if at > timezone.now() + timedelta(days=MAX_SCHEDULE_DAYS):
+                return f"Pick a time within {MAX_SCHEDULE_DAYS} days."
+            if not get_plan(run.user.plan).get("limits", {}).get("can_schedule_publishing"):
+                return "Scheduled posting is not included in your plan. Post it now, or upgrade."
+        out["chosen"] = chosen
+        out["post_at"] = at.isoformat() if at else None
         return None
 
     @staticmethod
@@ -505,6 +579,17 @@ class RunActionView(_ProjectScoped):
         return None
 
     def _discard(self, run, data):
+        if run.status == "queued" and run.step == "wait":  # cancel a scheduled post
+            credits, topup = run.credits_reserved, run.topup_reserved
+            cancelled = AgentRun.objects.filter(id=run.id, status="queued").update(
+                status="discarded", finished_at=timezone.now(), credits_reserved=0, topup_reserved=0
+            )
+            if not cancelled:
+                return _bad("It is being posted right now, so it can't be cancelled.")
+            if credits > 0:
+                refund_credits(run.user, credits, topup=topup)
+            run.refresh_from_db()
+            return None
         if run.status not in ("needs_review", "succeeded"):
             return _bad("Only a run that is paused or finished can be discarded.")
         fields = ["status", "updated_at"]

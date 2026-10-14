@@ -9,6 +9,7 @@ deploy it, and run it. Every run is processed in the background by the **agents 
 | **Script Writer** | Single task | Topic → Short script (scenes, title, description, tags) |
 | **Voiceover** | Single task | Text → MP3 voice recording |
 | **Video Editor** | Full automation | Your own video (up to 3 min) → cut, cleaned, captioned and reframed, with your approval |
+| **Cross-poster** | Full automation | A Library video → a post for YouTube, Instagram and Facebook; you check them, it posts now or later |
 
 ---
 
@@ -51,6 +52,26 @@ Upload / pick a Library video → Check (length, sound) → Transcript (fal Whis
   Studio ≈ 0.22 credits per minute at today's fal prices, before any change to the markup).
 - If a paid audio service fails, the free filter is used and the workflow says so.
 - Code: `agents/video_edit.py`; plan: `docs/plans/2026-10-13-video-editor-agent.md`.
+
+## How the Cross-poster works
+
+```
+Pick a Library video → Check (length, shape, sound) → Transcript of the first 3 min (fal Whisper)
+      → One AI call writes a post per connected platform (YouTube title/description/tags + thumbnail,
+        Instagram caption, Facebook caption) → You edit them, untick platforms, pick now or a time
+      → (waits until that time) → Posts to each platform with the existing publishers
+```
+
+- Posts only to platforms connected on **Social Accounts** (YouTube, Instagram, Facebook). Instagram
+  and Facebook still need `INSTAGRAM_PUBLISH_ENABLED` / `FACEBOOK_PUBLISH_ENABLED` (App Review).
+- Instagram downloads the video from its URL, so `MEDIA_BASE_URL` must be public https.
+- Scheduling: the run waits in the queue until the time (the worker must be running then).
+  **Cancel** on the run stops it and refunds. Needs a plan with scheduled publishing.
+- Every post is a **Publish job**, so it shows in Calendar and Analytics.
+- A retry re-posts only platforms that failed; an upload cut off mid-way is never repeated
+  automatically (check the platform first).
+- About 0.04 credits per post at most (transcription only; the AI writer uses free models).
+- Code: `agents/cross_post.py`; plan: `docs/plans/2026-10-14-cross-poster-agent.md`.
 
 ---
 
@@ -126,7 +147,7 @@ On an agent's page (agents that take a topic), switch **Autopilot** on and choos
 The worker checks every 30 seconds and starts due runs with the usual credit and monthly-limit
 checks. If a slot can't run (for example not enough credits) it is skipped, a note shows on the
 agent, and it tries again at the next slot. Results never post by themselves: they wait for the
-user.
+user. (The Cross-poster posts only after the user approves the posts.)
 
 **Inbox:** runs that need the user (concept, script, storyboard, finished Short) and failures from
 the last 7 days show on **Notifications**, as a count on the bell, and under **Waiting for you**

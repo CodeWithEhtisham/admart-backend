@@ -56,7 +56,7 @@ def voice_settings(config: dict) -> tuple[tuple, float]:
 
 # Pause points where a person approves before money is spent on the next stage.
 GATES = {"pick_concept": "concept", "review_script": "script", "review_storyboard": "storyboard",
-         "review_edit": "edit"}
+         "review_edit": "edit", "review_post": "post"}
 
 # Video Editor choices (per agent, set when starting it or in Settings).
 FORMATS = {  # id -> (label, output size or None to keep the original shape)
@@ -107,9 +107,16 @@ STEP_BLOCKS = {
     "render_edit": {"label": "Render the edited video", "needs": ["plan_edit"]},
     "package": {"label": "Write title, description and thumbnail", "needs": ["render_edit"]},
     "finish": {"label": "Save the video to the library", "needs": []},
+    "fetch": {"label": "Read a library video to post", "needs": []},
+    "listen": {"label": "Transcribe it (first 3 minutes)", "needs": ["fetch"]},
+    "write_post": {"label": "Write a post for each connected platform", "needs": ["listen"]},
+    "review_post": {"label": "Check-in: user edits the posts and picks a time", "needs": ["write_post"]},
+    "wait": {"label": "Wait for the chosen time", "needs": ["review_post"]},
+    "post": {"label": "Post to the platforms", "needs": ["review_post"]},
 }
 TOPIC_STEPS = ("research", "concepts", "script")  # need a topic as input
 VIDEO_STEPS = ("prepare", "transcribe", "clean_audio", "plan_edit", "review_edit", "render_edit", "package")
+POST_STEPS = ("fetch", "listen", "write_post", "review_post", "wait", "post")
 PROMPT_KEYS = ("research", "concepts", "script")
 PLATFORMS = ("youtube", "facebook", "instagram")
 
@@ -181,6 +188,17 @@ BUILTIN_AGENTS: dict[str, AgentSpec] = {
             input_hint="A video up to 3 minutes",
             review=True,
         ),
+        AgentSpec(
+            slug="cross-poster",
+            name="Cross-poster",
+            kind="large",
+            description="Pick a video from your Library: it writes a post for YouTube, Instagram and Facebook "
+            "from what is said in it. You check them, then it posts now or at the time you pick.",
+            steps=("fetch", "listen", "write_post", "review_post", "wait", "post"),
+            needs=("youtube", "instagram", "facebook"),
+            input_kind="video",
+            input_hint="Any video in your Library",
+        ),
     )
 }
 
@@ -236,9 +254,10 @@ def validate_recipe(data: dict) -> str | None:
         return "Input must be a topic, text or a video."
     if input_kind == "text" and any(s in TOPIC_STEPS for s in steps):
         return "Research, concepts and script need a topic as input, not text."
-    if (input_kind == "video") != any(s in VIDEO_STEPS for s in steps) or (
-        input_kind == "video" and any(s not in VIDEO_STEPS and s != "finish" for s in steps)
-    ):
+    edits, posts = any(s in VIDEO_STEPS for s in steps), any(s in POST_STEPS for s in steps)
+    if (input_kind == "video") != (edits or posts) or (edits and posts) or (
+        edits and any(s not in VIDEO_STEPS and s != "finish" for s in steps)
+    ) or (posts and any(s not in POST_STEPS for s in steps)):
         return "Video steps need a video as input, and can't be mixed with other steps."
     if "voice" in steps and input_kind == "topic" and "script" not in steps[: steps.index("voice")]:
         return "'voice' needs a script earlier, or text as the input."
@@ -271,11 +290,14 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     usd = Decimal("0")
     from agents import providers
 
-    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package"))
+    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package", "write_post"))
     if "prepare" in spec.steps:  # video: priced by length (seconds probed when the run starts)
         minutes = Decimal(str(run_input.get("seconds") or MAX_VIDEO_SECONDS)) / Decimal(60)
         audio = AUDIO_LEVELS[video_settings(config or {})[2]][2]
         usd += minutes * (Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN) + Decimal(audio))
+    if "listen" in spec.steps:  # only the first 3 minutes are transcribed
+        seconds = min(Decimal(str(run_input.get("seconds") or 180)), Decimal(180))
+        usd += seconds / Decimal(60) * Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
     usd += providers.text_usd() * llm_calls
     if "research" in spec.steps:
         usd += providers.research_usd()
@@ -318,7 +340,7 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "tones": [{"id": key, "label": label} for key, (label, _) in TONES.items()] if "script" in spec.steps else [],
         "lengths": list(LENGTHS) if "script" in spec.steps else [],
         "redoCredits": f"{image_credits():f}" if "visuals" in spec.steps else None,
-        **(_video_catalog(spec) if spec.input_kind == "video" else {}),
+        **(_video_catalog(spec) if "prepare" in spec.steps else {}),
     }
 
 

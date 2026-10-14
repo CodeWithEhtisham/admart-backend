@@ -147,13 +147,13 @@ def _scene_clip(index: int, scene: dict, length: float, workdir: Path) -> Path:
 
 
 def thumbnail(source_clip: Path, title: str, highlight_hex: str, out: Path, workdir: Path) -> None:
-    """Frame from the first scene with the title in a brand-coloured box."""
+    """Frame from the first scene with the title in a brand-coloured box (scaled to 1080 wide so the text fits)."""
     text_file = workdir / "thumb-title.txt"
     text_file.write_text("\n".join(textwrap.wrap(title, 16)[:4]), encoding="utf-8")
     box = highlight_hex if re.fullmatch(r"#[0-9a-fA-F]{6}", highlight_hex or "") else "#FFD400"
     _run([
         "ffmpeg", "-y", "-ss", "1", "-i", str(source_clip), "-frames:v", "1", "-vf",
-        f"drawtext=fontfile='{settings.AGENTS_CAPTION_FONT}':textfile='{text_file}':fontsize=104:"
+        f"scale=1080:-2,drawtext=fontfile='{settings.AGENTS_CAPTION_FONT}':textfile='{text_file}':fontsize=104:"
         f"fontcolor=black:line_spacing=18:box=1:boxcolor={box}@0.92:boxborderw=34:"
         f"x=(w-text_w)/2:y=h*0.18",
         "-q:v", "3", str(out),

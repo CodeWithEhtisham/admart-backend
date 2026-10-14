@@ -152,12 +152,14 @@ class AdminAgentRunsView(AdminAPIView):
 
     def get(self, request):
         now = timezone.now()
+        # Queued too long (but not a scheduled post waiting for its time), or a worker that died mid-run.
+        stuck_q = Q(status="queued", updated_at__lt=now - STUCK_AFTER) & (
+            Q(locked_until__isnull=True) | Q(locked_until__lte=now)
+        ) | Q(status="running", locked_until__lt=now)
         runs = AgentRun.objects.select_related("deployment", "user", "project")
         wanted = request.query_params.get("status", "")
         if wanted == "stuck":
-            runs = runs.filter(
-                Q(status="queued", updated_at__lt=now - STUCK_AFTER) | Q(status="running", locked_until__lt=now)
-            )
+            runs = runs.filter(stuck_q)
         elif wanted:
             runs = runs.filter(status=wanted)
         try:
@@ -168,9 +170,7 @@ class AdminAgentRunsView(AdminAPIView):
         counts = dict(month.order_by().values("status").annotate(n=Count("id")).values_list("status", "n"))
         finished = counts.get("failed", 0) + sum(counts.get(s, 0) for s in ("needs_review", "approved", "succeeded"))
         spent = month.exclude(status="failed").aggregate(total=Sum("credits_reserved"))["total"] or 0
-        stuck = AgentRun.objects.filter(
-            Q(status="queued", updated_at__lt=now - STUCK_AFTER) | Q(status="running", locked_until__lt=now)
-        ).count()
+        stuck = AgentRun.objects.filter(stuck_q).count()
         return Response(
             {
                 "summary": {

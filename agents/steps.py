@@ -34,6 +34,14 @@ class NeedsReview(Exception):
         self.gate = gate
 
 
+class WaitUntil(Exception):
+    """Put the run back in the queue until `when` (a scheduled post); the engine sets locked_until."""
+
+    def __init__(self, when):
+        super().__init__(when.isoformat())
+        self.when = when
+
+
 RESEARCH_PROMPT = """Research this topic for a short YouTube Short. Use web search if you have it. List 5-8
 specific, surprising, verifiable facts and 2-3 angles that would make a strong hook. Only state facts
 you are sure of: no made-up statistics or precise percentages; prefer well-known figures or none.
@@ -531,8 +539,3 @@ STEPS = {
     "render": step_render,
     "finish": step_finish,
 }
-
-# The Video Editor's steps live in their own module (it imports this one).
-from agents import video_edit  # noqa: E402
-
-STEPS.update(video_edit.STEPS)
