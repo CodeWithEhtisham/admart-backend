@@ -1146,3 +1146,41 @@ class TrendFinderTests(_AgentAPITestCase):
         sent = post.call_args.kwargs["json"]
         self.assertEqual(sent["plugins"][0]["id"], "web")
         self.assertIn("- cold brew at home", sent["messages"][1]["content"])  # avoids covered topics
+
+
+class WorkerTests(_AgentAPITestCase):
+    def _run_for(self, agent_type) -> AgentRun:
+        deployment = self.deploy(agent_type)
+        return AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "x"})
+
+    def test_worker_survives_a_locked_database(self) -> None:
+        from django.db import OperationalError
+
+        claim = MagicMock(side_effect=[OperationalError("database is locked"), None])
+        with patch("agents.management.commands.run_agents_worker.claim_next", claim), \
+                patch("agents.management.commands.run_agents_worker.run_due", return_value=0), \
+                patch("agents.management.commands.run_agents_worker.time.sleep"), \
+                self.assertLogs("agents.worker", "WARNING"):
+            call_command("run_agents_worker", "--once")
+        self.assertEqual(claim.call_count, 2)
+
+    def test_claim_only_and_exclude_agent_types(self) -> None:
+        script = self._run_for("script-writer")
+        voice = self._run_for("voiceover")
+        self.assertEqual(engine.claim_next(only=("voiceover",)).id, voice.id)
+        self.assertIsNone(engine.claim_next(exclude=("script-writer",)))
+        self.assertEqual(engine.claim_next().id, script.id)
+
+    def test_worker_passes_its_agent_filter(self) -> None:
+        claim = MagicMock(return_value=None)
+        with patch("agents.management.commands.run_agents_worker.claim_next", claim), \
+                patch("agents.management.commands.run_agents_worker.run_due", return_value=0):
+            call_command("run_agents_worker", "--once", "--only", "clip-maker", "--exclude", "voiceover")
+        claim.assert_called_with(only=["clip-maker"], exclude=["voiceover"])
+
+    def test_keep_alive_extends_the_lease(self) -> None:
+        run = self._run_for("script-writer")
+        AgentRun.objects.filter(id=run.id).update(status="running", locked_until=timezone.now())
+        steps.keep_alive(run)
+        run.refresh_from_db()
+        self.assertGreater(run.locked_until, timezone.now() + timedelta(minutes=14))

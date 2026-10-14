@@ -48,12 +48,20 @@ STEP_LABELS = {
 }
 
 
-def claim_next() -> AgentRun | None:
-    """Atomically take the oldest queued run (safe with several workers)."""
+def claim_next(only=(), exclude=()) -> AgentRun | None:
+    """Atomically take the oldest queued run (safe with several workers).
+
+    `only` / `exclude` are agent types, so long jobs (Clip Maker) can have their own worker.
+    """
     now = timezone.now()
     AgentRun.objects.filter(status="running", locked_until__lt=now).update(status="queued")
     due = Q(locked_until__isnull=True) | Q(locked_until__lte=now)  # a scheduled post waits until its time
-    for run_id in AgentRun.objects.filter(due, status="queued").order_by("created_at").values_list("id", flat=True)[:10]:
+    queued = AgentRun.objects.filter(due, status="queued")
+    if only:
+        queued = queued.filter(deployment__agent_type__in=only)
+    if exclude:
+        queued = queued.exclude(deployment__agent_type__in=exclude)
+    for run_id in queued.order_by("created_at").values_list("id", flat=True)[:10]:
         taken = AgentRun.objects.filter(id=run_id, status="queued").update(
             status="running", locked_until=now + LEASE, attempts=F("attempts") + 1
         )

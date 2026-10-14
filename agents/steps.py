@@ -9,6 +9,7 @@ import json
 import logging
 import shutil
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import requests
@@ -106,6 +107,12 @@ def media_path(rel: str) -> Path:
 
 def _save(run, fields=("output",)):
     run.save(update_fields=[*fields, "updated_at"])
+
+
+def keep_alive(run, minutes: int = 15) -> None:
+    """Extend the run's lease during a long step, so it isn't taken for a dead worker's run."""
+    run.locked_until = timezone.now() + timedelta(minutes=minutes)
+    AgentRun.objects.filter(id=run.id, status="running").update(locked_until=run.locked_until)
 
 
 def _config(run) -> dict:

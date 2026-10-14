@@ -124,6 +124,8 @@ else:
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            # The web server and the agents worker share the file: wait for a lock instead of failing.
+            "OPTIONS": {"timeout": 20},
         }
     }
 
