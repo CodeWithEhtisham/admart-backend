@@ -223,12 +223,15 @@ class ProjectSocialTests(APITestCase):
         self.assertEqual(len(response.data), 2)
 
     def test_disconnect_social(self) -> None:
-        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
-        url = self._url("project_social_disconnect", platform="facebook")
+        SocialAccount.objects.create(
+            project=self.project, platform="youtube", connected=True, access_token="a", refresh_token="r"
+        )
+        url = self._url("project_social_disconnect", platform="youtube")
         response = self.client.delete(url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        account = SocialAccount.objects.get(project=self.project, platform="facebook")
+        account = SocialAccount.objects.get(project=self.project, platform="youtube")
         self.assertFalse(account.connected)
+        self.assertEqual((account.access_token, account.refresh_token), ("", ""))
 
     def test_disconnect_nonexistent_returns_404(self) -> None:
         url = self._url("project_social_disconnect", platform="tiktok")
