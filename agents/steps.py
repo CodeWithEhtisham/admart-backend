@@ -5,6 +5,7 @@ paying twice. Gate steps raise NeedsReview to pause for a person."""
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import shutil
 import time
@@ -12,8 +13,10 @@ from pathlib import Path
 
 import requests
 from django.conf import settings
+from django.utils import timezone
 
 from agents import hooks, providers, render
+from agents.models import AgentRun
 from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, get_agent, voice_settings
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
@@ -168,7 +171,7 @@ def _style_lines(run) -> str:
     config = _config(run)
     tone = TONES.get(config.get("tone"))
     seconds = config.get("length") if config.get("length") in LENGTHS else 45
-    return (f"Tone: {tone[1]}\n" if tone else "") + f"Length: about {seconds} seconds, at most {LENGTHS[seconds]} words of narration\n"
+    return (f"Tone: {tone[1]}\n" if tone else "") + f"Length: about {seconds} seconds, at most {_word_limit(run)} words of narration\n"
 
 
 # ── pre-production ────────────────────────────────────────────────────────
@@ -183,6 +186,54 @@ def step_research(run) -> None:
     else:
         notes, sources = providers.text(_prompt(run, "research"), f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
     run.output["research"] = {"notes": (notes or "").strip()[:3000], "sources": sources}
+    _save(run)
+
+
+TRENDS_PROMPT = """You find what is trending right now for a short-video creator. Search the web for news,
+launches, viral discussions and seasonal moments from the last 14 days in the subject area.
+Return JSON only: {"trends": [{"topic": string, "why_now": string, "hook": string, "source": string}]}
+- 5 to 8 trends. topic: one specific Short idea (not a broad category), at most 12 words.
+- why_now: one sentence on what happened recently, and when.
+- hook: the first spoken line of a Short on it, 9-24 words, talks to "you"; specific beats big.
+- source: the URL of the page you found it on.
+Skip anything older than a month, and anything in the "Already covered" list."""
+
+
+def step_trends(run) -> None:
+    """Trend Finder: 5-8 current topics for the niche, each with a scored hook and a checked source."""
+    if run.output.get("trends"):
+        return
+    niche = str(run.input.get("topic") or _config(run).get("niche") or run.project.brand_industry or "").strip()
+    if not niche:
+        raise RuntimeError("Tell the agent your niche, for example \"home coffee brewing\".")
+    recent = AgentRun.objects.filter(project_id=run.project_id).exclude(id=run.id).order_by("-created_at")[:30]
+    covered = [str(r.input.get("topic")) for r in recent if r.input.get("topic")]
+    if settings.AGENTS_DRY_RUN:
+        raw, sources = {"trends": [{"topic": f"{niche}: trend {i + 1}", "why_now": "Dry run.",
+                                    "hook": f"You are missing the newest thing in {niche} this week."} for i in range(5)]}, []
+    else:
+        raw, sources = providers.text(
+            TRENDS_PROMPT,
+            # No brand name: the search would find news about a company with that name instead of the niche.
+            f"Subject area: {niche}\nToday: {timezone.now():%Y-%m-%d}\nAlready covered:\n"
+            + ("\n".join(f"- {t}" for t in covered) or "- nothing yet"),
+            search=True,
+        )
+    found = {src["uri"]: src for src in sources}
+    trends = []
+    for item in raw.get("trends") or []:
+        if not isinstance(item, dict) or not str(item.get("topic") or "").strip():
+            continue
+        source = found.get(str(item.get("source") or "").strip())  # only links the search really returned
+        trends.append({
+            "topic": " ".join(str(item["topic"]).split())[:120],
+            "why_now": str(item.get("why_now") or "").strip()[:300],
+            **scored_hook(" ".join(str(item.get("hook") or "").split())[:240]),
+            "source": source,
+        })
+    if not trends:
+        raise RuntimeError("No trends came back for this niche. Try a broader niche.")
+    run.output.update({"trends": trends[:8], "sources": sources, "title": f"Trends in {niche}"[:90]})
     _save(run)
 
 
@@ -311,11 +362,24 @@ def step_script(run) -> None:
             if concept
             else ""
         )
-        raw = providers.text(
-            _prompt(run, "script"), f"Topic: {topic}\n{_brand_lines(run)}{_style_lines(run)}{concept_lines}Research notes:\n{notes}"
-        )
+        user = f"Topic: {topic}\n{_brand_lines(run)}{_style_lines(run)}{concept_lines}Research notes:\n{notes}"
+        raw = providers.text(_prompt(run, "script"), user)
+        limit, words = _word_limit(run), _narration_words(raw)
+        if words > limit * 1.1:  # models overshoot the length; one rewrite usually fixes it
+            raw = providers.text(_prompt(run, "script"), f"{user}\nYour last script had {words} words of narration. "
+                                 f"Rewrite it with at most {limit} words in total, same JSON shape:\n{json.dumps(raw)}")
     run.output.update(clean_script(raw, topic))
     _save(run)
+
+
+def _word_limit(run) -> int:
+    length = _config(run).get("length")
+    return LENGTHS[length if length in LENGTHS else 45]
+
+
+def _narration_words(raw) -> int:
+    scenes = raw.get("scenes") if isinstance(raw, dict) else None
+    return sum(len(str(s.get("narration", "")).split()) for s in scenes or [] if isinstance(s, dict))
 
 
 def step_review_script(run) -> None:
@@ -528,6 +592,7 @@ def step_finish(run) -> None:
 
 STEPS = {
     "research": step_research,
+    "trends": step_trends,
     "concepts": step_concepts,
     "pick_concept": step_pick_concept,
     "script": step_script,

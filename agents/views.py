@@ -134,6 +134,7 @@ def run_data(run: AgentRun, request) -> dict:
         "tags": out.get("tags", []),
         "research": out.get("research"),
         "concepts": out.get("concepts", []),
+        "trends": out.get("trends", []),
         "concept": out.get("concept"),
         "scenes": [
             {

@@ -112,7 +112,8 @@ def _as_dict(raw: str) -> dict | None:
 
 
 def text(system: str, user: str, *, json_mode: bool = True, search: bool = False, temperature: float = 0.8):
-    """JSON mode returns a dict; otherwise (text, sources). A garbled JSON answer is retried once."""
+    """JSON mode returns a dict, otherwise (text, sources); with search always (result, sources).
+    A garbled JSON answer is retried once."""
     def run():
         for _ in range(2):
             raw, sources = _openrouter(system, user, json_mode, search, temperature)
@@ -124,7 +125,7 @@ def text(system: str, user: str, *, json_mode: bool = True, search: bool = False
         raise RuntimeError("The AI writer returned an unexpected format.")
 
     result, sources = _call("AI writer", "openrouter", bool(settings.OPENROUTER_API_KEY), run)
-    return result if json_mode else (result, sources)
+    return (result, sources) if search or not json_mode else result
 
 
 # ── fal.ai: voice, caption timing, images ─────────────────────────────────

@@ -392,8 +392,8 @@ AGENTS_DRY_RUN = os.getenv("AGENTS_DRY_RUN", "False").lower() in ("true", "1", "
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 # Up to 3, tried in order. Cheap paid models (tested 2026-10-14): about $0.001 per call.
 # ":free" models also work but have daily limits.
-AGENTS_OPENROUTER_MODELS = os.getenv(
-    "AGENTS_OPENROUTER_MODELS", "google/gemini-2.5-flash-lite,qwen/qwen3.7-flash,deepseek/deepseek-v4-flash"
+AGENTS_OPENROUTER_MODELS = (
+    os.getenv("AGENTS_OPENROUTER_MODELS") or "google/gemini-2.5-flash-lite,qwen/qwen3.7-flash,deepseek/deepseek-v4-flash"
 )
 # OpenRouter web search for research (paid per search; without credit, research skips it).
 AGENTS_SEARCH_ENGINE = os.getenv("AGENTS_SEARCH_ENGINE", "exa")

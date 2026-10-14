@@ -9,6 +9,7 @@ deploy it, and run it. Every run is processed in the background by the **agents 
 | **Script Writer** | Single task | Topic → Short script (scenes, title, description, tags) |
 | **Voiceover** | Single task | Text → MP3 voice recording |
 | **Video Editor** | Full automation | Your own video (up to 3 min) → cut, cleaned, captioned and reframed, with your approval |
+| **Trend Finder** | Single task | Your niche → 5–8 topics rising this week, each with why, a scored hook and a source; make a Short or add it to Autopilot in one click |
 | **Cross-poster** | Full automation | A Library video → a post for YouTube, Instagram and Facebook; you check them, it posts now or later |
 
 ---
@@ -52,6 +53,16 @@ Upload / pick a Library video → Check (length, sound) → Transcript (fal Whis
   Studio ≈ 0.22 credits per minute at today's fal prices, before any change to the markup).
 - If a paid audio service fails, the free filter is used and the workflow says so.
 - Code: `agents/video_edit.py`; plan: `docs/plans/2026-10-13-video-editor-agent.md`.
+
+## How the Trend Finder works
+
+- One OpenRouter call with web search (always searches) for news, launches and viral topics from the
+  last 14 days in the niche. The brand name is not sent (it would find news about that company).
+- Skips topics the project's agents already covered (last 30 runs). Each trend gets a hook score.
+- A source link is shown only if it came from the search results, never one the model made up.
+- **Make a Short** starts the project's YouTube Shorts Creator with that topic; **Add to Autopilot**
+  appends it to that agent's topic queue. About 0.01 credits per run.
+- Code: `step_trends` in `agents/steps.py`, UI `AgentTrendList.jsx`.
 
 ## How the Cross-poster works
 

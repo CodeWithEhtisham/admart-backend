@@ -107,6 +107,7 @@ STEP_BLOCKS = {
     "render_edit": {"label": "Render the edited video", "needs": ["plan_edit"]},
     "package": {"label": "Write title, description and thumbnail", "needs": ["render_edit"]},
     "finish": {"label": "Save the video to the library", "needs": []},
+    "trends": {"label": "Find trending topics (web search)", "needs": []},
     "fetch": {"label": "Read a library video to post", "needs": []},
     "listen": {"label": "Transcribe it (first 3 minutes)", "needs": ["fetch"]},
     "write_post": {"label": "Write a post for each connected platform", "needs": ["listen"]},
@@ -114,7 +115,7 @@ STEP_BLOCKS = {
     "wait": {"label": "Wait for the chosen time", "needs": ["review_post"]},
     "post": {"label": "Post to the platforms", "needs": ["review_post"]},
 }
-TOPIC_STEPS = ("research", "concepts", "script")  # need a topic as input
+TOPIC_STEPS = ("research", "concepts", "script", "trends")  # need a topic as input
 VIDEO_STEPS = ("prepare", "transcribe", "clean_audio", "plan_edit", "review_edit", "render_edit", "package")
 POST_STEPS = ("fetch", "listen", "write_post", "review_post", "wait", "post")
 PROMPT_KEYS = ("research", "concepts", "script")
@@ -137,6 +138,8 @@ class AgentSpec:
 
     @property
     def input_label(self) -> str:
+        if "trends" in self.steps:
+            return "Your niche"
         return {"topic": "Topic", "text": "Text to speak", "video": "Your video"}.get(self.input_kind, "Input")
 
 
@@ -157,6 +160,15 @@ BUILTIN_AGENTS: dict[str, AgentSpec] = {
             input_hint="e.g. 3 surprising facts about coffee",
             review=True,
             uses=("script-writer", "voiceover"),
+        ),
+        AgentSpec(
+            slug="trend-finder",
+            name="Trend Finder",
+            kind="small",
+            description="Finds what's rising this week in your niche, with sources and a ready hook. "
+            "Make a Short from any of them, or add it to Autopilot.",
+            steps=("trends",),
+            input_hint="Your niche, e.g. home coffee brewing",
         ),
         AgentSpec(
             slug="script-writer",
@@ -290,7 +302,7 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     usd = Decimal("0")
     from agents import providers
 
-    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package", "write_post"))
+    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package", "write_post", "trends"))
     if "prepare" in spec.steps:  # video: priced by length (seconds probed when the run starts)
         minutes = Decimal(str(run_input.get("seconds") or MAX_VIDEO_SECONDS)) / Decimal(60)
         audio = AUDIO_LEVELS[video_settings(config or {})[2]][2]
@@ -299,8 +311,7 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
         seconds = min(Decimal(str(run_input.get("seconds") or 180)), Decimal(180))
         usd += seconds / Decimal(60) * Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
     usd += providers.text_usd() * llm_calls
-    if "research" in spec.steps:
-        usd += providers.research_usd()
+    usd += providers.research_usd() * sum(step in spec.steps for step in ("research", "trends"))
     if "visuals" in spec.steps:
         usd += _image_usd() * SHORT_SCENES  # worst case: every scene an AI image
     if "voice" in spec.steps:

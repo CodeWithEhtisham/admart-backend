@@ -40,6 +40,7 @@ STEP_LABELS = {
     "plan_edit": "planning the cuts",
     "render_edit": "editing your video",
     "package": "writing the title and thumbnail",
+    "trends": "finding trends",
     "fetch": "reading your video",
     "listen": "transcribing your video",
     "write_post": "writing the posts",

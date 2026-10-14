@@ -1,6 +1,6 @@
 # Agents worker — server setup
 
-Agent runs (YouTube Shorts Creator, Script Writer, Voiceover) are processed by a separate
+Agent runs (Shorts Creator, Script Writer, Voiceover, Video Editor, Cross-poster) are processed by a separate
 process, `manage.py run_agents_worker`. Without it, runs stay "Queued".
 
 Nothing in `deploy/` or the CI workflow changes. These are one-time steps on the VPS.
@@ -18,8 +18,8 @@ Agents use two services:
 
 | Job | Service | Key |
 |---|---|---|
-| Research, ideas, script | OpenRouter (free `:free` models by default) | `OPENROUTER_API_KEY` |
-| Research web search | OpenRouter web search (paid per search; skipped without credit) | same |
+| Research, ideas, script, posts | OpenRouter (cheap paid models, ~$0.001 per call) | `OPENROUTER_API_KEY` |
+| Research web search | OpenRouter web search (~$0.007 per Short; skipped without credit) | same |
 | Voice | fal.ai Kokoro | `FAL_KEY` |
 | Caption timing | fal.ai Whisper (else an even estimate) | same |
 | Images | fal.ai FLUX schnell | same |

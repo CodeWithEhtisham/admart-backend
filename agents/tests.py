@@ -1,3 +1,4 @@
+import json
 import shutil
 import tempfile
 from datetime import timedelta
@@ -611,7 +612,7 @@ class RecipeTests(_AgentAPITestCase):
 
     def test_builtin_recipes_are_seeded_and_listed(self) -> None:
         slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
-        self.assertEqual(slugs, ["youtube-shorts", "video-editor", "cross-poster", "script-writer", "voiceover"])
+        self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "video-editor", "cross-poster", "script-writer", "voiceover"])
         editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
 
@@ -1090,3 +1091,58 @@ class CrossPosterTests(_AgentAPITestCase):
         asset = self._upload()
         response = self.start(self.deploy("cross-poster"), assetId=str(asset.id))
         self.assertEqual(response.data["code"], "NOT_CONNECTED")
+
+
+@override_settings(**HERMETIC)
+class ScriptLengthTests(_AgentAPITestCase):
+    @patch("agents.providers.requests.post")
+    def test_a_long_script_is_rewritten_once(self, post) -> None:
+        def script(words):
+            return chat(json.dumps({"title": "T", "scenes": [{"narration": " ".join(["word"] * words), "visual": "image",
+                                                              "image_prompt": "x"}] * 3}))
+        post.side_effect = [script(40), script(20)]  # 120 words for a 30 s Short (limit 65), then 60
+        deployment = self.deploy(config={"length": 30})
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "t"})
+        steps.step_script(run)
+        self.assertEqual(post.call_count, 2)
+        self.assertIn("at most 65 words", post.call_args.kwargs["json"]["messages"][1]["content"])
+        self.assertEqual(sum(len(s["narration"].split()) for s in run.output["scenes"]), 60)
+
+
+class TrendFinderTests(_AgentAPITestCase):
+    def test_dry_run_lists_trends_with_scored_hooks(self) -> None:
+        with override_settings(AGENTS_DRY_RUN=True):
+            deployment = self.deploy("trend-finder")
+            run_id = self.start(deployment, topic="home coffee brewing").data["id"]
+            call_command("run_agents_worker", "--once", stdout=MagicMock())
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual(run.status, "succeeded", run.error)
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertEqual(len(detail["trends"]), 5)
+        self.assertIn("band", detail["trends"][0])
+        self.assertEqual(detail["title"], "Trends in home coffee brewing")
+
+    @patch("agents.providers.requests.post")
+    def test_keeps_only_sources_the_search_returned(self, post) -> None:
+        AgentRun.objects.create(deployment=self.deploy("youtube-shorts"), project=self.project, user=self.user,
+                                input={"topic": "cold brew at home"})
+        answer = {"trends": [
+            {"topic": "Cloud coffee", "why_now": "Viral this week.", "hook": "You can make cloud coffee in 2 minutes.",
+             "source": "https://real.example/cloud"},
+            {"topic": "Bean prices", "why_now": "Up again.", "hook": "Your coffee costs more this month.",
+             "source": "https://made-up.example/x"},
+            "not a trend",
+        ]}
+        post.return_value = chat(json.dumps(answer), [{"type": "url_citation", "url_citation": {
+            "url": "https://real.example/cloud", "title": "Cloud coffee"}}])
+        deployment = self.deploy("trend-finder")
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
+                                      input={"topic": "home coffee"})
+        steps.step_trends(run)
+        trends = run.output["trends"]
+        self.assertEqual([t["topic"] for t in trends], ["Cloud coffee", "Bean prices"])
+        self.assertEqual(trends[0]["source"]["uri"], "https://real.example/cloud")
+        self.assertIsNone(trends[1]["source"])  # a link the search didn't return is dropped
+        sent = post.call_args.kwargs["json"]
+        self.assertEqual(sent["plugins"][0]["id"], "web")
+        self.assertIn("- cold brew at home", sent["messages"][1]["content"])  # avoids covered topics
