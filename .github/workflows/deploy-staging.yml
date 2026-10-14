@@ -83,4 +83,12 @@ jobs:
         env:
           TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
           BACKEND_DIR: ${{ vars.BACKEND_DIR || '/srv/admart/backend' }}
-        run: ssh "$TARGET" "bash $BACKEND_DIR/deploy/deploy.sh staging"
+        run: |
+          # Strip CRLF from the server .env BEFORE deploy.sh runs. A CRLF-saved
+          # .env smuggles a bad Host header into the health check (gunicorn:
+          # "Invalid HTTP Header: 'HOST'" -> false 400 -> failed deploy). The
+          # deploy job runs the server's on-disk deploy.sh, and that script only
+          # swaps in its new self-healing copy via `git reset` *after* bash has
+          # already read the old one -- so sanitize here to fix the first run too.
+          ssh "$TARGET" "sed -i 's/\r\$//' $BACKEND_DIR/.env 2>/dev/null || true"
+          ssh "$TARGET" "bash $BACKEND_DIR/deploy/deploy.sh staging"
