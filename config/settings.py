@@ -253,10 +253,15 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 
 # HTTPS hardening (production runs behind nginx terminating TLS).
+# Deployments served over plain HTTP (e.g. an IP-only VPS before TLS is set up)
+# must set COOKIE_SECURE=False, otherwise the browser refuses to send the
+# CSRF/session cookies over http and the Django admin login fails with
+# "CSRF verification failed". Defaults keep the secure (HTTPS) behaviour.
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    _cookie_secure = os.getenv("COOKIE_SECURE", "True").lower() in ("true", "1", "yes")
+    SESSION_COOKIE_SECURE = _cookie_secure
+    CSRF_COOKIE_SECURE = _cookie_secure
     SESSION_COOKIE_HTTPONLY = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = "DENY"
