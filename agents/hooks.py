@@ -101,7 +101,8 @@ def score_hook(hook: str) -> dict:
              "curiosity": _curiosity(hook), "brevity": _brevity(hook)}
     score = round(0.6 * sum(parts.values()) / len(parts) + 0.4 * min(parts.values()))
     weakest = min(parts, key=parts.get)
-    band = "STRONG" if score >= 72 else "WORKABLE" if score >= 55 else "WEAK"
+    # Calibrated on real hooks: good ones score about 42-55, generic openers 20-36.
+    band = "STRONG" if score >= 50 else "WORKABLE" if score >= 40 else "WEAK"
     return {"score": score, "band": band, "weakest": weakest, "fix": FIX[weakest]}
 
 
@@ -138,6 +139,7 @@ def lint_title(title: str, thumb: str = "") -> list[str]:
 if __name__ == "__main__":  # quick self-check
     weak, strong = score_hook("Today we talk about coffee."), score_hook("Your espresso is lying to you: crema can hide a stale bean in 25 seconds.")
     assert weak["score"] < strong["score"], (weak, strong)
+    assert (weak["band"], strong["band"]) == ("WEAK", "WORKABLE"), (weak, strong)
     assert len(FORMULAS) == 21
     assert lint_title("Why crema forms", "BUBBLE MAGIC") == []
     assert any("repeats" in i for i in lint_title("Why crema forms", "CREMA"))

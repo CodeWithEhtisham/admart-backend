@@ -72,23 +72,23 @@ def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperatu
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
         "max_tokens": 8000,
-        "reasoning": {"effort": "low"},  # free models "think" first: leave room for the answer
+        # Thinking made cheap models ~10x slower (70 s) and sometimes left no answer (tested 2026-10-14).
+        "reasoning": {"enabled": False},
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     if search:
-        body["tools"] = [{"type": "openrouter:web_search",
-                          "parameters": {"engine": settings.AGENTS_SEARCH_ENGINE, "max_results": 5}}]
+        # The web plugin always searches (the web_search tool lets the model skip it) and works with "models".
+        body["plugins"] = [{"id": "web", "engine": settings.AGENTS_SEARCH_ENGINE, "max_results": 5}]
 
     def post():
         return requests.post(OPENROUTER_URL, headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
                              json=body, timeout=180)
 
     response = post()
-    if search and not response.ok:  # e.g. no credit for paid search, or the model can't use tools
+    if search and not response.ok:  # e.g. no credit for paid search
         logger.warning("Web search unavailable (%s); researching without it", response.status_code)
-        del body["tools"]
-        search = False
+        del body["plugins"]
         response = post()
     response.raise_for_status()
     message = response.json()["choices"][0]["message"]

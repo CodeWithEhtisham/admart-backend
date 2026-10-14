@@ -70,7 +70,7 @@ Pick a Library video → Check (length, shape, sound) → Transcript of the firs
 - Every post is a **Publish job**, so it shows in Calendar and Analytics.
 - A retry re-posts only platforms that failed; an upload cut off mid-way is never repeated
   automatically (check the platform first).
-- About 0.04 credits per post at most (transcription only; the AI writer uses free models).
+- About 0.04 credits per post at most (mostly transcription; the post writing is one cheap text call).
 - Code: `agents/cross_post.py`; plan: `docs/plans/2026-10-14-cross-poster-agent.md`.
 
 ---
@@ -113,7 +113,7 @@ back to an estimate).
 
 | Purpose | Model now (setting) | Cost | Alternatives (same service) |
 |---|---|---|---|
-| Ideas, script, auto-topics | OpenRouter `google/gemma-4-31b-it:free` → `nvidia/nemotron-3-super-120b-a12b:free` → `google/gemma-4-26b-a4b-it:free` (`AGENTS_OPENROUTER_MODELS`, tried in order) | **$0** (free models; daily limits) | Paid, steadier: `deepseek/deepseek-v4.1-flash` ($0.15/$0.60 per M tokens in/out), `anthropic/claude-haiku-5.5` ($0.10/$0.50), `google/gemini-3.5-flash-lite` ($0.30/$2.50). ~10k tokens per Short ≈ $0.003–0.015 |
+| Ideas, script, auto-topics, posts | OpenRouter `google/gemini-2.5-flash-lite` → `qwen/qwen3.7-flash` → `deepseek/deepseek-v4-flash` (`AGENTS_OPENROUTER_MODELS`, tried in order) | ~$0.001 per call, ~$0.003 per Short (`AGENTS_LLM_USD_PER_RUN`). Tested 2026-10-14: Gemini fastest (8 s) with the best hooks; Qwen good but slow (~70 s); DeepSeek cheapest but sometimes returns nothing; GLM 4.7 Flash failed | Free (daily limits): `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-super-120b-a12b:free` |
 | Research facts | Same models + OpenRouter web search, engine `exa` (`AGENTS_SEARCH_ENGINE`) | ~$0.007 per Short (one search). **Skipped without credit**: research then uses the model's own knowledge | Engines `parallel` (~$0.001), `perplexity` (~$0.005) |
 | Voice | fal `fal-ai/kokoro/american-english` / `british-english` (6 voices picked per agent) | $0.02 per 1,000 characters ≈ **$0.01–0.02** per Short | fal Chatterbox (~$0.025/1K chars), Gemini 3.1 Flash TTS on fal (~$0.15/1K chars) |
 | Caption timing | fal `fal-ai/whisper`, word level (`AGENTS_WHISPER_MODEL`) | Billed per compute second; estimate **~$0.01** per Short | None needed: without it captions use an even estimate |

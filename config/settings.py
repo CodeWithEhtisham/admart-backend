@@ -390,16 +390,17 @@ PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
 # Dry run: template script, placeholder images, silent audio, no provider calls, 0 credits.
 AGENTS_DRY_RUN = os.getenv("AGENTS_DRY_RUN", "False").lower() in ("true", "1", "yes")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-# Up to 3, tried in order by OpenRouter. ":free" models cost nothing but have daily limits.
+# Up to 3, tried in order. Cheap paid models (tested 2026-10-14): about $0.001 per call.
+# ":free" models also work but have daily limits.
 AGENTS_OPENROUTER_MODELS = os.getenv(
-    "AGENTS_OPENROUTER_MODELS", "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-26b-a4b-it:free"
+    "AGENTS_OPENROUTER_MODELS", "google/gemini-2.5-flash-lite,qwen/qwen3.7-flash,deepseek/deepseek-v4-flash"
 )
 # OpenRouter web search for research (paid per search; without credit, research skips it).
 AGENTS_SEARCH_ENGINE = os.getenv("AGENTS_SEARCH_ENGINE", "exa")
 AGENTS_IMAGE_MODEL = os.getenv("AGENTS_IMAGE_MODEL", "fal-ai/flux/schnell")
 AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "fal-ai/whisper")
 # Cost estimates used for credit quotes (USD). Image prices come from fal's pricing API.
-AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0")  # per text call; 0 with free models
+AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0.001")  # per text call; 0 with free models
 AGENTS_SEARCH_USD = os.getenv("AGENTS_SEARCH_USD", "0.007")  # one Exa web search
 AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.02")  # Kokoro on fal
 AGENTS_CAPTIONS_USD_PER_RUN = os.getenv("AGENTS_CAPTIONS_USD_PER_RUN", "0.01")  # Whisper on fal, all scenes

@@ -309,7 +309,7 @@ class ProviderStepTests(_AgentAPITestCase):
         run = self._run()
         steps.step_research(run)
         self.assertEqual(run.output["research"]["sources"], [{"title": "X", "uri": "https://x.org"}])
-        self.assertEqual(post.call_args.kwargs["json"]["tools"][0]["type"], "openrouter:web_search")
+        self.assertEqual(post.call_args.kwargs["json"]["plugins"][0]["id"], "web")  # always searches
 
     @patch("agents.providers.requests.post")
     def test_research_without_search_credit_still_runs(self, post) -> None:
@@ -318,7 +318,7 @@ class ProviderStepTests(_AgentAPITestCase):
         with self.assertLogs("agents.providers", "WARNING"):
             steps.step_research(run)
         self.assertEqual(run.output["research"]["notes"], "- Fact")
-        self.assertNotIn("tools", post.call_args.kwargs["json"])
+        self.assertNotIn("plugins", post.call_args.kwargs["json"])
 
     @override_settings(PEXELS_API_KEY="p")
     @patch("agents.steps.requests.get")
