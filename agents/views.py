@@ -22,7 +22,7 @@ from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics,
 from agents.registry import (
     MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, get_agent, image_credits,
 )
-from agents.clips import max_seconds, parse_youtube_url, youtube_info
+from agents.clips import caption_fixes, max_seconds, parse_youtube_url, youtube_info
 from agents.cross_post import connected
 from agents.hooks import lint_title
 from agents.steps import clean_script, scored_hook
@@ -573,6 +573,16 @@ class RunActionView(_ProjectScoped):
             for key, limit in (("hook", 80), ("title", 90)):
                 if isinstance(pick.get(key), str):
                     moment[key] = " ".join(pick[key].split())[:limit]
+            captions = pick.get("captions")
+            if isinstance(captions, str) and moment.get("w"):
+                if len(captions) > 5000 or not captions.strip():
+                    return "Captions must be 1 to 5,000 characters."
+                first, last = moment["w"]
+                fixes = out.setdefault("caption_fixes", {})
+                for key in [k for k in fixes if first <= int(k) <= last]:  # replace earlier edits of this clip
+                    del fixes[key]
+                fixes.update({str(i): w for i, w in caption_fixes(out.get("words") or [], first, last, captions).items()})
+                moment["text"] = " ".join(captions.split())[:2000]
         if not any(m["keep"] for m in changed):
             return "Pick at least one clip."
         out["moments"] = changed

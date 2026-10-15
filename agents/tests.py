@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import tempfile
 from datetime import timedelta
@@ -617,6 +618,9 @@ class RecipeTests(_AgentAPITestCase):
         self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "video-editor", "cross-poster", "clip-maker", "script-writer", "voiceover"])
         editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
+        clip = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "clip-maker")
+        self.assertEqual([c["id"] for c in clip["captionStyles"]], ["classic", "bold", "boxed", "minimal"])
+        self.assertEqual(clip["layouts"][0]["id"], "auto")
 
     def test_owner_creates_an_agent_that_users_can_deploy_and_run(self) -> None:
         self.client.force_authenticate(self.owner)
@@ -1604,3 +1608,126 @@ class YoutubeRobustnessTests(SimpleTestCase):
                                                    "port=443): Read timed out.. Giving up after 3 retries"))
         self.assertIn("slow", str(error))
         self.assertIn("Try again", str(error))
+
+
+class CaptionStyleTests(SimpleTestCase):
+    WORDS = _w("so here is the one thing nobody tells you", 0, 0.4)
+
+    @staticmethod
+    def _lines(ass):
+        return [line.split(",,", 1)[1] for line in ass.splitlines() if line.startswith("Dialogue:") and ",Cap," in line]
+
+    def test_classic_is_the_shorts_caption_look(self) -> None:
+        from agents import clips
+
+        self.assertEqual(clips.clip_ass(self.WORDS, "", 4.0, "#FFD400", "classic"),
+                         render.build_captions([{"words": self.WORDS, "duration": 4.0}], "#FFD400"))
+
+    def test_bold_is_big_uppercase_two_words_at_a_time(self) -> None:
+        from agents import clips
+
+        lines = self._lines(clips.clip_ass(self.WORDS, "", 4.0, "#FFD400", "bold"))
+        plain = [re.sub(r"\{[^}]*\}", "", t) for t in lines]
+        self.assertTrue(all(t == t.upper() for t in plain))
+        self.assertTrue(all(len(t.split()) <= 2 for t in plain))
+        self.assertIn("NOBODY", " ".join(plain))
+
+    def test_boxed_puts_the_spoken_word_in_a_brand_box(self) -> None:
+        from agents import clips
+
+        lines = self._lines(clips.clip_ass(self.WORDS, "", 4.0, "#FF0000", "boxed"))
+        self.assertTrue(all("\\3c&H000000FF&" in t and "\\bord" in t for t in lines))
+
+    def test_minimal_has_no_highlight(self) -> None:
+        from agents import clips
+
+        lines = self._lines(clips.clip_ass(self.WORDS, "", 4.0, "#FFD400", "minimal"))
+        self.assertTrue(lines)
+        self.assertFalse(any("\\c" in t for t in lines))
+
+    def test_hook_box_works_with_every_style(self) -> None:
+        from agents import clips
+
+        for style in clips.CAPTION_STYLES:
+            ass = clips.clip_ass(self.WORDS, "Watch this", 4.0, "#FFD400", style)
+            self.assertIn("Style: Hook,", ass, style)
+            self.assertIn(",Hook,,0,0,0,,Watch this", ass, style)
+
+    def test_unknown_style_falls_back_to_classic(self) -> None:
+        from agents import clips
+
+        self.assertEqual(clips.caption_style({"captionStyle": "nope"}), "classic")
+        self.assertEqual(clips.caption_style({"captionStyle": "bold"}), "bold")
+
+
+class CaptionEditTests(SimpleTestCase):
+    WORDS = _w("I bring you frank sent this um she said", 0)
+
+    def test_edits_line_up_with_the_spoken_words(self) -> None:
+        from agents import clips
+
+        fix = lambda text: clips.caption_fixes(self.WORDS, 0, len(self.WORDS) - 1, text)
+        self.assertEqual(fix("I bring you frank sent this um she said"), {})
+        self.assertEqual(fix("I bring you frank sent this um she said!"), {8: "said!"})
+        self.assertEqual(fix("I bring you frankincense um she said"), {3: "frankincense", 4: "", 5: ""})
+        self.assertEqual(fix("I bring you frank sent this she said"), {6: ""}, "a deleted word is hidden")
+        self.assertEqual(fix("I bring you frank sent this um, she said"), {6: "um,"})
+        self.assertEqual(fix("I really bring you frank sent this um she said"), {0: "I really"}, "an added word joins the one before")
+
+    def test_check_in_saves_caption_fixes_for_the_render(self) -> None:
+        from agents.views import RunActionView
+
+        out = {"words": self.WORDS, "clip_info": {"duration": 10},
+               "moments": [{"start": 0, "end": 4.5, "keep": True, "hook": "", "title": "t", "w": [0, 8],
+                            "text": " ".join(w["word"] for w in self.WORDS)}]}
+        problem = RunActionView._apply_clips(out, {"clips": [{"index": 0, "keep": True,
+                                                              "captions": "I bring you frankincense um she said"}]})
+        self.assertIsNone(problem)
+        self.assertEqual(out["caption_fixes"], {"3": "frankincense", "4": "", "5": ""})
+        self.assertIn("frankincense", out["moments"][0]["text"])
+        self.assertIsNotNone(RunActionView._apply_clips(out, {"clips": [{"index": 0, "keep": True, "captions": "x" * 5001}]}))
+
+    def test_render_uses_the_fixed_words(self) -> None:
+        from agents import clips
+
+        fixed = clips.fixed_words(self.WORDS, {"3": "frankincense", "4": "", "5": ""})
+        self.assertEqual([w["word"] for w in fixed][2:6], ["you", "frankincense", "", ""])
+        self.assertEqual(fixed[3]["start"], self.WORDS[3]["start"])
+
+
+class TightenTests(SimpleTestCase):
+    def test_long_pauses_and_ums_are_cut(self) -> None:
+        from agents import clips
+
+        words = _w("hello there friend", 0.2) + _w("um so the point is", 4.0)  # 2.6 s pause, then an "um"
+        cuts = clips.tight_cuts(words, 7.0)
+        pause = next(c for c in cuts if "pause" in c["reasons"])
+        self.assertAlmostEqual(pause["start"], 1.6 + 0.2, delta=0.01)  # "friend" ends at 1.6 s
+        self.assertGreaterEqual(pause["end"], 3.8 - 0.01)
+        self.assertTrue(any("filler" in c["reasons"] for c in cuts) or pause["end"] >= 4.4)
+        self.assertEqual(clips.tight_cuts(_w("no gaps at all here", 0), 3.0), [])
+
+    def test_times_map_onto_the_tightened_clip(self) -> None:
+        from agents import clips
+
+        segments = [(0.0, 2.0), (5.0, 7.0)]
+        self.assertEqual(clips.map_time(1.0, segments), 1.0)
+        self.assertEqual(clips.map_time(3.0, segments), 2.0)  # inside a cut: where the cut is
+        self.assertEqual(clips.map_time(6.0, segments), 3.0)
+
+    def test_tightened_render_is_shorter_and_keeps_sound(self) -> None:
+        from agents import clips
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        src = work / "src.mp4"
+        render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=8:r=30", "-f", "lavfi",
+                     "-i", "aevalsrc='if(between(t,2,5),0,0.5*sin(440*2*PI*t))':s=44100:d=8",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(src)])
+        words = _w("one two three", 0.5) + _w("four five six", 5.2)  # 3.3 s pause between them
+        out = work / "clip.mp4"
+        length = clips.render_clip(src, {"start": 0, "end": 7.5, "hook": "Hi"}, words, "fit", "#FFD400", out, work,
+                                   tighten=True)
+        info = render.check_video(out, expect_sound=True)
+        self.assertLess(info["duration"], 5.5)
+        self.assertAlmostEqual(info["duration"], length, delta=0.15)

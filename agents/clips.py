@@ -9,6 +9,7 @@ Plan: docs/plans/2026-10-14-clip-maker-agent.md
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
 import re
@@ -22,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from django.conf import settings
 
-from agents import providers, reframe, render
+from agents import providers, reframe, render, video_edit
 from agents import steps as base
 from agents.video_edit import VIDEO_SUFFIXES, asset_file, probe
 from content.models import LibraryAsset
@@ -430,7 +431,8 @@ def _clean_moment(raw: dict, sents: list[dict], low: float, high: float, duratio
         return None
     text = " ".join(s["text"] for s in sents[edges["from"] : edges["to"] + 1])
     hook = " ".join(str(raw.get("hook") or "").split()[:8])[:80]
-    return {**edges, "score": score, "title": " ".join(str(raw.get("title") or "").split())[:90] or hook or text[:60],
+    span = [sents[edges["from"]]["first"], sents[edges["to"]]["last"]]  # word indexes, for caption edits
+    return {**edges, "w": span, "score": score, "title": " ".join(str(raw.get("title") or "").split())[:90] or hook or text[:60],
             "hook": hook, "reason": " ".join(str(raw.get("reason") or "").split())[:200], "text": text[:2000]}
 
 
@@ -564,21 +566,98 @@ def step_review_clips(run) -> None:
     raise base.NeedsReview("clips")
 
 
+def caption_fixes(words: list[dict], first: int, last: int, text: str) -> dict:
+    """{word index: new text} that turns words[first..last] into `text`, keeping every word's timing.
+
+    Changed words are replaced; a deleted word becomes "" (not shown); an added word joins the word
+    before it; several words rewritten as fewer (or more) go on the first of them.
+    """
+    old = [w["word"] for w in words[first : last + 1]]
+    new = text.split()
+    fixes = {}
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        if op == "insert":
+            at = max(i1 - 1, 0)
+            current = fixes.get(first + at, old[at])
+            fixes[first + at] = " ".join([*new[j1:j2], current] if i1 == 0 else [current, *new[j1:j2]])
+        elif op == "replace" and i2 - i1 == j2 - j1:
+            fixes.update({first + i1 + k: new[j1 + k] for k in range(i2 - i1)})
+        else:  # delete, or a different number of words
+            fixes[first + i1] = " ".join(new[j1:j2])
+            fixes.update({first + k: "" for k in range(i1 + 1, i2)})
+    return fixes
+
+
+def fixed_words(words: list[dict], fixes: dict) -> list[dict]:
+    """Words with the user's caption fixes applied (timings unchanged)."""
+    return [{**w, "word": fixes[str(i)]} if str(i) in fixes else w for i, w in enumerate(words)]
+
+
 def clip_words(words: list[dict], start: float, end: float) -> list[dict]:
     """The words inside [start, end], timed from the clip's start."""
     return [{"word": w["word"], "start": round(max(0.0, w["start"] - start), 3), "end": round(w["end"] - start, 3)}
             for w in words if w["start"] >= start - 0.05 and w["end"] <= end + 0.05]
 
 
-def _captions(words: list[dict], hook: str, duration: float, highlight: str) -> str:
-    """Word-highlight captions, plus the hook in a box at the top for the first seconds."""
+# id -> (label, words per line, font size, UPPERCASE, highlight: "colour" | "box" | None, height from bottom)
+CAPTION_STYLES = {
+    "classic": ("Classic · white, the spoken word in your brand colour", 3, 78, False, "colour", 0.27),
+    "bold": ("Bold · big uppercase, two words at a time", 2, 96, True, "colour", 0.30),
+    "boxed": ("Boxed · the spoken word in a brand-colour box", 3, 80, False, "box", 0.27),
+    "minimal": ("Minimal · smaller, lower, no highlight", 5, 60, False, None, 0.16),
+}
+
+
+def caption_style(config: dict) -> str:
+    style = (config or {}).get("captionStyle")
+    return style if style in CAPTION_STYLES else "classic"
+
+
+def _styled_captions(words: list[dict], duration: float, highlight: str, style: str) -> str:
+    """ASS captions in one of the CAPTION_STYLES (classic is the Shorts look from render.build_captions)."""
     width, height = render.WIDTH, render.HEIGHT
-    ass = render.build_captions([{"words": words, "duration": duration}], highlight, (width, height))
+    if style == "classic":
+        return render.build_captions([{"words": words, "duration": duration}], highlight, (width, height))
+    _label, per_line, size, upper, mode, lift = CAPTION_STYLES[style]
+    head = (
+        f"[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
+        "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Cap,DejaVu Sans,{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,"
+        f"100,100,0,0,1,{8 if upper else 6},2,2,60,60,{round(height * lift)},1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    color = render._ass_color(highlight)
+    words = [w for w in words if w.get("word")]
+    lines = []
+    for i in range(0, len(words), per_line):
+        group = words[i : i + per_line]
+        texts = [render._ass_text(w["word"].upper() if upper else w["word"]) for w in group]
+        for k, current in enumerate(group):
+            end = group[k + 1]["start"] if k + 1 < len(group) else current["end"]
+            if mode == "colour":
+                shown = [f"{{\\c{color}}}{t}{{\\c&H00FFFFFF&}}" if j == k else t for j, t in enumerate(texts)]
+            elif mode == "box":  # a thick outline in the brand colour reads as a box behind the word
+                shown = [f"{{\\3c{color}&\\bord14}}{t}{{\\3c&H00000000&\\bord6}}" if j == k else t
+                         for j, t in enumerate(texts)]
+            else:
+                shown = texts
+            lines.append(f"Dialogue: 0,{render._ass_time(current['start'])},"
+                         f"{render._ass_time(max(end, current['start'] + 0.05))},Cap,,0,0,0,,{' '.join(shown)}")
+    return head + "\n".join(lines) + "\n"
+
+
+def clip_ass(words: list[dict], hook: str, duration: float, highlight: str, style: str = "classic") -> str:
+    """Captions in the chosen style, plus the hook in a box at the top for the first seconds."""
+    ass = _styled_captions(words, duration, highlight, style)
     if not hook:
         return ass
-    style = (f"Style: Hook,DejaVu Sans,66,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,"
-             f"100,100,0,0,3,18,0,8,90,90,{round(height * 0.11)},1\n")
-    ass = ass.replace("\n\n[Events]", "\n" + style.rstrip("\n") + "\n\n[Events]", 1)
+    hook_style = (f"Style: Hook,DejaVu Sans,66,&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,"
+                  f"100,100,0,0,3,18,0,8,90,90,{round(render.HEIGHT * 0.11)},1")
+    ass = ass.replace("\n\n[Events]", "\n" + hook_style + "\n\n[Events]", 1)
     end = render._ass_time(min(HOOK_SECONDS, duration))
     return ass + f"Dialogue: 1,0:00:00.00,{end},Hook,,0,0,0,,{render._ass_text(hook)}\n"
 
@@ -599,30 +678,94 @@ def _video_filter(layout: str, captions: Path) -> str:
     return f"[0:v]fps={render.FPS},{picture},setsar=1,{_burn(captions)}[v]"
 
 
+TIGHT_PAUSE = 0.6  # with "tighten", pauses between words longer than this are cut (keeping 0.2 s each side)
+
+
+def tight_cuts(words: list[dict], length: float) -> list[dict]:
+    """Long pauses between words and um/uh inside a clip (clip-relative words)."""
+    cuts = [{"start": a["end"] + video_edit.PAD, "end": b["start"] - video_edit.PAD, "reasons": ["pause"]}
+            for a, b in zip(words, words[1:]) if b["start"] - a["end"] > TIGHT_PAUSE]
+    cuts += video_edit.filler_cuts(words, "normal", length)
+    return video_edit.merge_cuts(cuts, length) if cuts else []
+
+
+def map_time(t: float, segments: list[tuple]) -> float:
+    """A time on the clip → the same moment on the tightened clip (inside a cut: where the cut is)."""
+    offset = 0.0
+    for a, b in segments:
+        if t < a:
+            return round(offset, 3)
+        if t <= b:
+            return round(offset + t - a, 3)
+        offset += b - a
+    return round(offset, 3)
+
+
+def _encode(source: Path, start: float, length: float, graph: str, out: Path) -> None:
+    render._run([
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", str(source),
+        "-filter_complex", graph, "-map", "[v]", "-map", "0:a:0",
+        "-af", "aresample=44100,loudnorm=I=-14:TP=-1.5:LRA=11", "-r", str(render.FPS),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out),
+    ], timeout=1800)
+
+
+def _cut(full: Path, segments: list[tuple], captions: Path, out: Path) -> None:
+    """Second pass for "tighten": keep only `segments` of the framed clip, then burn the captions."""
+    fps = render.FPS
+    select = "+".join(f"between(t,{a:.4f},{b - 0.5 / fps:.4f})" for a, b in segments)
+    graph = [f"[0:v]select='{select}',setpts=N/{fps}/TB,{_burn(captions)}[v]",
+             f"[0:a]asplit={len(segments)}" + "".join(f"[s{i}]" for i in range(len(segments)))]
+    for i, (a, b) in enumerate(segments):
+        fade = min(0.03, (b - a) / 3)
+        graph.append(f"[s{i}]atrim={a:.4f}:{b:.4f},asetpts=PTS-STARTPTS,afade=t=in:d={fade:.3f},"
+                     f"afade=t=out:st={b - a - fade:.4f}:d={fade:.3f}[p{i}]")
+    graph.append("".join(f"[p{i}]" for i in range(len(segments))) + f"concat=n={len(segments)}:v=0:a=1[a]")
+    render._run([
+        "ffmpeg", "-y", "-i", str(full), "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
+        "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out),
+    ], timeout=1800)
+
+
 def render_clip(source: Path, moment: dict, words: list[dict], layout: str, highlight: str, out: Path,
-                workdir: Path) -> float:
-    """One vertical clip with captions and hook; returns its length."""
+                workdir: Path, style: str = "classic", tighten: bool = False) -> float:
+    """One vertical clip with captions and hook; returns its length.
+
+    With `tighten`, the framed clip is made first, then pauses and ums are cut and captions retimed.
+    """
     length = moment["end"] - moment["start"]
+    spoken = clip_words(words, moment["start"], moment["end"])
+    hook = moment.get("hook", "")
+    segments = video_edit.kept_segments(tight_cuts(spoken, length), length) if tighten else None
+    if segments and length - sum(b - a for a, b in segments) < 0.3:
+        segments = None  # nothing worth cutting
     captions = workdir / f"{out.stem}.ass"
-    ass = _captions(clip_words(words, moment["start"], moment["end"]), moment.get("hook", ""), length, highlight)
-    graph = None
+    graph, seams = None, []
     if layout == "auto":
         info = probe(source)
         if info["width"] / max(info["height"], 1) > render.WIDTH / render.HEIGHT + 0.01:  # wider than vertical
             samples = reframe.analyze(source, moment["start"], length, info["width"], info["height"])
             shots = reframe.plan_shots(samples, info["width"], info["height"], length)
-            ass = reframe.seam_captions(ass, [(s["start"], s["end"]) for s in shots if s["layout"] == "split"])
+            seams = [(s["start"], s["end"]) for s in shots if s["layout"] == "split"]
             graph = reframe.video_filter(shots, info["width"], info["height"], workdir) + f";[vr]{_burn(captions)}[v]"
-    captions.write_text(ass, encoding="utf-8")
-    render._run([
-        "ffmpeg", "-y", "-ss", f"{moment['start']:.3f}", "-t", f"{length:.3f}", "-i", str(source),
-        "-filter_complex", graph or _video_filter("crop" if layout == "auto" else layout, captions),
-        "-map", "[v]", "-map", "0:a:0",
-        "-af", "aresample=44100,loudnorm=I=-14:TP=-1.5:LRA=11", "-r", str(render.FPS),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out),
-    ], timeout=1800)
-    return length
+    graph = graph or _video_filter("crop" if layout == "auto" else layout, captions)
+    if not segments:
+        captions.write_text(reframe.seam_captions(clip_ass(spoken, hook, length, highlight, style), seams),
+                            encoding="utf-8")
+        _encode(source, moment["start"], length, graph, out)
+        return length
+    captions.write_text(clip_ass([], "", length, highlight, style), encoding="utf-8")  # pass 1: picture only
+    full = workdir / f"{out.stem}-full.mp4"
+    _encode(source, moment["start"], length, graph, full)
+    tight = round(sum(b - a for a, b in segments), 3)
+    ass = clip_ass(video_edit.retime(spoken, segments), hook, tight, highlight, style)
+    seams = [(map_time(a, segments), map_time(b, segments)) for a, b in seams]
+    captions.write_text(reframe.seam_captions(ass, seams), encoding="utf-8")
+    _cut(full, segments, captions, out)
+    full.unlink(missing_ok=True)
+    return tight
 
 
 def step_render_clips(run) -> None:
@@ -643,7 +786,8 @@ def step_render_clips(run) -> None:
             clip = {key: moment.get(key) for key in ("start", "end", "score", "title", "hook", "reason", "text")}
             video = folder / f"clip-{n + 1}.mp4"
             try:
-                render_clip(source, moment, out["words"], layout, base.highlight(run), video, workdir)
+                render_clip(source, moment, fixed_words(out["words"], out.get("caption_fixes") or {}), layout, base.highlight(run), video, workdir,
+                            style=caption_style(base._config(run)), tighten=bool(base._config(run).get("tighten")))
                 result = render.check_video(video, expect_sound=not settings.AGENTS_DRY_RUN)
                 # The clip's own frame already shows the hook and captions: no second title on top.
                 render._run(["ffmpeg", "-y", "-ss", f"{min(1.0, result['duration'] / 2):.2f}", "-i", str(video),
