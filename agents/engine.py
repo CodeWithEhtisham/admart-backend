@@ -13,13 +13,14 @@ from django.utils import timezone
 from agents import providers
 from agents.models import AgentRun
 from agents.registry import get_agent
-from agents import cross_post, video_edit
+from agents import cross_post, growth, video_edit
 from agents.steps import STEPS, NeedsReview, WaitUntil
 from content.credits import refund_credits, reserve_credits
 
 # The Video Editor's and Cross-poster's steps live in their own modules (they import agents.steps).
 STEPS.update(video_edit.STEPS)
 STEPS.update(cross_post.STEPS)
+STEPS.update(growth.STEPS)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ STEP_LABELS = {
     "render_edit": "editing your video",
     "package": "writing the title and thumbnail",
     "trends": "finding trends",
+    "collect": "reading your analytics",
+    "analyze": "writing the report",
+    "deliver": "sending the report",
     "fetch": "reading your video",
     "listen": "transcribing your video",
     "write_post": "writing the posts",

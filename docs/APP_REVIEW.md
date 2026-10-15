@@ -39,12 +39,16 @@ Google Cloud Console → **Google Auth Platform** → Branding / Data access →
 | `openid`, `email`, `profile` | basic | Sign in with Google |
 | `https://www.googleapis.com/auth/youtube.upload` | sensitive | Upload videos the user approved |
 | `https://www.googleapis.com/auth/youtube.force-ssl` | sensitive | Read the connected channel's name; set a video's thumbnail; add a video to a playlist the user picks; list the user's playlists; read view, like and comment counts of videos published through Admart |
+| `https://www.googleapis.com/auth/yt-analytics.readonly` | sensitive | Growth Report: the channel's views, watch time, average view %, subscribers gained/lost and top videos for the period the user chose |
+| `https://www.googleapis.com/auth/yt-analytics-monetary.readonly` | sensitive | Growth Report: estimated revenue for monetized channels, shown only to the channel owner in their report |
 | `https://www.googleapis.com/auth/adwords` | sensitive | Only when the user connects Google Ads in Ads Manager, to create and read their own campaigns |
 
 **Justification text**, one per scope:
 
 - *youtube.upload:* "Admart uploads a video to the user's own YouTube channel only after the user reviews it, writes or approves the title, description, tags and privacy, and presses Publish or schedules it. We call videos.insert with exactly what the user approved."
 - *youtube.force-ssl:* "After an upload we call thumbnails.set with the thumbnail the user chose and playlistItems.insert for the playlist the user picked. We call channels.list (mine) to show which channel is connected, playlists.list so the user can pick a playlist, and videos.list (statistics) to show view, like and comment counts for videos the user published through Admart. We do not store those counts."
+- *yt-analytics.readonly:* "Our Growth Report agent, which the user schedules (weekly, every 15 days or monthly), reads the user's own channel totals for the period and the one before (views, estimated minutes watched, average view percentage, subscribers gained and lost, likes, comments, shares) and the top 10 videos, and explains them with a plan for the next period. The report is shown in the app and emailed to the user."
+- *yt-analytics-monetary.readonly:* "In the same report, the channel owner sees their estimated revenue for the period compared with the previous one. Only for monetized channels; never shared with anyone else."
 - *adwords:* "Only for users who connect Google Ads in our Ads Manager page, to create the ad campaigns they configure and show their results."
 
 **Demo video** (unlisted YouTube link; 2–4 minutes; no cuts during the consent flow):
@@ -55,6 +59,8 @@ Google Cloud Console → **Google Auth Platform** → Branding / Data access →
 5. Open a video in the **Library** → **Publish**: set title, description, tags, privacy (choose *Unlisted*), pick a thumbnail and a playlist → Publish.
 6. Show the video on YouTube Studio with that title, thumbnail and playlist (videos.insert, thumbnails.set, playlistItems.insert).
 7. Open **Analytics** and show the view count for that video (videos.list).
+7b. Open **Agents → Growth Report** → **Make the report**: show the views, watch time, subscribers and revenue
+    (YouTube Analytics API), the top videos, and the emailed copy.
 8. Open **Social Accounts** → Disconnect YouTube, and say that this deletes the stored tokens.
 
 ---
@@ -65,8 +71,8 @@ Form: *YouTube API Services – Audit and Quota Extension Form*. The default 10,
 6 uploads (each upload costs 1,600 units), so request more before launch.
 
 - **API client purpose:** "A publishing tool: users connect their own channel and upload or schedule the videos they made or edited in Admart, after reviewing title, description, tags, privacy and thumbnail."
-- **API services used:** videos.insert, thumbnails.set, playlistItems.insert, playlists.list, channels.list (mine), videos.list (statistics, only for videos published through Admart).
-- **Data stored:** the channel ID, name and avatar, and encrypted OAuth tokens while connected; the YouTube video ID of each upload. Statistics are fetched live and **not stored**. Disconnecting deletes the tokens; deleting the account deletes everything.
+- **API services used:** videos.insert, thumbnails.set, playlistItems.insert, playlists.list, channels.list (mine), videos.list (statistics and snippet), and the YouTube Analytics API reports.query (channel==MINE) for Growth Reports.
+- **Data stored:** the channel ID, name and avatar, and encrypted OAuth tokens while connected; the YouTube video ID of each upload. Statistics on the Analytics page are fetched live and not stored. Growth Reports keep the YouTube Analytics numbers they show (policy III.E.4.b), every report run re-checks authorization, and disconnecting YouTube deletes the tokens and removes YouTube numbers from saved reports. Deleting the account deletes everything.
 - **Data shared:** none with third parties. YouTube data is never sent to AI providers.
 - **Users can revoke access:** Social Accounts → Disconnect, or Google's security settings (linked in the Privacy Policy).
 - **Quota estimate:** (expected uploads per day × 1,600) + (thumbnail and playlist calls × 50) + small reads. For example 100 uploads/day ≈ 170,000 units.

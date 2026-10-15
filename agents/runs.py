@@ -120,14 +120,19 @@ def run_due(now: datetime | None = None) -> int:
         "user", "project"
     )
     for deployment in due[:50]:
+        spec = get_agent(deployment.agent_type)
+        report = bool(spec and spec.input_kind == "report")
+        every = (deployment.config or {}).get("period") if report else None
+        # Reports every 15 or 30 days: the next one is that many days after this slot.
+        upcoming = deployment.next_run_at + timedelta(days=every) if every in (15, 30) else next_slot(deployment.schedule, now)
         claimed = AgentDeployment.objects.filter(id=deployment.id, next_run_at=deployment.next_run_at).update(
-            next_run_at=next_slot(deployment.schedule, now)
+            next_run_at=upcoming
         )
         if not claimed:
             continue  # another worker took this slot
         deployment.refresh_from_db()
-        queue = list(deployment.topic_queue or [])
-        run_input = {"topic": queue[0]} if queue else {"topic": "", "auto": True}
+        queue = [] if report else list(deployment.topic_queue or [])
+        run_input = {"period": every or 7} if report else {"topic": queue[0]} if queue else {"topic": "", "auto": True}
         try:
             start_run(deployment, run_input)
         except RunRefused as refused:

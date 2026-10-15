@@ -12,7 +12,7 @@ class AgentRecipe(models.Model):
     """
 
     KIND_CHOICES = [("small", "Single task"), ("large", "Full automation")]
-    INPUT_CHOICES = [("topic", "Topic"), ("text", "Text"), ("video", "Video")]
+    INPUT_CHOICES = [("topic", "Topic"), ("text", "Text"), ("video", "Video"), ("report", "Report")]
 
     slug = models.SlugField(max_length=50, primary_key=True)
     name = models.CharField(max_length=80)

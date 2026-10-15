@@ -9,6 +9,7 @@ deploy it, and run it. Every run is processed in the background by the **agents 
 | **Script Writer** | Single task | Topic → Short script (scenes, title, description, tags) |
 | **Voiceover** | Single task | Text → MP3 voice recording |
 | **Video Editor** | Full automation | Your own video (up to 3 min) → cut, cleaned, captioned and reframed, with your approval |
+| **Growth Report** | Full automation | Every 7, 15 or 30 days: what happened (YouTube Analytics, followers, posts), why, and a plan for the next period, emailed and in the app; approve the plan into Autopilot |
 | **Trend Finder** | Single task | Your niche → 5–8 topics rising this week, each with why, a scored hook and a source; make a Short or add it to Autopilot in one click |
 | **Cross-poster** | Full automation | A Library video → a post for YouTube, Instagram and Facebook; you check them, it posts now or later |
 
@@ -53,6 +54,20 @@ Upload / pick a Library video → Check (length, sound) → Transcript (fal Whis
   Studio ≈ 0.22 credits per minute at today's fal prices, before any change to the markup).
 - If a paid audio service fails, the free filter is used and the workflow says so.
 - Code: `agents/video_edit.py`; plan: `docs/plans/2026-10-13-video-editor-agent.md`.
+
+## How the Growth Report works
+
+- Steps `collect → analyze → deliver` (`agents/growth.py`, plan `docs/plans/2026-10-15-growth-report-agent.md`).
+- **collect:** the period (7/15/30 days up to yesterday) and the one before. YouTube Analytics totals,
+  revenue (monetized channels), top 10 videos and the subscriber count; Instagram/Facebook followers (live);
+  posts published through Admart with live stats; best weekdays from the user's own posts.
+  YouTube connections made before 2026-10-15 lack the analytics permissions: the report asks the user to reconnect.
+- **analyze:** numbers are computed in code; one OpenRouter call (web search when a niche is set) writes the
+  verdict, wins and losses, a plan (posts per week × period) and 3 actions. Citations and website names are stripped.
+- **deliver:** HTML email to the owner plus up to 5 addresses, plus the in-app report. An email failure doesn't fail the run.
+- **Schedule:** the agent's Autopilot. `config.period` 15 or 30 means the next report is that many days after the
+  last slot. WhatsApp, Telegram and Slack show as "Coming soon".
+- **Policy:** YouTube numbers are removed from saved reports when YouTube is disconnected.
 
 ## How the Trend Finder works
 

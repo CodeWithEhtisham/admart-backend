@@ -612,7 +612,7 @@ class RecipeTests(_AgentAPITestCase):
 
     def test_builtin_recipes_are_seeded_and_listed(self) -> None:
         slugs = [a["slug"] for a in self.client.get(reverse("agent_catalog")).data]
-        self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "video-editor", "cross-poster", "script-writer", "voiceover"])
+        self.assertEqual(slugs, ["youtube-shorts", "trend-finder", "growth-report", "video-editor", "cross-poster", "script-writer", "voiceover"])
         editor = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "video-editor")
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
 
@@ -1146,3 +1146,97 @@ class TrendFinderTests(_AgentAPITestCase):
         sent = post.call_args.kwargs["json"]
         self.assertEqual(sent["plugins"][0]["id"], "web")
         self.assertIn("- cold brew at home", sent["messages"][1]["content"])  # avoids covered topics
+
+
+from django.core import mail  # noqa: E402
+from agents import growth, runs  # noqa: E402
+
+YT_SCOPES = f"{growth.ANALYTICS_SCOPE} {growth.MONEY_SCOPE}"
+
+
+def yt(rows, headers):
+    return MagicMock(ok=True, json=lambda: {"columnHeaders": [{"name": h} for h in headers], "rows": rows},
+                     raise_for_status=lambda: None)
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend", FRONTEND_URL="https://app.example")
+class GrowthReportTests(_AgentAPITestCase):
+    dry_run = True
+
+    def test_dry_run_report_is_written_and_emailed(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", scope=YT_SCOPES)
+        deployment = self.deploy("growth-report", config={
+            "period": 15, "posts_per_week": 3, "goal": {"metric": "views", "target": 1000},
+            "emails": ["team@example.com", "not-an-email", "agent@example.com"]})
+        run_id = self.start(deployment).data["id"]
+        call_command("run_agents_worker", "--once", stdout=MagicMock())
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual(run.status, "succeeded", run.error)
+        self.assertEqual(run.input, {"period": 15})
+        report = run.output["report"]
+        self.assertEqual(len(report["plan"]), 6)  # 3 a week for 15 days
+        self.assertEqual(report["mood"], "better")  # views 900 -> 1200
+        self.assertEqual((report["goal"]["value"], report["goal"]["pct"]), (1200, 120))
+        self.assertEqual(run.output["sent_to"], ["agent@example.com", "team@example.com"])  # invalid and duplicate dropped
+        self.assertIn(f"https://app.example/agents/{deployment.id}?run={run.id}", mail.outbox[0].alternatives[0][0])
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertEqual(detail["report"]["mood"], "better")
+
+    @override_settings(AGENTS_DRY_RUN=False)
+    @patch("agents.growth.ensure_fresh_access_token", return_value="t")
+    @patch("agents.growth.requests.get")
+    def test_youtube_analytics_both_periods_revenue_and_top_videos(self, get, _token) -> None:
+        account = SocialAccount.objects.create(project=self.project, platform="youtube", scope=YT_SCOPES)
+        metrics = list(growth.YT_METRICS)
+        get.side_effect = [
+            yt([[500, 600, 50, 10, 1, 20, 3, 1]], metrics), yt([[250, 300, 40, 5, 1, 10, 1, 0]], metrics),
+            yt([[3.5]], ["estimatedRevenue"]), yt([[1.0]], ["estimatedRevenue"]),
+            yt([["v1", 300, 55, 10, 2, 4]], ["video", "views", "averageViewPercentage", "likes", "comments", "subscribersGained"]),
+            MagicMock(ok=True, json=lambda: {"items": [{"id": "v1", "snippet": {"title": "Best", "publishedAt": "2026-10-07T10:00:00Z"}}]}),
+            MagicMock(ok=True, json=lambda: {"items": [{"statistics": {"subscriberCount": "1500"}}]}),
+        ]
+        out = growth.youtube_numbers(account, (timezone.localdate(), timezone.localdate()), (timezone.localdate(), timezone.localdate()))
+        self.assertEqual((out["now"]["views"], out["before"]["views"]), (500, 250))
+        self.assertEqual((out["revenue_now"], out["revenue_before"]), (3.5, 1.0))
+        self.assertEqual((out["top"][0]["title"], out["subscribers_total"]), ("Best", 1500))
+        self.assertEqual(growth.change(500, 250), 100)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["ids"], "channel==MINE")
+
+    @override_settings(AGENTS_DRY_RUN=False)
+    def test_old_youtube_connection_asks_to_reconnect(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", scope="youtube.upload")
+        run = AgentRun.objects.create(deployment=self.deploy("growth-report"), project=self.project, user=self.user,
+                                      input={"period": 7})
+        growth.step_collect(run)
+        self.assertIsNone(run.output["numbers"]["youtube"])
+        self.assertIn("reconnect_youtube", run.output["numbers"]["notes"])
+
+    def test_disconnecting_youtube_removes_its_numbers_from_reports(self) -> None:
+        SocialAccount.objects.create(project=self.project, platform="youtube", scope=YT_SCOPES)
+        run = AgentRun.objects.create(deployment=self.deploy("growth-report"), project=self.project, user=self.user,
+                                      output={"numbers": {"youtube": {"now": {"views": 1}}}})
+        self.client.delete(reverse("project_social_disconnect", kwargs={"project_id": self.project.id, "platform": "youtube"}))
+        run.refresh_from_db()
+        self.assertIsNone(run.output["numbers"]["youtube"])
+
+    def test_report_every_15_days(self) -> None:
+        deployment = self.deploy("growth-report", config={"period": 15})
+        slot = timezone.now() - timedelta(minutes=1)
+        AgentDeployment.objects.filter(id=deployment.id).update(
+            autopilot=True, schedule={"days": [0], "time": "09:00", "tz": "UTC"}, next_run_at=slot)
+        self.assertEqual(runs.run_due(), 1)
+        deployment.refresh_from_db()
+        self.assertEqual(deployment.next_run_at, slot + timedelta(days=15))
+        self.assertEqual(deployment.runs.get().input, {"period": 15})
+
+    def test_goal_progress_and_mood(self) -> None:
+        numbers = {"youtube": None, "posts": {"count": 2, "count_before": 4}}
+        self.assertEqual(growth.mood(numbers), "worse")
+        self.assertEqual(growth.goal_progress({"metric": "posts", "target": 4}, numbers)["pct"], 50)
+        self.assertIsNone(growth.goal_progress({"metric": "posts", "target": "x"}, numbers))
+        self.assertIsNone(growth.goal_progress({"metric": "nope", "target": 5}, numbers))
+
+    def test_model_text_loses_citations(self) -> None:
+        self.assertEqual(growth.plain("Do it [developers.google.cn].", 300), "Do it.")
+        self.assertEqual(growth.plain("See [a guide](https://x.com) now", 300), "See a guide now")
+        self.assertEqual(growth.plain("Post 3 [times] a week", 300), "Post 3 [times] a week")
