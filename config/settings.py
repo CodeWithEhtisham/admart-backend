@@ -433,6 +433,9 @@ CLIPS_LOCAL_WHISPER_MODEL = os.getenv("CLIPS_LOCAL_WHISPER_MODEL", "base")  # ti
 CLIPS_YTDLP_JS_RUNTIMES = os.getenv("CLIPS_YTDLP_JS_RUNTIMES", "deno,node")
 CLIPS_YTDLP_PROXY = os.getenv("CLIPS_YTDLP_PROXY", "")
 CLIPS_YTDLP_COOKIES = os.getenv("CLIPS_YTDLP_COOKIES", "")  # path to a cookies.txt file
+# bgutil PO-token provider (pip install bgutil-ytdlp-pot-provider + its server), e.g. http://127.0.0.1:4416
+CLIPS_YTDLP_POT_URL = os.getenv("CLIPS_YTDLP_POT_URL", "")
+CLIPS_KEEP_SOURCE_DAYS = int(os.getenv("CLIPS_KEEP_SOURCE_DAYS", "7"))  # cleanup_clip_sources default
 CLIPS_MAX_DOWNLOAD_BYTES = int(os.getenv("CLIPS_MAX_DOWNLOAD_BYTES", str(4 * 1024 * 1024 * 1024)))
 # Cost estimates for credit quotes (USD): 0 with Groq's free tier or local; fal Whisper is ~0.006.
 CLIPS_TRANSCRIBE_USD_PER_MIN = os.getenv("CLIPS_TRANSCRIBE_USD_PER_MIN", "0.001")

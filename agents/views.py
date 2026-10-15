@@ -119,7 +119,7 @@ def _post_data(out: dict) -> dict:
 def _clips_data(out: dict, request) -> dict:
     """Clip Maker fields."""
     return {
-        "sourceUrl": _media(out.get("clip_source"), request),
+        "sourceUrl": None if out.get("source_deleted") else _media(out.get("clip_source"), request),
         "sourceSeconds": (out.get("clip_info") or {}).get("duration"),
         "sourceTitle": out.get("source_title", ""),
         "transcribedWith": out.get("transcribed_with", []),

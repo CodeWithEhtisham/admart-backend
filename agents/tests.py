@@ -1731,3 +1731,40 @@ class TightenTests(SimpleTestCase):
         info = render.check_video(out, expect_sound=True)
         self.assertLess(info["duration"], 5.5)
         self.assertAlmostEqual(info["duration"], length, delta=0.15)
+
+
+class ClipServerTests(_AgentAPITestCase):
+    def test_po_token_provider_is_passed_to_ytdlp(self) -> None:
+        from agents import clips
+
+        with override_settings(CLIPS_YTDLP_POT_URL=""):
+            self.assertNotIn("extractor_args", clips._ytdlp_options())
+        with override_settings(CLIPS_YTDLP_POT_URL="http://127.0.0.1:4416"):
+            self.assertEqual(clips._ytdlp_options()["extractor_args"],
+                             {"youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}})
+
+    def test_old_sources_are_deleted_and_clips_kept(self) -> None:
+        deployment = self.deploy("clip-maker")
+        old = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={},
+                                      status="succeeded", finished_at=timezone.now() - timedelta(days=8))
+        new = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={},
+                                      status="succeeded", finished_at=timezone.now() - timedelta(days=1))
+        busy = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={},
+                                       status="needs_review", updated_at=timezone.now() - timedelta(days=30))
+        folders = {}
+        for run in (old, new, busy):
+            folder, rel = steps.media_dir(run)
+            for name in ("source.mp4", "audio.mp3", "clip-1.mp4", "clip-1.jpg"):
+                (folder / name).write_bytes(b"x")
+            run.output = {"clip_source": f"{rel}/source.mp4", "clip_audio": f"{rel}/audio.mp3"}
+            run.save(update_fields=["output"])
+            folders[run.id] = folder
+        AgentRun.objects.filter(id=busy.id).update(updated_at=timezone.now() - timedelta(days=30))
+        call_command("cleanup_clip_sources", "--days", "7")
+        self.assertEqual(sorted(p.name for p in folders[old.id].iterdir()), ["clip-1.jpg", "clip-1.mp4"])
+        self.assertEqual(len(list(folders[new.id].iterdir())), 4, "kept: finished recently")
+        self.assertEqual(len(list(folders[busy.id].iterdir())), 4, "kept: still waiting for the user")
+        old.refresh_from_db()
+        self.assertTrue(old.output["source_deleted"])
+        detail = self.client.get(self.runs_url(deployment)).data
+        self.assertIsNone(next(r for r in detail if r["id"] == str(old.id))["sourceUrl"])

@@ -130,6 +130,8 @@ def _ytdlp_options(**extra) -> dict:
         options["proxy"] = settings.CLIPS_YTDLP_PROXY
     if settings.CLIPS_YTDLP_COOKIES:
         options["cookiefile"] = settings.CLIPS_YTDLP_COOKIES
+    if settings.CLIPS_YTDLP_POT_URL:  # PO-token sidecar (bgutil) against "confirm you're not a bot" on server IPs
+        options["extractor_args"] = {"youtubepot-bgutilhttp": {"base_url": [settings.CLIPS_YTDLP_POT_URL]}}
     return {**options, **extra}
 
 

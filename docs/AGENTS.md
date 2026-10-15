@@ -88,6 +88,9 @@ YouTube link (user ticks "I have the rights") or Library video → Download (yt-
   on the main one) so Shorts and posts never wait behind a 2-hour video.
 - Local transcription speed on a 12-core CPU: about 6× real time with the `base` model (`small` is slower,
   more accurate). Groq is much faster.
+- Caption styles (Classic, Bold, Boxed, Minimal), captions editable per clip at the check-in, and
+  **Tighten** (cuts pauses and um/uh inside clips). Uploads over 100 MB go in resumable 8 MB chunks (up to 4 GB).
+- Server setup (Deno, PO-token provider, own worker, daily source cleanup): [clip-maker-server.md](clip-maker-server.md).
 - Code: `agents/clips.py`; plan: `docs/plans/2026-10-14-clip-maker-agent.md`.
 
 ## How the Cross-poster works
