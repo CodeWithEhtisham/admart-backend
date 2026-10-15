@@ -124,9 +124,9 @@ Other backend work:
 
 | Phase | Scope | Rough effort |
 |---|---|---|
-| **0** | Worker survives DB lock; lease renewal; worker `--only/--exclude` | small |
-| **1** | Upload **and YouTube link** → transcript → moments → **pick check-in** → centre/blur-fit render with word captions + hook → Library. Proves the whole loop end to end | medium |
-| **2** | Face-tracked reframe (YuNet + tracker + smooth camera + scene snap), split screen for two people | medium-large |
+| **0** ✅ | Worker survives DB lock; lease renewal; worker `--only/--exclude` | small |
+| **1** ✅ | Upload **and YouTube link** → transcript → moments → **pick check-in** → centre/blur-fit render with word captions + hook → Library. Proves the whole loop end to end | medium |
+| **2** ✅ | Face-tracked reframe (YuNet + tracker + smooth camera + scene snap), split screen for two people | done 2026-10-15 |
 | **3** | YouTube link hardening for the VPS (Deno, POT provider sidecar, optional proxy setting) | small-medium (mostly ops) |
 | **4** | Resumable big uploads, caption presets, per-clip caption editing, trim silences/fillers in clips | medium |
 | **5** (later) | Active-speaker detection from lip movement, B-roll from Pexels, auto-zoom punch-ins, other languages | — |

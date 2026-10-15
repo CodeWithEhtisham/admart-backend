@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from django.conf import settings
 
-from agents import providers, render
+from agents import providers, reframe, render
 from agents import steps as base
 from agents.video_edit import VIDEO_SUFFIXES, asset_file, probe
 from content.models import LibraryAsset
@@ -40,6 +40,7 @@ CLIP_LENGTHS = {  # id -> (label, shortest, longest seconds)
 }
 CLIP_COUNTS = range(3, 11)
 LAYOUTS = {
+    "auto": "Follow the speaker (face tracking, split screen for two)",
     "crop": "Fill the screen (crop the centre)",
     "fit": "Show the whole picture (blurred background)",
 }
@@ -116,8 +117,11 @@ def _ytdlp_options(**extra) -> dict:
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 30,
-        "retries": 3,
+        # Slow or flaky connections: wait longer, retry more, and resume a half-done download on "Try again".
+        "socket_timeout": 60,
+        "retries": 10,
+        "fragment_retries": 10,
+        "continuedl": True,
         # YouTube needs a JavaScript runtime to unlock formats; Deno is yt-dlp's default, Node also works.
         "js_runtimes": {name.strip(): {} for name in settings.CLIPS_YTDLP_JS_RUNTIMES.split(",") if name.strip()},
     }
@@ -134,6 +138,9 @@ def _youtube_error(exc: Exception) -> RuntimeError:
     if "not a bot" in text or "sign in" in text:
         return RuntimeError("YouTube is blocking downloads from our server right now. Upload the video file "
                             "instead, or try again later.")
+    if "timed out" in text or "connection" in text or "reset by peer" in text:
+        return RuntimeError("The download from YouTube kept stalling (a slow connection). Try again: it continues "
+                            "where it stopped.")
     if "private" in text or "unavailable" in text or "members" in text:
         return RuntimeError("This YouTube video is private or unavailable. Use a public video.")
     return RuntimeError("We couldn't open that YouTube video. Check the link, or upload the file instead.")
@@ -408,7 +415,7 @@ def clip_settings(config: dict) -> tuple[str, int, str]:
         count = int(config.get("clipCount"))
     except (TypeError, ValueError):
         count = 5
-    layout = config.get("layout") if config.get("layout") in LAYOUTS else "crop"
+    layout = config.get("layout") if config.get("layout") in LAYOUTS else "auto"
     return length, min(max(count, CLIP_COUNTS.start), CLIP_COUNTS.stop - 1), layout
 
 
@@ -576,6 +583,10 @@ def _captions(words: list[dict], hook: str, duration: float, highlight: str) -> 
     return ass + f"Dialogue: 1,0:00:00.00,{end},Hook,,0,0,0,,{render._ass_text(hook)}\n"
 
 
+def _burn(captions: Path) -> str:
+    return f"ass='{captions}':fontsdir='{Path(settings.AGENTS_CAPTION_FONT).parent}'"
+
+
 def _video_filter(layout: str, captions: Path) -> str:
     w, h = render.WIDTH, render.HEIGHT
     if layout == "fit":
@@ -585,8 +596,7 @@ def _video_filter(layout: str, captions: Path) -> str:
         ratio = w / h
         picture = (f"crop='if(gt(iw/ih,{ratio:.5f}),ih*{ratio:.5f},iw)':'if(gt(iw/ih,{ratio:.5f}),ih,iw/{ratio:.5f})',"
                    f"scale={w}:{h}")
-    fonts = Path(settings.AGENTS_CAPTION_FONT).parent
-    return f"[0:v]fps={render.FPS},{picture},setsar=1,ass='{captions}':fontsdir='{fonts}'[v]"
+    return f"[0:v]fps={render.FPS},{picture},setsar=1,{_burn(captions)}[v]"
 
 
 def render_clip(source: Path, moment: dict, words: list[dict], layout: str, highlight: str, out: Path,
@@ -594,11 +604,20 @@ def render_clip(source: Path, moment: dict, words: list[dict], layout: str, high
     """One vertical clip with captions and hook; returns its length."""
     length = moment["end"] - moment["start"]
     captions = workdir / f"{out.stem}.ass"
-    captions.write_text(_captions(clip_words(words, moment["start"], moment["end"]), moment.get("hook", ""),
-                                  length, highlight), encoding="utf-8")
+    ass = _captions(clip_words(words, moment["start"], moment["end"]), moment.get("hook", ""), length, highlight)
+    graph = None
+    if layout == "auto":
+        info = probe(source)
+        if info["width"] / max(info["height"], 1) > render.WIDTH / render.HEIGHT + 0.01:  # wider than vertical
+            samples = reframe.analyze(source, moment["start"], length, info["width"], info["height"])
+            shots = reframe.plan_shots(samples, info["width"], info["height"], length)
+            ass = reframe.seam_captions(ass, [(s["start"], s["end"]) for s in shots if s["layout"] == "split"])
+            graph = reframe.video_filter(shots, info["width"], info["height"], workdir) + f";[vr]{_burn(captions)}[v]"
+    captions.write_text(ass, encoding="utf-8")
     render._run([
         "ffmpeg", "-y", "-ss", f"{moment['start']:.3f}", "-t", f"{length:.3f}", "-i", str(source),
-        "-filter_complex", _video_filter(layout, captions), "-map", "[v]", "-map", "0:a:0",
+        "-filter_complex", graph or _video_filter("crop" if layout == "auto" else layout, captions),
+        "-map", "[v]", "-map", "0:a:0",
         "-af", "aresample=44100,loudnorm=I=-14:TP=-1.5:LRA=11", "-r", str(render.FPS),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out),

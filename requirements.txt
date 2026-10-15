@@ -14,3 +14,6 @@ psycopg[binary]==3.3.6
 # Clip Maker: YouTube downloads and free local transcription (CPU)
 yt-dlp==2026.8.19
 faster-whisper==1.2.1
+# Clip Maker face tracking (YuNet face detector ships in agents/data/)
+opencv-python-headless==5.0.0.93
+numpy==2.5.4

@@ -77,6 +77,13 @@ YouTube link (user ticks "I have the rights") or Library video → Download (yt-
 ```
 
 - Settings per agent: clip length (15–30 / 30–60 / 60–90 s), up to 3–10 clips, framing, check-in on/off.
+- Framing **Follow the speaker** (default, `agents/reframe.py`): each clip is sampled 10×/s at 640 px; OpenCV
+  YuNet finds faces, a colour-histogram change finds camera cuts. Per shot: one face (or two close together)
+  → a still camera that only moves when the face leaves a dead zone, then eases over, snapping on cuts;
+  two people far apart → split screen (one per half, captions on the seam); no clear face, a crowd or a
+  screen → the whole picture over a blurred copy. About 6 s of analysis per minute of clip on CPU.
+  Already-vertical sources are just cropped.
+- Downloads retry 10× with a 60 s timeout; "Try again" resumes a half-finished download.
 - Long jobs: run a separate worker with `run_agents_worker --only clip-maker` (and `--exclude clip-maker`
   on the main one) so Shorts and posts never wait behind a 2-hour video.
 - Local transcription speed on a 12-core CPU: about 6× real time with the `base` model (`small` is slower,

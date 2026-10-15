@@ -1452,3 +1452,155 @@ class GeminiTextTests(SimpleTestCase):
         self.assertEqual(body["systemInstruction"]["parts"][0]["text"], "sys")
         self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "g")
+
+
+def _face(cx, w=100, cy=200, score=0.9):
+    return [cx - w / 2, cy - w / 2, w, w * 1.3, score]
+
+
+def _samples(faces_at, seconds=4.0, fps=10, cut_at=None):
+    """Analysis samples: faces_at(t) -> list of faces; a camera cut at `cut_at` seconds."""
+    out = []
+    for i in range(int(seconds * fps)):
+        t = round(i / fps, 3)
+        out.append({"t": t, "faces": faces_at(t), "cut": cut_at is not None and abs(t - cut_at) < 1e-6})
+    return out
+
+
+class ReframeTests(SimpleTestCase):
+    W, H = 1920, 1080  # source; a 9:16 crop is 608 wide
+
+    def test_camera_holds_still_while_the_speaker_sways(self) -> None:
+        from agents import reframe
+
+        times = [i / 10 for i in range(50)]
+        targets = [960 + (25 if i % 2 else -25) for i in range(50)]
+        path = reframe.camera_path(times, targets, crop_w=608, frame_w=self.W)
+        self.assertEqual({x for _t, x in path}, {960 - 304})
+
+    def test_camera_follows_a_big_move_smoothly_and_settles(self) -> None:
+        from agents import reframe
+
+        times = [i / 10 for i in range(60)]
+        targets = [600] * 20 + [1300] * 40
+        xs = [x for _t, x in reframe.camera_path(times, targets, crop_w=608, frame_w=self.W)]
+        self.assertEqual(xs[0], 600 - 304)
+        self.assertTrue(all(b >= a for a, b in zip(xs, xs[1:])), "moves one way, no shaking")
+        self.assertLess(max(b - a for a, b in zip(xs, xs[1:])), 300, "eases over, no jump cut")
+        self.assertAlmostEqual(xs[-1], 1300 - 304, delta=25)
+
+    def test_camera_never_leaves_the_picture(self) -> None:
+        from agents import reframe
+
+        path = reframe.camera_path([0, 0.1], [5, 5], crop_w=608, frame_w=self.W)
+        self.assertEqual(path[0][1], 0)
+        path = reframe.camera_path([0, 0.1], [1915, 1915], crop_w=608, frame_w=self.W)
+        self.assertEqual(path[0][1], self.W - 608)
+
+    def test_shot_layouts_follow_the_faces(self) -> None:
+        from agents import reframe
+
+        one = reframe.plan_shots(_samples(lambda t: [_face(700)]), self.W, self.H, 4.0)
+        self.assertEqual([s["layout"] for s in one], ["track"])
+        none = reframe.plan_shots(_samples(lambda t: []), self.W, self.H, 4.0)
+        self.assertEqual([s["layout"] for s in none], ["fit"])
+        crowd = reframe.plan_shots(_samples(lambda t: [_face(300), _face(900), _face(1500)]), self.W, self.H, 4.0)
+        self.assertEqual([s["layout"] for s in crowd], ["fit"])
+        tiny = reframe.plan_shots(_samples(lambda t: [_face(900, w=30)]), self.W, self.H, 4.0)  # a far-away face
+        self.assertEqual([s["layout"] for s in tiny], ["fit"])
+
+    def test_two_people_far_apart_get_a_split_screen(self) -> None:
+        from agents import reframe
+
+        shots = reframe.plan_shots(_samples(lambda t: [_face(1500), _face(400)]), self.W, self.H, 4.0)
+        self.assertEqual([s["layout"] for s in shots], ["split"])
+        top, bottom = shots[0]["regions"]
+        self.assertLess(top[0], bottom[0], "left person on top")
+        for x, y, w, h in (top, bottom):
+            self.assertAlmostEqual(w / h, 1080 / 960, delta=0.02)
+            self.assertTrue(0 <= x and x + w <= self.W and 0 <= y and y + h <= self.H)
+        close = reframe.plan_shots(_samples(lambda t: [_face(850), _face(1050)]), self.W, self.H, 4.0)
+        self.assertEqual([s["layout"] for s in close], ["track"], "both fit in one vertical crop")
+
+    def test_camera_cuts_split_shots_and_slivers_are_merged(self) -> None:
+        from agents import reframe
+
+        shots = reframe.plan_shots(_samples(lambda t: [_face(700)] if t < 2 else [], cut_at=2.0), self.W, self.H, 4.0)
+        self.assertEqual([(s["layout"], s["start"], s["end"]) for s in shots], [("track", 0, 1.95), ("fit", 1.95, 4.0)])
+        flash = reframe.plan_shots([{**s, "cut": s["t"] in (1.0, 1.2)} for s in _samples(lambda t: [_face(700)])],
+                                   self.W, self.H, 4.0)
+        self.assertEqual(len(flash), 2, "a 0.2 s shot is merged into its neighbour")
+
+    def test_scene_cut_detection(self) -> None:
+        import numpy
+
+        from agents import reframe
+
+        red = numpy.zeros((90, 160, 3), numpy.uint8)
+        red[:] = (0, 0, 220)
+        blue = numpy.zeros((90, 160, 3), numpy.uint8)
+        blue[:] = (220, 60, 0)
+        noisy = numpy.clip(red.astype(int) + numpy.random.default_rng(1).integers(-6, 6, red.shape), 0, 255).astype(numpy.uint8)
+        self.assertTrue(reframe.is_cut(red, blue))
+        self.assertFalse(reframe.is_cut(red, noisy))
+
+    def test_filter_graph_joins_each_shot_in_its_layout(self) -> None:
+        from agents import reframe
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        shots = [
+            {"start": 0, "end": 2.0, "layout": "track", "path": [(0, 100), (1.0, 100), (1.5, 160)]},
+            {"start": 2.0, "end": 4.0, "layout": "split", "regions": [(0, 0, 540, 480), (1000, 0, 540, 480)]},
+            {"start": 4.0, "end": 6.0, "layout": "fit"},
+        ]
+        graph = reframe.video_filter(shots, self.W, self.H, work)
+        self.assertIn("split=3", graph)
+        self.assertIn("vstack", graph)
+        self.assertIn("boxblur", graph)
+        self.assertIn("concat=n=3:v=1:a=0[vr]", graph)
+        commands = (work / "crop-0.txt").read_text()
+        self.assertIn("crop@c0 x 160", commands)
+        self.assertEqual(commands.count("x 100"), 1, "no repeated commands while the camera is still")
+
+    def test_captions_move_to_the_seam_during_split_shots(self) -> None:
+        from agents import reframe
+
+        ass = ("[Events]\nDialogue: 0,0:00:01.00,0:00:01.50,Cap,,0,0,0,,hello\n"
+               "Dialogue: 0,0:00:03.00,0:00:03.50,Cap,,0,0,0,,world\n")
+        out = reframe.seam_captions(ass, [(2.0, 4.0)])
+        self.assertIn(",,hello", out)
+        self.assertIn(",,{\\an5\\pos(540,960)}world", out)
+
+    def test_auto_layout_render_without_faces_falls_back_to_fit(self) -> None:
+        from agents import clips
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        src = work / "src.mp4"
+        render._run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=4:r=30", "-f", "lavfi", "-i", "sine=d=4",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(src)])
+        out = work / "clip.mp4"
+        clips.render_clip(src, {"start": 0.5, "end": 3.5, "hook": "Hi"}, _w("one two three", 0.6), "auto", "#FFD400", out, work)
+        info = render.check_video(out, expect_sound=True)
+        self.assertAlmostEqual(info["duration"], 3.0, delta=0.15)
+
+
+class YoutubeRobustnessTests(SimpleTestCase):
+    def test_slow_connections_get_patience_and_resume(self) -> None:
+        from agents import clips
+
+        options = clips._ytdlp_options()
+        self.assertGreaterEqual(options["retries"], 10)
+        self.assertGreaterEqual(options["fragment_retries"], 10)
+        self.assertGreaterEqual(options["socket_timeout"], 60)
+        self.assertTrue(options["continuedl"], "Try again resumes the half-done download")
+
+    def test_a_timeout_is_explained_as_a_slow_connection(self) -> None:
+        from agents import clips
+
+        with self.assertLogs("agents.clips", "WARNING"):
+            error = clips._youtube_error(Exception("[download] Got error: HTTPSConnectionPool(host='x.googlevideo.com', "
+                                                   "port=443): Read timed out.. Giving up after 3 retries"))
+        self.assertIn("slow", str(error))
+        self.assertIn("Try again", str(error))
