@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
+
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
@@ -190,6 +192,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 PRIVATE_MEDIA_ROOT = Path(os.getenv("PRIVATE_MEDIA_ROOT", BASE_DIR / "private_media"))
 # Allow library video uploads up to ~200 MB (view enforces per-type limits).
 DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
+# Long videos (Clip Maker) upload in resumable chunks: content/large_upload.py
+LIBRARY_LARGE_VIDEO_BYTES = int(os.getenv("LIBRARY_LARGE_VIDEO_BYTES", str(4 * 1024**3)))
+LIBRARY_UPLOAD_CHUNK_BYTES = int(os.getenv("LIBRARY_UPLOAD_CHUNK_BYTES", str(8 * 1024**2)))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # Absolute base for public media URLs when no request is available (e.g. workers).
 # In local dev, leave blank and build URLs from the request; fal needs a publicly
@@ -252,6 +257,8 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+# Chunked video uploads send Content-Range (content/large_upload.py).
+CORS_ALLOW_HEADERS = (*default_headers, "content-range")
 
 # Origins allowed to POST forms with the session cookie (Django admin + dashboard).
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]

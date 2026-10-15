@@ -1,5 +1,6 @@
 from django.urls import path
 
+from content.large_upload import LargeUploadChunkView, LargeUploadFinishView, LargeUploadStartView
 from content.video_views import (
     VideoFrameUploadView,
     VideoJobCancelView,
@@ -78,6 +79,17 @@ urlpatterns = [
         "<uuid:project_id>/library/uploads",
         LibraryUploadView.as_view(),
         name="library_upload",
+    ),
+    path("<uuid:project_id>/library/uploads/large", LargeUploadStartView.as_view(), name="library_upload_large"),
+    path(
+        "<uuid:project_id>/library/uploads/large/<str:upload_id>",
+        LargeUploadChunkView.as_view(),
+        name="library_upload_large_chunk",
+    ),
+    path(
+        "<uuid:project_id>/library/uploads/large/<str:upload_id>/finish",
+        LargeUploadFinishView.as_view(),
+        name="library_upload_large_finish",
     ),
     path(
         "<uuid:project_id>/library/<uuid:asset_id>",
