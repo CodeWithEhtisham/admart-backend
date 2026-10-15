@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from django.db.models import Sum
 from django.utils import timezone
 
+from agents.engine import enqueue
 from agents.models import AgentDeployment, AgentRun
 from agents.registry import estimate_credits, get_agent
 from content.credits import InsufficientCredits, reserve_credits
@@ -56,7 +57,7 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         topup = reserve_credits(deployment.user, credits)
     except InsufficientCredits:
         raise RunRefused("Insufficient credits", "INSUFFICIENT_CREDITS", credits) from None
-    return AgentRun.objects.create(
+    run = AgentRun.objects.create(
         deployment=deployment,
         project=deployment.project,
         user=deployment.user,
@@ -64,6 +65,8 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         credits_reserved=credits,
         topup_reserved=topup,
     )
+    enqueue(run.id)
+    return run
 
 
 # ── schedule ──────────────────────────────────────────────────────────────
@@ -120,14 +123,19 @@ def run_due(now: datetime | None = None) -> int:
         "user", "project"
     )
     for deployment in due[:50]:
+        spec = get_agent(deployment.agent_type)
+        report = bool(spec and spec.input_kind == "report")
+        every = (deployment.config or {}).get("period") if report else None
+        # Reports every 15 or 30 days: the next one is that many days after this slot.
+        upcoming = deployment.next_run_at + timedelta(days=every) if every in (15, 30) else next_slot(deployment.schedule, now)
         claimed = AgentDeployment.objects.filter(id=deployment.id, next_run_at=deployment.next_run_at).update(
-            next_run_at=next_slot(deployment.schedule, now)
+            next_run_at=upcoming
         )
         if not claimed:
             continue  # another worker took this slot
         deployment.refresh_from_db()
-        queue = list(deployment.topic_queue or [])
-        run_input = {"topic": queue[0]} if queue else {"topic": "", "auto": True}
+        queue = [] if report else list(deployment.topic_queue or [])
+        run_input = {"period": every or 7} if report else {"topic": queue[0]} if queue else {"topic": "", "auto": True}
         try:
             start_run(deployment, run_input)
         except RunRefused as refused:

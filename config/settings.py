@@ -447,3 +447,27 @@ RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")
 RUNWARE_API_URL = os.getenv("RUNWARE_API_URL", "https://api.runware.ai/v1")
 RUNWARE_PREVIEW_MODEL = os.getenv("RUNWARE_PREVIEW_MODEL", "")
 RUNWARE_TIMEOUT = int(os.getenv("RUNWARE_TIMEOUT", "60"))
+
+# ── Redis, Celery and Celery Beat (Docker; see docs/docker.md) ─────────────
+# REDIS_URL set: Redis is the shared cache, so rate limits and locks work across all processes
+# (the default in-memory cache is per process). USE_CELERY: agent runs, Autopilot and the template
+# refresh run as Celery tasks scheduled by Celery Beat. Without them (the current server), the
+# in-memory cache, `manage.py run_agents_worker` and the template-refresh thread are used as before.
+REDIS_URL = os.getenv("REDIS_URL", "")
+if REDIS_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
+USE_CELERY = os.getenv("USE_CELERY", "False").lower() in ("true", "1", "yes")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_TASK_ACKS_LATE = True  # a task lost with its worker is delivered again
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # renders are long: don't hoard queued runs
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    # Start due Autopilot/report slots, recover stuck runs, start runs whose time has come.
+    "agents-sweep": {"task": "agents.tasks.sweep", "schedule": 15.0},
+    "template-refresh": {
+        "task": "content.tasks.refresh_templates",
+        "schedule": 60.0 * max(1, int(os.getenv("TEMPLATE_AUTO_REFRESH_MINUTES", "30") or 30)),
+    },
+}

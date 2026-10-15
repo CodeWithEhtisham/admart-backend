@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from agents import engine
+from agents import engine, growth
 from agents.models import AgentDeployment, AgentRun
 from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics, month_spend, next_slot, start_run
 from agents.registry import (
@@ -154,6 +154,10 @@ def run_data(run: AgentRun, request) -> dict:
         "research": out.get("research"),
         "concepts": out.get("concepts", []),
         "trends": out.get("trends", []),
+        "report": out.get("report"),
+        "numbers": out.get("numbers"),
+        "sentTo": out.get("sent_to"),
+        "emailError": out.get("email_error", ""),
         "concept": out.get("concept"),
         "scenes": [
             {
@@ -277,11 +281,13 @@ class DeploymentDetailView(_ProjectScoped):
                 deployment.autopilot = bool(data["autopilot"])
             if deployment.autopilot:
                 spec = get_agent(deployment.agent_type)
-                if not spec or spec.input_kind != "topic":
+                if not spec or spec.input_kind not in ("topic", "report"):
                     raise ValueError("Autopilot works with agents that take a topic.")
                 if not deployment.schedule:
                     raise ValueError("Set the days and time first.")
-                if not deployment.topic_queue and not str(deployment.config.get("niche") or "").strip():
+                if spec.input_kind == "topic" and not deployment.topic_queue and not str(
+                    deployment.config.get("niche") or ""
+                ).strip():
                     raise ValueError("Add some topics, or set the channel niche so the agent can pick topics.")
         except ValueError as exc:
             return _bad(str(exc))
@@ -321,6 +327,8 @@ class RunListCreateView(_ProjectScoped):
             run_input = self._video_input(request, deployment, spec)
             if isinstance(run_input, Response):
                 return run_input
+        elif spec.input_kind == "report":
+            run_input = {"period": growth.period_of(deployment)}
         elif spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
             if len(value) > 200:
@@ -464,6 +472,7 @@ class RunActionView(_ProjectScoped):
         run.status = "queued"
         run.attempts = 0  # each checkpoint resume is a fresh start, not a retry
         run.save(update_fields=["status", "attempts", "output", "updated_at"])
+        engine.enqueue(run.id)
 
     def _continue(self, run, data):
         if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit", "post", "clips"):

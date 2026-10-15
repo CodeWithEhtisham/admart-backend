@@ -7,13 +7,15 @@ from datetime import timedelta
 from decimal import Decimal
 
 import requests
+from django.conf import settings
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
 from agents import providers
 from agents.models import AgentRun
 from agents.registry import get_agent
-from agents import clips, cross_post, video_edit
+from agents import clips, cross_post, growth, video_edit
 from agents.steps import STEPS, NeedsReview, RunCancelled, WaitUntil
 from content.credits import refund_credits, reserve_credits
 
@@ -21,6 +23,7 @@ from content.credits import refund_credits, reserve_credits
 STEPS.update(video_edit.STEPS)
 STEPS.update(cross_post.STEPS)
 STEPS.update(clips.STEPS)
+STEPS.update(growth.STEPS)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ STEP_LABELS = {
     "render_edit": "editing your video",
     "package": "writing the title and thumbnail",
     "trends": "finding trends",
+    "collect": "reading your analytics",
+    "analyze": "writing the report",
+    "deliver": "sending the report",
     "fetch": "reading your video",
     "listen": "transcribing your video",
     "write_post": "writing the posts",
@@ -54,26 +60,52 @@ STEP_LABELS = {
 }
 
 
-def claim_next(only=(), exclude=()) -> AgentRun | None:
-    """Atomically take the oldest queued run (safe with several workers).
+def recover_stuck(now=None) -> int:
+    """Runs whose worker died mid-step (lease expired) go back to the queue; they resume after their last step."""
+    return AgentRun.objects.filter(status="running", locked_until__lt=now or timezone.now()).update(status="queued")
+
+
+def due_queued_ids(now=None, limit: int = 10, only=(), exclude=()) -> list:
+    """Queued runs that may start now, oldest first (a scheduled post waits until its time).
 
     `only` / `exclude` are agent types, so long jobs (Clip Maker) can have their own worker.
     """
-    now = timezone.now()
-    AgentRun.objects.filter(status="running", locked_until__lt=now).update(status="queued")
-    due = Q(locked_until__isnull=True) | Q(locked_until__lte=now)  # a scheduled post waits until its time
+    due = Q(locked_until__isnull=True) | Q(locked_until__lte=now or timezone.now())
     queued = AgentRun.objects.filter(due, status="queued")
     if only:
         queued = queued.filter(deployment__agent_type__in=only)
     if exclude:
         queued = queued.exclude(deployment__agent_type__in=exclude)
-    for run_id in queued.order_by("created_at").values_list("id", flat=True)[:10]:
-        taken = AgentRun.objects.filter(id=run_id, status="queued").update(
-            status="running", locked_until=now + LEASE, attempts=F("attempts") + 1
-        )
-        if taken:
-            return AgentRun.objects.select_related("deployment", "project", "user").get(id=run_id)
+    return list(queued.order_by("created_at").values_list("id", flat=True)[:limit])
+
+
+def claim(run_id, now=None) -> AgentRun | None:
+    """Atomically take one queued, due run (safe with several workers); None if someone else has it."""
+    now = now or timezone.now()
+    due = Q(locked_until__isnull=True) | Q(locked_until__lte=now)
+    taken = AgentRun.objects.filter(due, id=run_id, status="queued").update(
+        status="running", locked_until=now + LEASE, attempts=F("attempts") + 1
+    )
+    return AgentRun.objects.select_related("deployment", "project", "user").get(id=run_id) if taken else None
+
+
+def claim_next(only=(), exclude=()) -> AgentRun | None:
+    """The oldest due run, for `manage.py run_agents_worker` (servers without Celery)."""
+    now = timezone.now()
+    recover_stuck(now)
+    for run_id in due_queued_ids(now, only=only, exclude=exclude):
+        run = claim(run_id, now)
+        if run:
+            return run
     return None
+
+
+def enqueue(run_id) -> None:
+    """With Celery, start the run as soon as the database change is saved (Beat's sweep is the safety net)."""
+    if settings.USE_CELERY:
+        from agents.tasks import dispatch
+
+        transaction.on_commit(lambda: dispatch(run_id))
 
 
 def process(run: AgentRun) -> None:
@@ -151,6 +183,8 @@ def retry(run: AgentRun) -> bool:
     )
     if not updated and run.credits_reserved > 0:  # lost a race with another retry: give the credits back
         refund_credits(run.user, run.credits_reserved, topup=topup)
+    if updated:
+        enqueue(run.id)
     run.refresh_from_db()
     return bool(updated)
 
