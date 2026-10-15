@@ -399,6 +399,8 @@ AGENTS_OPENROUTER_MODELS = (
 )
 # OpenRouter web search for research (paid per search; without credit, research skips it).
 AGENTS_SEARCH_ENGINE = os.getenv("AGENTS_SEARCH_ENGINE", "exa")
+# Without an OpenRouter key, agents write with Gemini directly (GEMINI_API_KEY, free tier), trying these in order.
+AGENTS_GEMINI_MODELS = os.getenv("AGENTS_GEMINI_MODELS", "gemini-flash-lite-latest,gemini-3.8-flash")
 AGENTS_IMAGE_MODEL = os.getenv("AGENTS_IMAGE_MODEL", "fal-ai/flux/schnell")
 AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "fal-ai/whisper")
 # Cost estimates used for credit quotes (USD). Image prices come from fal's pricing API.

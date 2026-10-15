@@ -24,6 +24,7 @@ from content.prompt_enhancer import _parse_json_text
 logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 FAL_TIMEOUT_SECONDS = 180
 KOKORO_US = "fal-ai/kokoro/american-english"
 KOKORO_UK = "fal-ai/kokoro/british-english"
@@ -103,6 +104,31 @@ def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperatu
     return content, sources
 
 
+def _gemini(system: str, user: str, json_mode: bool, temperature: float):
+    """One Gemini call (used when there is no OpenRouter key). Tries AGENTS_GEMINI_MODELS in order,
+    skipping a model that is busy or gone. No web search: returns (text, [])."""
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 8000,
+                             **({"responseMimeType": "application/json"} if json_mode else {})},
+    }
+    status = None
+    for model in [m.strip() for m in settings.AGENTS_GEMINI_MODELS.split(",") if m.strip()]:
+        response = requests.post(GEMINI_URL.format(model=model), headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+                                 json=body, timeout=180)
+        if response.status_code in (404, 429, 500, 503):  # retired, rate-limited or overloaded: next model
+            status = response.status_code
+            continue
+        response.raise_for_status()
+        parts = ((response.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+        content = "".join(str(part.get("text", "")) for part in parts)
+        if not content:
+            raise RuntimeError("The AI writer returned nothing.")
+        return content, []
+    raise RuntimeError(f"Every Gemini model was unavailable (last status {status}).")
+
+
 def _as_dict(raw: str) -> dict | None:
     try:
         parsed = _parse_json_text(raw)
@@ -114,9 +140,14 @@ def _as_dict(raw: str) -> dict | None:
 def text(system: str, user: str, *, json_mode: bool = True, search: bool = False, temperature: float = 0.8):
     """JSON mode returns a dict, otherwise (text, sources); with search always (result, sources).
     A garbled JSON answer is retried once."""
+    use_gemini = not settings.OPENROUTER_API_KEY and bool(settings.GEMINI_API_KEY)
+
     def run():
         for _ in range(2):
-            raw, sources = _openrouter(system, user, json_mode, search, temperature)
+            if use_gemini:
+                raw, sources = _gemini(system, user, json_mode, temperature)
+            else:
+                raw, sources = _openrouter(system, user, json_mode, search, temperature)
             if not json_mode:
                 return raw, sources
             parsed = _as_dict(raw)
@@ -124,7 +155,8 @@ def text(system: str, user: str, *, json_mode: bool = True, search: bool = False
                 return parsed, sources
         raise RuntimeError("The AI writer returned an unexpected format.")
 
-    result, sources = _call("AI writer", "openrouter", bool(settings.OPENROUTER_API_KEY), run)
+    result, sources = _call("AI writer", "gemini" if use_gemini else "openrouter",
+                            bool(settings.OPENROUTER_API_KEY) or use_gemini, run)
     return (result, sources) if search or not json_mode else result
 
 
@@ -245,6 +277,6 @@ def timing_usd() -> Decimal:
 
 def status() -> dict:
     """Which service each job uses — for the admin dashboard."""
-    text_ready = "openrouter" if settings.OPENROUTER_API_KEY else None
+    text_ready = "openrouter" if settings.OPENROUTER_API_KEY else "gemini" if settings.GEMINI_API_KEY else None
     fal_ready = "fal" if settings.FAL_KEY else None
     return {"text": text_ready, "voice": fal_ready, "images": fal_ready, "captions": fal_ready or "estimate"}

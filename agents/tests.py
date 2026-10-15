@@ -28,7 +28,7 @@ NO_PRICES = patch("agents.registry.get_fal_prices", return_value={})
 HERMETIC = {
     "AGENTS_DRY_RUN": False, "OPENROUTER_API_KEY": "k", "FAL_KEY": "k", "PEXELS_API_KEY": "",
     "AGENTS_OPENROUTER_MODELS": "m:free", "AGENTS_LLM_USD_PER_RUN": "0.002",
-    "AGENTS_MUSIC_DIR": "/nonexistent-agent-music",
+    "AGENTS_MUSIC_DIR": "/nonexistent-agent-music", "GEMINI_API_KEY": "",
 }
 
 
@@ -1433,3 +1433,22 @@ class ClipLocalWhisperTests(SimpleTestCase):
         self.assertIsInstance(samples, numpy.ndarray)
         self.assertEqual(samples.dtype, numpy.float32)
         self.assertAlmostEqual(len(samples) / 16000, 2, delta=0.1)
+
+
+@override_settings(**{**HERMETIC, "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": "g",
+                      "AGENTS_GEMINI_MODELS": "busy-model,good-model"})
+class GeminiTextTests(SimpleTestCase):
+    @patch("agents.providers.requests.post")
+    def test_gemini_writes_when_there_is_no_openrouter_key(self, post) -> None:
+        busy = MagicMock(ok=False, status_code=503)
+        good = MagicMock(ok=True, status_code=200, json=lambda: {
+            "candidates": [{"content": {"parts": [{"text": '{"clips": []}'}]}}]})
+        post.side_effect = [busy, good]
+        used = providers.track()
+        self.assertEqual(providers.text("sys", "user"), {"clips": []})
+        self.assertEqual(used, ["gemini"])
+        self.assertIn("good-model", post.call_args.args[0])  # the busy model was skipped
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(body["systemInstruction"]["parts"][0]["text"], "sys")
+        self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "g")
