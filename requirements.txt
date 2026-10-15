@@ -11,3 +11,6 @@ PyJWT==2.13.0
 # Production server + PostgreSQL driver
 gunicorn==26.2.0
 psycopg[binary]==3.3.6
+# Background tasks (Docker): Celery + Celery Beat with Redis, which is also the shared cache
+celery[redis]==5.6.3
+redis==6.4.0

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from django.db.models import Sum
 from django.utils import timezone
 
+from agents.engine import enqueue
 from agents.models import AgentDeployment, AgentRun
 from agents.registry import estimate_credits, get_agent
 from content.credits import InsufficientCredits, reserve_credits
@@ -56,7 +57,7 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         topup = reserve_credits(deployment.user, credits)
     except InsufficientCredits:
         raise RunRefused("Insufficient credits", "INSUFFICIENT_CREDITS", credits) from None
-    return AgentRun.objects.create(
+    run = AgentRun.objects.create(
         deployment=deployment,
         project=deployment.project,
         user=deployment.user,
@@ -64,6 +65,8 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         credits_reserved=credits,
         topup_reserved=topup,
     )
+    enqueue(run.id)
+    return run
 
 
 # ── schedule ──────────────────────────────────────────────────────────────

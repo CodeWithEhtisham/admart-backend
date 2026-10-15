@@ -1240,3 +1240,54 @@ class GrowthReportTests(_AgentAPITestCase):
         self.assertEqual(growth.plain("Do it [developers.google.cn].", 300), "Do it.")
         self.assertEqual(growth.plain("See [a guide](https://x.com) now", 300), "See a guide now")
         self.assertEqual(growth.plain("Post 3 [times] a week", 300), "Post 3 [times] a week")
+
+
+from django.core.cache import cache  # noqa: E402
+
+from agents import tasks  # noqa: E402
+from config.celery import app as celery_app  # noqa: E402
+
+
+@override_settings(USE_CELERY=True)
+class CeleryTaskTests(_AgentAPITestCase):
+    """Celery path (Docker): runs start at once, Beat's sweep is the safety net, nothing runs twice."""
+
+    dry_run = True
+
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        celery_app.conf.task_always_eager = True  # .delay() runs inline, no broker needed
+        self.addCleanup(setattr, celery_app.conf, "task_always_eager", False)
+
+    def test_a_new_run_is_processed_by_celery_right_away(self) -> None:
+        deployment = self.deploy("script-writer")
+        with self.captureOnCommitCallbacks(execute=True):
+            run_id = self.start(deployment, topic="coffee").data["id"]
+        run = AgentRun.objects.get(id=run_id)
+        self.assertEqual(run.status, "succeeded", run.error)
+        self.assertTrue(run.output["scenes"])
+
+    def test_sweep_recovers_stuck_runs_and_waits_for_scheduled_ones(self) -> None:
+        deployment = self.deploy("script-writer")
+        stuck = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "a"},
+                                        status="running", locked_until=timezone.now() - timedelta(minutes=1))
+        later = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "b"},
+                                        status="queued", locked_until=timezone.now() + timedelta(hours=1))
+        tasks.sweep()
+        stuck.refresh_from_db()
+        later.refresh_from_db()
+        self.assertEqual(stuck.status, "succeeded", stuck.error)  # resumed and finished
+        self.assertEqual(later.status, "queued")  # its time hasn't come
+
+    def test_a_run_is_sent_to_a_worker_once(self) -> None:
+        with patch.object(tasks.process_run, "delay") as delay:
+            tasks.dispatch("abc")
+            tasks.dispatch("abc")
+        delay.assert_called_once_with("abc")
+
+    def test_two_claims_cannot_both_win(self) -> None:
+        run = AgentRun.objects.create(deployment=self.deploy("script-writer"), project=self.project, user=self.user,
+                                      input={"topic": "a"})
+        self.assertIsNotNone(engine.claim(run.id))
+        self.assertIsNone(engine.claim(run.id))

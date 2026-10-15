@@ -420,6 +420,7 @@ class RunActionView(_ProjectScoped):
         run.status = "queued"
         run.attempts = 0  # each checkpoint resume is a fresh start, not a retry
         run.save(update_fields=["status", "attempts", "output", "updated_at"])
+        engine.enqueue(run.id)
 
     def _continue(self, run, data):
         if run.status != "needs_review" or run.step not in ("concept", "script", "storyboard", "edit", "post"):
