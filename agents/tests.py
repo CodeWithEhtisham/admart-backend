@@ -562,10 +562,13 @@ class AgentAPITests(_AgentAPITestCase):
     def test_actions_only_at_the_right_checkpoint(self) -> None:
         deployment = self.deploy()
         run_id = self.start(deployment).data["id"]
-        for action in ("continue", "regenerate", "approve", "discard"):
+        for action in ("continue", "regenerate", "approve"):
             url = reverse("agent_run_action", kwargs={"project_id": self.project.id, "deployment_id": deployment.id,
                                                       "run_id": run_id, "action": action})
             self.assertEqual(self.client.post(url, {}, format="json").status_code, 400, action)
+        url = reverse("agent_run_action", kwargs={"project_id": self.project.id, "deployment_id": deployment.id,
+                                                  "run_id": run_id, "action": "discard"})
+        self.assertEqual(self.client.post(url, {}, format="json").data["status"], "discarded", "a queued run is cancelled")
 
     def test_voiceover_text_limit(self) -> None:
         deployment = self.deploy("voiceover")
@@ -1768,3 +1771,78 @@ class ClipServerTests(_AgentAPITestCase):
         self.assertTrue(old.output["source_deleted"])
         detail = self.client.get(self.runs_url(deployment)).data
         self.assertIsNone(next(r for r in detail if r["id"] == str(old.id))["sourceUrl"])
+
+
+class DownloadProgressTests(_AgentAPITestCase):
+    def test_download_progress_is_saved_for_the_screen(self) -> None:
+        from agents import clips
+
+        deployment = self.deploy("clip-maker")
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
+                                      input={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}, status="running")
+        hook = clips.progress_hook(run, every=0)
+        hook({"status": "downloading", "downloaded_bytes": 50_000_000, "total_bytes": 200_000_000, "speed": 45_000,
+              "eta": 3333, "info_dict": {"vcodec": "avc1", "acodec": "none"}})
+        run.refresh_from_db()
+        self.assertEqual(run.output["download"], {"part": "video", "percent": 25, "speed": 45000, "eta": 3333})
+        hook({"status": "downloading", "downloaded_bytes": 10, "total_bytes_estimate": 40, "speed": None, "eta": None,
+              "info_dict": {"vcodec": "none", "acodec": "opus"}})
+        run.refresh_from_db()
+        self.assertEqual(run.output["download"], {"part": "sound", "percent": 25, "speed": 0, "eta": None})
+        detail = self.client.get(self.runs_url(deployment)).data[0]
+        self.assertEqual(detail["download"]["part"], "sound")
+
+
+class CancelRunTests(_AgentAPITestCase):
+    def _running(self, agent="clip-maker") -> AgentRun:
+        self.user.refresh_from_db()
+        deployment = self.deploy(agent)
+        return AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
+                                       input={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}, status="running",
+                                       step="get_video", credits_reserved=Decimal("1.5"))
+
+    def _cancel(self, run):
+        url = reverse("agent_run_action", kwargs={"project_id": self.project.id, "deployment_id": run.deployment_id,
+                                                  "run_id": run.id, "action": "discard"})
+        return self.client.post(url, {}, format="json")
+
+    def test_user_cancels_a_running_job_and_gets_the_credits_back(self) -> None:
+        run = self._running()
+        before = self.user.credits_remaining
+        response = self._cancel(run)
+        self.assertEqual(response.status_code, 200, response.data)
+        run.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(run.status, "discarded")
+        self.assertIn("Cancelled", run.error)
+        self.assertEqual(self.user.credits_remaining, before + Decimal("1.5"))
+        self.assertEqual(self._cancel(run).status_code, 400, "only once")
+        delete = self.client.delete(reverse("agent_deployment", kwargs={"project_id": self.project.id,
+                                                                          "deployment_id": run.deployment_id}))
+        self.assertIn(delete.status_code, (200, 204), "the agent can be removed now")
+
+    def test_the_worker_stops_at_its_next_check(self) -> None:
+        run = self._running()
+        AgentRun.objects.filter(id=run.id).update(status="discarded")
+        with self.assertRaises(steps.RunCancelled):
+            steps.keep_alive(run)
+        from agents import clips
+
+        with self.assertRaises(steps.RunCancelled):
+            clips.progress_hook(run, every=0)({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 2})
+
+    def test_engine_ends_quietly_when_a_run_is_cancelled_mid_step(self) -> None:
+        run = self._running(agent="script-writer")
+        AgentRun.objects.filter(id=run.id).update(status="queued", step="")
+
+        def cancelled_mid_step(r):
+            AgentRun.objects.filter(id=r.id).update(status="discarded", error="Cancelled.")
+            steps.keep_alive(r)
+
+        before = self.user.credits_remaining
+        with patch.dict(steps.STEPS, {"script": cancelled_mid_step}):
+            engine.process(engine.claim_next())
+        run.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual((run.status, run.error), ("discarded", "Cancelled."))
+        self.assertEqual(self.user.credits_remaining, before, "no second refund from the engine")

@@ -109,10 +109,16 @@ def _save(run, fields=("output",)):
     run.save(update_fields=[*fields, "updated_at"])
 
 
+class RunCancelled(Exception):
+    """The user cancelled the run while it was working: stop now (credits were already refunded)."""
+
+
 def keep_alive(run, minutes: int = 15) -> None:
-    """Extend the run's lease during a long step, so it isn't taken for a dead worker's run."""
+    """Extend the run's lease during a long step, so it isn't taken for a dead worker's run.
+    Raises RunCancelled when the run is no longer running (the user cancelled it)."""
     run.locked_until = timezone.now() + timedelta(minutes=minutes)
-    AgentRun.objects.filter(id=run.id, status="running").update(locked_until=run.locked_until)
+    if not AgentRun.objects.filter(id=run.id, status="running").update(locked_until=run.locked_until):
+        raise RunCancelled
 
 
 def _config(run) -> dict:

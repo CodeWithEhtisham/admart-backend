@@ -14,7 +14,7 @@ from agents import providers
 from agents.models import AgentRun
 from agents.registry import get_agent
 from agents import clips, cross_post, video_edit
-from agents.steps import STEPS, NeedsReview, WaitUntil
+from agents.steps import STEPS, NeedsReview, RunCancelled, WaitUntil
 from content.credits import refund_credits, reserve_credits
 
 # The Video Editor's and Cross-poster's steps live in their own modules (they import agents.steps).
@@ -86,12 +86,17 @@ def process(run: AgentRun) -> None:
         return
     try:
         for step in spec.steps:
+            if not AgentRun.objects.filter(id=run.id, status="running").exists():
+                return  # cancelled between steps
             run.step = step
             run.locked_until = timezone.now() + LEASE
             run.save(update_fields=["step", "locked_until", "updated_at"])
             used, started = providers.track(), timezone.now()
             STEPS[step](run)
             _log(run, step, started, used)
+    except RunCancelled:
+        logger.info("Run %s was cancelled while working", run.id)
+        return
     except NeedsReview as pause:
         # Waiting for a person: nothing failed and no credits move.
         AgentRun.objects.filter(id=run.id, status="running").update(

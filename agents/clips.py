@@ -165,28 +165,48 @@ def youtube_info(url: str) -> dict:
     }
 
 
+def progress_hook(run, every: float = 3.0):
+    """A yt-dlp progress hook that shows the download on the run (part, percent, speed, time left)
+    and keeps the run's lease alive; it saves at most every `every` seconds."""
+    last = [0.0]
+
+    def hook(status: dict):
+        if status.get("status") != "downloading" or time.monotonic() - last[0] < every:
+            return
+        last[0] = time.monotonic()
+        total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+        info = status.get("info_dict") or {}
+        run.output["download"] = {
+            "part": "sound" if info.get("vcodec") == "none" else "video",
+            "percent": int(100 * (status.get("downloaded_bytes") or 0) / total) if total else 0,
+            "speed": int(status.get("speed") or 0),
+            "eta": int(status["eta"]) if status.get("eta") is not None else None,
+        }
+        base._save(run)
+        base.keep_alive(run)
+
+    return hook
+
+
 def download_youtube(url: str, folder: Path, run=None) -> Path:
     """Download a YouTube video (up to 1080p) as folder/source.mp4. Raises RuntimeError."""
     import yt_dlp
-
-    last = [time.monotonic()]
-
-    def progress(_status):
-        if run is not None and time.monotonic() - last[0] > 60:
-            base.keep_alive(run)
-            last[0] = time.monotonic()
 
     options = _ytdlp_options(
         format="bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b",
         merge_output_format="mp4",
         outtmpl=str(folder / "source.%(ext)s"),
         max_filesize=settings.CLIPS_MAX_DOWNLOAD_BYTES,
-        progress_hooks=[progress],
+        progress_hooks=[progress_hook(run)] if run is not None else [],
     )
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
+    except base.RunCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
+        if run is not None and not type(run).objects.filter(id=run.id, status="running").exists():
+            raise base.RunCancelled from exc  # yt-dlp wrapped our cancel from the progress hook
         raise _youtube_error(exc) from exc
     target = folder / "source.mp4"
     if not target.exists():

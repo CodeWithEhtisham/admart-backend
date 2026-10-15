@@ -122,6 +122,7 @@ def _clips_data(out: dict, request) -> dict:
         "sourceUrl": None if out.get("source_deleted") else _media(out.get("clip_source"), request),
         "sourceSeconds": (out.get("clip_info") or {}).get("duration"),
         "sourceTitle": out.get("source_title", ""),
+        "download": out.get("download"),
         "transcribedWith": out.get("transcribed_with", []),
         "moments": out.get("moments", []),
         "clips": [
@@ -673,11 +674,14 @@ class RunActionView(_ProjectScoped):
         return None
 
     def _discard(self, run, data):
-        if run.status == "queued" and run.step == "wait":  # cancel a scheduled post
+        if run.status in ("queued", "running"):  # cancel: a scheduled post, or a job waiting or in progress
+            if run.status == "running" and run.step == "post":
+                return _bad("It is being posted right now, so it can't be cancelled.")
             credits, topup = run.credits_reserved, run.topup_reserved
-            cancelled = AgentRun.objects.filter(id=run.id, status="queued").update(
-                status="discarded", finished_at=timezone.now(), credits_reserved=0, topup_reserved=0
-            )
+            cancelled = AgentRun.objects.filter(id=run.id, status__in=("queued", "running")).exclude(
+                status="running", step="post"
+            ).update(status="discarded", error="Cancelled. Your credits were refunded.", finished_at=timezone.now(),
+                     locked_until=None, credits_reserved=0, topup_reserved=0)
             if not cancelled:
                 return _bad("It is being posted right now, so it can't be cancelled.")
             if credits > 0:
