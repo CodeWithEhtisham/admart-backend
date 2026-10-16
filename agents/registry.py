@@ -403,7 +403,7 @@ def catalog_entry(spec: AgentSpec) -> dict:
 
 def _clip_catalog(spec: AgentSpec) -> dict:
     """Choices for the Clip Maker, priced per hour of source video."""
-    from agents.clips import CAPTION_STYLES, CLIP_COUNTS, CLIP_LENGTHS, FREE_MAX_SECONDS, LAYOUTS, PAID_MAX_SECONDS
+    from agents.clips import CAPTION_STYLES, CLIP_COUNTS, CLIP_LANGUAGES, CLIP_LENGTHS, FREE_MAX_SECONDS, LAYOUTS, PAID_MAX_SECONDS
 
     return {
         "estimatedCredits": f"{estimate_credits(spec, {'seconds': 3600}):f}",
@@ -413,6 +413,7 @@ def _clip_catalog(spec: AgentSpec) -> dict:
         "clipCounts": list(CLIP_COUNTS),
         "layouts": [{"id": key, "label": label} for key, label in LAYOUTS.items()],
         "captionStyles": [{"id": key, "label": row[0]} for key, row in CAPTION_STYLES.items()],
+        "clipLanguages": [{"id": key, "label": label} for key, label in CLIP_LANGUAGES.items()],
     }
 
 

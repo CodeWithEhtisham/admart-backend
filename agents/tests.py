@@ -623,6 +623,8 @@ class RecipeTests(_AgentAPITestCase):
         self.assertEqual((editor["inputKind"], editor["creditUnit"], len(editor["audioLevels"])), ("video", "minute", 3))
         clip = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "clip-maker")
         self.assertEqual([c["id"] for c in clip["captionStyles"]], ["classic", "bold", "boxed", "minimal"])
+        self.assertEqual(clip["clipLanguages"][0], {"id": "auto", "label": "Detect automatically"})
+        self.assertIn({"id": "ur", "label": "Urdu"}, clip["clipLanguages"])
         self.assertEqual(clip["layouts"][0]["id"], "auto")
 
     def test_owner_creates_an_agent_that_users_can_deploy_and_run(self) -> None:
@@ -1285,7 +1287,7 @@ class ClipTranscribeTests(SimpleTestCase):
         post.return_value = MagicMock(status_code=200, json=lambda: {
             "words": [{"word": "Hi", "start": 0.0, "end": 0.4}, {"word": "there", "start": 0.5, "end": 0.9}],
             "segments": [{"start": 0, "end": 1, "text": " Hi there."}]})
-        words, used = clips.transcribe_chunk(self.audio, offset=600)
+        words, used, _heard = clips.transcribe_chunk(self.audio, offset=600, language="en")
         self.assertEqual(used, "groq")
         self.assertEqual(words, [{"word": "Hi", "start": 600.0, "end": 600.4}, {"word": "there.", "start": 600.5, "end": 600.9}])
         self.assertEqual(post.call_args.kwargs["data"]["timestamp_granularities[]"], ["word", "segment"])
@@ -1298,7 +1300,7 @@ class ClipTranscribeTests(SimpleTestCase):
         from agents import clips
 
         with self.assertLogs("agents.clips", "WARNING"):
-            words, used = clips.transcribe_chunk(self.audio, offset=0)
+            words, used, _heard = clips.transcribe_chunk(self.audio, offset=0, language="en")
         self.assertEqual((words, used), ([{"word": "Yo.", "start": 1.0, "end": 1.5}], "fal"))
 
     @override_settings(GROQ_API_KEY="", FAL_KEY="", CLIPS_TRANSCRIBE_PROVIDERS="groq,fal")
@@ -1307,6 +1309,52 @@ class ClipTranscribeTests(SimpleTestCase):
 
         with self.assertRaisesMessage(RuntimeError, "No transcription service"):
             clips.transcribe_chunk(self.audio, offset=0)
+
+    @patch("agents.clips.requests.post")
+    def test_auto_language_is_detected_by_the_service(self, post) -> None:
+        """An Urdu video forced to English came out as wrong English: with no language set, the service detects it."""
+        from agents import clips
+
+        post.return_value = MagicMock(status_code=200, json=lambda: {
+            "language": "Urdu", "words": [{"word": "سلام", "start": 0.0, "end": 0.4}], "segments": []})
+        words, used, heard = clips.transcribe_chunk(self.audio, offset=0, language=None)
+        self.assertNotIn("language", post.call_args.kwargs["data"])
+        self.assertEqual((used, heard), ("groq", "ur"))
+        self.assertEqual(words[0]["word"], "سلام")
+
+    def test_spoken_language_setting(self) -> None:
+        from agents import clips
+
+        self.assertIsNone(clips.clip_language({}))  # detect automatically
+        self.assertIsNone(clips.clip_language({"language": "auto"}))
+        self.assertEqual(clips.clip_language({"language": "ur"}), "ur")
+        self.assertIsNone(clips.clip_language({"language": "../x"}))
+        self.assertEqual(clips.language_code("urdu"), "ur")
+        self.assertEqual(clips.language_code("English"), "en")
+        self.assertEqual(clips.language_code("ur"), "ur")
+        self.assertIsNone(clips.language_code("klingon"))
+
+    @override_settings(AGENTS_DRY_RUN=False)
+    def test_the_detected_language_is_used_for_every_later_piece(self) -> None:
+        """Detecting per piece mistook music for Welsh, so the first piece decides for the whole video."""
+        from agents import clips
+
+        run = MagicMock()
+        run.deployment.config = {}
+        run.output = {"clip_info": {"duration": 1300}, "clip_audio": "a.mp3"}
+        heard = [([{"word": "w", "start": float(i), "end": i + 0.5} for i in range(15)], "groq", "ur"),
+                 ([{"word": "w", "start": 700.0 + i, "end": 700.5 + i} for i in range(15)], "groq", None)]
+        with patch("agents.clips.base.media_dir", return_value=(self.audio.parent, "rel")), \
+                patch("agents.clips.base.media_path", return_value=self.audio), \
+                patch("agents.clips.base._save"), patch("agents.clips.base.keep_alive"), \
+                patch("agents.clips.silences", return_value=[]), \
+                patch("agents.clips.chunk_bounds", return_value=[(0, 650), (650, 1300)]), \
+                patch("agents.clips.render._run"), \
+                patch("agents.clips.transcribe_chunk", side_effect=heard) as chunk:
+            clips.step_transcribe_long(run)
+        self.assertEqual([c.kwargs["language"] for c in chunk.call_args_list], [None, "ur"])
+        self.assertEqual(run.output["language"], "ur")
+        self.assertEqual(len(run.output["words"]), 30)
 
 
 class ClipMakerPipelineTests(_AgentAPITestCase):
@@ -1434,7 +1482,7 @@ class ClipLocalWhisperTests(SimpleTestCase):
         model = MagicMock()
         model.transcribe.return_value = ([MagicMock(words=[word])], None)
         with patch("agents.clips._local_model", return_value=model):
-            self.assertEqual(clips._local_words(audio, "en"), [{"word": "Hi.", "start": 0.1, "end": 0.4}])
+            self.assertEqual(clips._local_words(audio, "en"), ([{"word": "Hi.", "start": 0.1, "end": 0.4}], None))
         self.assertEqual(model.transcribe.call_args.kwargs["language"], "en")
         samples = model.transcribe.call_args.args[0]
         self.assertIsInstance(samples, numpy.ndarray)

@@ -124,6 +124,7 @@ def _clips_data(out: dict, request) -> dict:
         "sourceTitle": out.get("source_title", ""),
         "download": out.get("download"),
         "transcribedWith": out.get("transcribed_with", []),
+        "language": out.get("language"),
         "moments": out.get("moments", []),
         "clips": [
             {**{k: c.get(k) for k in ("start", "end", "score", "title", "hook", "reason", "text", "duration",

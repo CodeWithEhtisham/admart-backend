@@ -45,6 +45,20 @@ LAYOUTS = {
     "crop": "Fill the screen (crop the centre)",
     "fit": "Show the whole picture (blurred background)",
 }
+CLIP_LANGUAGES = {  # the "Spoken language" choices; any other ISO 639-1 code in the config works too
+    "auto": "Detect automatically",
+    "en": "English", "ur": "Urdu", "hi": "Hindi", "pa": "Punjabi", "ar": "Arabic", "bn": "Bengali",
+    "fa": "Persian", "tr": "Turkish", "id": "Indonesian", "ms": "Malay", "es": "Spanish", "pt": "Portuguese",
+    "fr": "French", "de": "German", "it": "Italian", "ru": "Russian", "zh": "Chinese", "ja": "Japanese",
+    "ko": "Korean",
+}
+# Whisper services name the language they heard ("Urdu"); captions and the next pieces need its code.
+_LANGUAGE_NAMES = {name.lower(): code for code, name in CLIP_LANGUAGES.items() if code != "auto"} | {
+    "punjabi": "pa", "panjabi": "pa", "persian": "fa", "farsi": "fa", "mandarin": "zh", "tamil": "ta",
+    "telugu": "te", "marathi": "mr", "gujarati": "gu", "nepali": "ne", "pashto": "ps", "sindhi": "sd",
+    "dutch": "nl", "polish": "pl", "ukrainian": "uk", "vietnamese": "vi", "thai": "th", "swahili": "sw",
+    "tagalog": "tl", "greek": "el", "hebrew": "he", "romanian": "ro", "swedish": "sv",
+}
 CHUNK_SECONDS = 600  # transcription pieces: Groq takes up to 25 MB per file
 WINDOW_SECONDS = 20 * 60  # transcript the AI reads per call
 WINDOW_OVERLAP = 60
@@ -256,14 +270,23 @@ def punctuate(words: list[dict], segments: list[dict]) -> list[dict]:
     return words
 
 
-def _groq_words(audio: Path, language: str) -> list[dict]:
+def language_code(name) -> str | None:
+    """"Urdu" / "urdu" / "ur" → "ur"; None when it isn't a language we know."""
+    text = str(name or "").strip().lower()
+    return text if re.fullmatch(r"[a-z]{2}", text) else _LANGUAGE_NAMES.get(text)
+
+
+def _groq_words(audio: Path, language: str | None) -> tuple[list[dict], str | None]:
+    data = {"model": settings.CLIPS_GROQ_MODEL, "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word", "segment"]}
+    if language:
+        data["language"] = language
     for attempt in range(3):
         response = requests.post(
             GROQ_URL,
             headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
             files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")},
-            data={"model": settings.CLIPS_GROQ_MODEL, "response_format": "verbose_json", "language": language,
-                  "timestamp_granularities[]": ["word", "segment"]},
+            data=data,
             timeout=300,
         )
         if response.status_code == 429 and attempt < 2:  # free tier rate limit: wait as told
@@ -274,7 +297,7 @@ def _groq_words(audio: Path, language: str) -> list[dict]:
         data = response.json()
         raw = [{"word": str(w.get("word", "")).strip(), "start": float(w["start"]), "end": float(w["end"])}
                for w in data.get("words") or [] if str(w.get("word", "")).strip()]
-        return punctuate(raw, data.get("segments") or [])
+        return punctuate(raw, data.get("segments") or []), language_code(data.get("language"))
     raise RuntimeError("Groq rate limit")
 
 
@@ -286,7 +309,7 @@ def _local_model():
                         cpu_threads=os.cpu_count() or 4)  # its default is 4 threads
 
 
-def _local_words(audio: Path, language: str) -> list[dict] | None:
+def _local_words(audio: Path, language: str | None) -> tuple[list[dict], str | None] | None:
     """Words from faster-whisper on our CPU (free), or None if it isn't installed."""
     try:
         model = _local_model()
@@ -298,48 +321,53 @@ def _local_words(audio: Path, language: str) -> list[dict] | None:
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(audio), "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"],
                          capture_output=True, check=True, timeout=900).stdout
     samples = numpy.frombuffer(raw, dtype=numpy.float32)
-    segments, _info = model.transcribe(samples, language=language, word_timestamps=True, vad_filter=True)
-    return [{"word": w.word.strip(), "start": float(w.start), "end": float(w.end)}
-            for seg in segments for w in seg.words or [] if w.word.strip()]
+    segments, info = model.transcribe(samples, language=language, word_timestamps=True, vad_filter=True)
+    words = [{"word": w.word.strip(), "start": float(w.start), "end": float(w.end)}
+             for seg in segments for w in seg.words or [] if w.word.strip()]
+    return words, language_code(getattr(info, "language", None))
 
 
-def _fal_words(audio: Path, language: str) -> list[dict]:
-    out = providers._fal(settings.AGENTS_WHISPER_MODEL, {"audio_url": providers._data_uri(audio), "chunk_level": "word",
-                                                         "language": language})
+def _fal_words(audio: Path, language: str | None) -> tuple[list[dict], str | None]:
+    arguments = {"audio_url": providers._data_uri(audio), "chunk_level": "word"}
+    if language:
+        arguments["language"] = language
+    out = providers._fal(settings.AGENTS_WHISPER_MODEL, arguments)
     words = []
     for chunk in out.get("chunks") or []:
         word = str(chunk.get("text", "")).strip()
         start, end = (list(chunk.get("timestamp") or []) + [None, None])[:2]
         if word and start is not None:
             words.append({"word": word, "start": float(start), "end": float(end if end is not None else start)})
-    return words
+    return words, language_code((out.get("inferred_languages") or [None])[0])
 
 
-def transcribe_chunk(audio: Path, offset: float, language: str = "en") -> tuple[list[dict], str]:
+def transcribe_chunk(audio: Path, offset: float, language: str | None = None) -> tuple[list[dict], str, str | None]:
     """Word timings for one audio piece, shifted by `offset`, from the first service that works.
 
-    Every piece uses the same `language` (detecting it per piece mistook music for Welsh).
-    Services are tried in CLIPS_TRANSCRIBE_PROVIDERS order: groq (free tier), local (faster-whisper on
-    our CPU, free), fal (paid). Returns (words, service name). Raises RuntimeError.
+    With `language` None the service detects it; the caller then passes what was heard to every later
+    piece (detecting it per piece mistook music for Welsh). Services are tried in CLIPS_TRANSCRIBE_PROVIDERS
+    order: groq (free tier), local (faster-whisper on our CPU, free), fal (paid).
+    Returns (words, service name, language heard or None). Raises RuntimeError.
     """
     tried = False
     for name in [n.strip() for n in settings.CLIPS_TRANSCRIBE_PROVIDERS.split(",") if n.strip()]:
         if (name == "groq" and not settings.GROQ_API_KEY) or (name == "fal" and not settings.FAL_KEY):
             continue
         try:
-            words = {"groq": _groq_words, "local": _local_words, "fal": _fal_words}[name](audio, language)
+            result = {"groq": _groq_words, "local": _local_words, "fal": _fal_words}[name](audio, language)
         except KeyError:
             continue
         except Exception as exc:  # noqa: BLE001 — try the next service
             tried = True
             logger.warning("Transcription with %s failed: %s", name, exc)
             continue
-        if words is None:  # local model not installed
+        if result is None:  # local model not installed
             continue
+        words, heard = result
         providers.note(name)
         shifted = [{"word": w["word"], "start": round(w["start"] + offset, 3), "end": round(w["end"] + offset, 3)}
                    for w in words]
-        return shifted, name
+        return shifted, name, heard
     if tried:
         raise RuntimeError("The transcription services failed. Please try again later.")
     raise RuntimeError("No transcription service is set up on this server yet.")
@@ -424,10 +452,10 @@ def _windows(sents: list[dict]) -> list[list[int]]:
     return windows
 
 
-def clip_language(config: dict) -> str:
-    """The video's spoken language (ISO 639-1); English unless the agent is set otherwise."""
-    language = str((config or {}).get("language") or "en").lower()
-    return language if re.fullmatch(r"[a-z]{2}", language) else "en"
+def clip_language(config: dict) -> str | None:
+    """The video's spoken language (ISO 639-1), or None to detect it (the default)."""
+    language = str((config or {}).get("language") or "auto").lower()
+    return language if re.fullmatch(r"[a-z]{2}", language) else None
 
 
 def clip_settings(config: dict) -> tuple[str, int, str]:
@@ -527,6 +555,7 @@ def step_transcribe_long(run) -> None:
     done = run.output.setdefault("chunk_words", {})  # piece number -> words, so a restart resumes
     pieces = chunk_bounds(duration, silences(audio))
     used = set(run.output.get("transcribed_with") or [])
+    language = run.output.get("language") or clip_language(base._config(run))
     for n, (a, b) in enumerate(pieces):
         if str(n) in done:
             continue
@@ -534,9 +563,11 @@ def step_transcribe_long(run) -> None:
         try:
             render._run(["ffmpeg", "-y", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(audio), "-ac", "1",
                          "-ar", "16000", "-b:a", "48k", str(piece)], timeout=600)
-            words, name = transcribe_chunk(piece, offset=a, language=clip_language(base._config(run)))
+            words, name, heard = transcribe_chunk(piece, offset=a, language=language)
         finally:
             piece.unlink(missing_ok=True)
+        if language is None and heard:  # the first piece decides for the whole video
+            language = run.output["language"] = heard
         done[str(n)] = words
         used.add(name)
         run.output["transcribed_with"] = sorted(used)
