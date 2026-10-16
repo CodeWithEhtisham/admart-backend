@@ -25,6 +25,7 @@ from drf_spectacular.views import (
 )
 
 from admin_panel.dashboard_views import admin_dashboard
+from agents.views import AgentCatalogView
 from content.video_views import VideoModelCatalogView
 from content.views import (
     FalModelSearchView,
@@ -51,6 +52,8 @@ urlpatterns = [
     path("api/projects", ProjectListCreateView.as_view(), name="project_list_create"),
     path("api/projects/", include("projects.urls")),
     path("api/projects/", include("content.urls")),
+    path("api/projects/", include("agents.urls")),
+    path("api/agents/catalog", AgentCatalogView.as_view(), name="agent_catalog"),
     path("api/images/models", ImageModelCatalogView.as_view(), name="image_models"),
     path("api/videos/models", VideoModelCatalogView.as_view(), name="video_models"),
     path("api/fal/models", FalModelSearchView.as_view(), name="fal_models"),
@@ -61,6 +64,8 @@ urlpatterns = [
     path("api/templates/<uuid:template_id>/use", TemplateUseView.as_view(), name="template_use"),
     path("api/templates/<uuid:template_id>/favorite", TemplateFavoriteView.as_view(), name="template_favorite"),
     # Superadmin panel API
+    path("api/admin/agents/", include("agents.admin_urls")),
+    path("", include("blog.urls")),  # /api/blog and /api/admin/blog/
     path("api/admin/", include("admin_panel.urls")),
     # OAuth provider callback (browser redirect from provider; secured by signed state).
     path("api/social/callback/<str:platform>", SocialCallbackView.as_view(), name="social_callback"),

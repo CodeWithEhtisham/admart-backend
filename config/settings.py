@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
+
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
@@ -64,6 +66,8 @@ INSTALLED_APPS = [
     "projects.apps.ProjectsConfig",
     "content.apps.ContentConfig",
     "admin_panel.apps.AdminPanelConfig",
+    "agents.apps.AgentsConfig",
+    "blog.apps.BlogConfig",
 ]
 
 MIDDLEWARE = [
@@ -122,6 +126,8 @@ else:
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            # The web server and the agents worker share the file: wait for a lock instead of failing.
+            "OPTIONS": {"timeout": 20},
         }
     }
 
@@ -186,6 +192,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 PRIVATE_MEDIA_ROOT = Path(os.getenv("PRIVATE_MEDIA_ROOT", BASE_DIR / "private_media"))
 # Allow library video uploads up to ~200 MB (view enforces per-type limits).
 DATA_UPLOAD_MAX_MEMORY_SIZE = 210 * 1024 * 1024
+# Long videos (Clip Maker) upload in resumable chunks: content/large_upload.py
+LIBRARY_LARGE_VIDEO_BYTES = int(os.getenv("LIBRARY_LARGE_VIDEO_BYTES", str(4 * 1024**3)))
+LIBRARY_UPLOAD_CHUNK_BYTES = int(os.getenv("LIBRARY_UPLOAD_CHUNK_BYTES", str(8 * 1024**2)))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # Absolute base for public media URLs when no request is available (e.g. workers).
 # In local dev, leave blank and build URLs from the request; fal needs a publicly
@@ -248,6 +257,8 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+# Chunked video uploads send Content-Range (content/large_upload.py).
+CORS_ALLOW_HEADERS = (*default_headers, "content-range")
 
 # Origins allowed to POST forms with the session cookie (Django admin + dashboard).
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
@@ -387,9 +398,81 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 PROMPT_ENHANCER_MODEL = os.getenv("PROMPT_ENHANCER_MODEL", "gemini-2.5-flash-lite")
 PROMPT_ENHANCER_TIMEOUT = float(os.getenv("PROMPT_ENHANCER_TIMEOUT", "20"))
 
+# Agents (YouTube Shorts Creator etc.). The worker is `manage.py run_agents_worker`.
+# Two services: OpenRouter for text (research, ideas, script), fal.ai for voice, caption timing
+# and images (FAL_KEY above). See agents/providers.py and docs/AGENTS.md.
+# Dry run: template script, placeholder images, silent audio, no provider calls, 0 credits.
+AGENTS_DRY_RUN = os.getenv("AGENTS_DRY_RUN", "False").lower() in ("true", "1", "yes")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+# Up to 3, tried in order. Cheap paid models (tested 2026-10-14): about $0.001 per call.
+# ":free" models also work but have daily limits.
+AGENTS_OPENROUTER_MODELS = (
+    os.getenv("AGENTS_OPENROUTER_MODELS") or "google/gemini-2.5-flash-lite,qwen/qwen3.7-flash,deepseek/deepseek-v4-flash"
+)
+# OpenRouter web search for research (paid per search; without credit, research skips it).
+AGENTS_SEARCH_ENGINE = os.getenv("AGENTS_SEARCH_ENGINE", "exa")
+# Without an OpenRouter key, agents write with Gemini directly (GEMINI_API_KEY, free tier), trying these in order.
+AGENTS_GEMINI_MODELS = os.getenv("AGENTS_GEMINI_MODELS", "gemini-flash-lite-latest,gemini-3.8-flash")
+AGENTS_IMAGE_MODEL = os.getenv("AGENTS_IMAGE_MODEL", "fal-ai/flux/schnell")
+AGENTS_WHISPER_MODEL = os.getenv("AGENTS_WHISPER_MODEL", "fal-ai/whisper")
+# Cost estimates used for credit quotes (USD). Image prices come from fal's pricing API.
+AGENTS_LLM_USD_PER_RUN = os.getenv("AGENTS_LLM_USD_PER_RUN", "0.001")  # per text call; 0 with free models
+AGENTS_SEARCH_USD = os.getenv("AGENTS_SEARCH_USD", "0.007")  # one Exa web search
+AGENTS_TTS_USD_PER_1K_CHARS = os.getenv("AGENTS_TTS_USD_PER_1K_CHARS", "0.02")  # Kokoro on fal
+AGENTS_CAPTIONS_USD_PER_RUN = os.getenv("AGENTS_CAPTIONS_USD_PER_RUN", "0.01")  # Whisper on fal, all scenes
+AGENTS_TRANSCRIBE_USD_PER_MIN = os.getenv("AGENTS_TRANSCRIBE_USD_PER_MIN", "0.006")  # Whisper on fal, uploaded videos
+# Free stock footage (https://www.pexels.com/api/). Optional; empty = AI images only.
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+# Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.
+AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
+AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+
+# Clip Maker (long video -> vertical clips). See agents/clips.py and docs/plans/2026-10-14-clip-maker-agent.md.
+# Transcription services tried in order: groq (free tier, GROQ_API_KEY), local (faster-whisper on this
+# server's CPU, free, slower), fal (paid, FAL_KEY).
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+CLIPS_GROQ_MODEL = os.getenv("CLIPS_GROQ_MODEL", "whisper-large-v3-turbo")
+CLIPS_TRANSCRIBE_PROVIDERS = os.getenv("CLIPS_TRANSCRIBE_PROVIDERS", "groq,local,fal")
+CLIPS_LOCAL_WHISPER_MODEL = os.getenv("CLIPS_LOCAL_WHISPER_MODEL", "base")  # tiny/base/small/medium
+# YouTube downloads (yt-dlp). A datacenter IP is often blocked by YouTube: a residential proxy fixes it.
+CLIPS_YTDLP_JS_RUNTIMES = os.getenv("CLIPS_YTDLP_JS_RUNTIMES", "deno,node")
+CLIPS_YTDLP_PROXY = os.getenv("CLIPS_YTDLP_PROXY", "")
+CLIPS_YTDLP_COOKIES = os.getenv("CLIPS_YTDLP_COOKIES", "")  # path to a cookies.txt file
+# bgutil PO-token provider (pip install bgutil-ytdlp-pot-provider + its server), e.g. http://127.0.0.1:4416
+CLIPS_YTDLP_POT_URL = os.getenv("CLIPS_YTDLP_POT_URL", "")
+CLIPS_KEEP_SOURCE_DAYS = int(os.getenv("CLIPS_KEEP_SOURCE_DAYS", "7"))  # cleanup_clip_sources default
+CLIPS_MAX_DOWNLOAD_BYTES = int(os.getenv("CLIPS_MAX_DOWNLOAD_BYTES", str(4 * 1024 * 1024 * 1024)))
+# Cost estimates for credit quotes (USD): 0 with Groq's free tier or local; fal Whisper is ~0.006.
+CLIPS_TRANSCRIBE_USD_PER_MIN = os.getenv("CLIPS_TRANSCRIBE_USD_PER_MIN", "0.001")
+CLIPS_RENDER_USD_PER_CLIP = os.getenv("CLIPS_RENDER_USD_PER_CLIP", "0.002")  # our CPU time
+
 # Optional Runware-powered preview generation for the owned template seed command.
 # The gallery works without this; set these when generating fresh preview_url assets.
 RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "")
 RUNWARE_API_URL = os.getenv("RUNWARE_API_URL", "https://api.runware.ai/v1")
 RUNWARE_PREVIEW_MODEL = os.getenv("RUNWARE_PREVIEW_MODEL", "")
 RUNWARE_TIMEOUT = int(os.getenv("RUNWARE_TIMEOUT", "60"))
+
+# ── Redis, Celery and Celery Beat (Docker; see docs/docker.md) ─────────────
+# REDIS_URL set: Redis is the shared cache, so rate limits and locks work across all processes
+# (the default in-memory cache is per process). USE_CELERY: agent runs, Autopilot and the template
+# refresh run as Celery tasks scheduled by Celery Beat. Without them (the current server), the
+# in-memory cache, `manage.py run_agents_worker` and the template-refresh thread are used as before.
+REDIS_URL = os.getenv("REDIS_URL", "")
+if REDIS_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
+USE_CELERY = os.getenv("USE_CELERY", "False").lower() in ("true", "1", "yes")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_TASK_ACKS_LATE = True  # a task lost with its worker is delivered again
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # renders are long: don't hoard queued runs
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    # Start due Autopilot/report slots, recover stuck runs, start runs whose time has come.
+    "agents-sweep": {"task": "agents.tasks.sweep", "schedule": 15.0},
+    "template-refresh": {
+        "task": "content.tasks.refresh_templates",
+        "schedule": 60.0 * max(1, int(os.getenv("TEMPLATE_AUTO_REFRESH_MINUTES", "30") or 30)),
+    },
+}
