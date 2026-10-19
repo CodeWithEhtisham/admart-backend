@@ -1025,3 +1025,88 @@ class CreditSafetyTests(APITestCase):
         expired = expire_subscription_if_due(self.user)
         self.assertEqual(expired.plan, "free")
         self.assertEqual(expired.credits_remaining, 5)  # paid-for top-ups kept
+
+
+class LargeVideoUploadTests(APITestCase):
+    """Resumable chunked upload for long videos (Clip Maker): start → chunks → finish."""
+
+    def setUp(self):
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        media = override_settings(MEDIA_ROOT=str(self.tmp / "media"), PRIVATE_MEDIA_ROOT=self.tmp / "private",
+                                  MEDIA_BASE_URL="http://testserver", LIBRARY_UPLOAD_CHUNK_BYTES=40_000)
+        media.enable()
+        self.addCleanup(media.disable)
+        self.user = User.objects.create_user(email="big@example.com", password="Password123!", first_name="B", last_name="U")
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Big")
+        clip = self.tmp / "talk.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:d=2:r=30", "-f", "lavfi",
+                        "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(clip)],
+                       check=True)
+        self.video = clip.read_bytes()
+        self.base = f"/api/projects/{self.project.id}/library/uploads/large"
+
+    def _start(self, size=None, content_type="video/mp4", name="My talk.mp4"):
+        return self.client.post(self.base, {"fileName": name, "size": size or len(self.video), "contentType": content_type},
+                                format="json")
+
+    def _put(self, upload_id, start, chunk):
+        end = start + len(chunk) - 1
+        return self.client.put(f"{self.base}/{upload_id}", data=chunk, content_type="application/octet-stream",
+                               HTTP_CONTENT_RANGE=f"bytes {start}-{end}/{len(self.video)}")
+
+    def test_upload_in_chunks_resume_and_finish(self):
+        started = self._start()
+        self.assertEqual(started.status_code, status.HTTP_201_CREATED, started.data)
+        upload_id, step = started.data["id"], started.data["chunkBytes"]
+        self.assertEqual((started.data["received"], step), (0, 40_000))
+        self.assertEqual(self._put(upload_id, 0, self.video[:step]).data["received"], step)
+        wrong = self._put(upload_id, 0, self.video[:step])  # a repeated chunk after a dropped reply
+        self.assertEqual(wrong.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(wrong.data["received"], step, "tells the browser where to continue")
+        self.assertEqual(self.client.get(f"{self.base}/{upload_id}").data["received"], step)
+        pos = step
+        while pos < len(self.video):
+            self.assertEqual(self._put(upload_id, pos, self.video[pos : pos + step]).status_code, 200)
+            pos += step
+        done = self.client.post(f"{self.base}/{upload_id}/finish")
+        self.assertEqual(done.status_code, status.HTTP_201_CREATED, done.data)
+        asset = LibraryAsset.objects.get(id=done.data["id"])
+        self.assertEqual((asset.media_type, asset.title, asset.duration_seconds, asset.width), ("video", "My talk", 2, 320))
+        self.assertTrue(asset.source_url.endswith(".mp4"))
+        self.assertEqual(self.client.get(f"{self.base}/{upload_id}").status_code, 404, "the session is gone")
+
+    def test_limits_and_types(self):
+        self.assertEqual(self._start(content_type="image/png").status_code, 400)
+        self.assertEqual(self._start(size=5 * 1024**3).status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        upload_id = self._start().data["id"]
+        too_big = self._put(upload_id, 0, self.video[:40_001])
+        self.assertEqual(too_big.status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(self.client.post(f"{self.base}/{upload_id}/finish").status_code, 400, "not all bytes arrived")
+        self.assertEqual(self.client.get(f"{self.base}/../../etc").status_code, 404)
+
+    def test_only_the_owner_can_use_a_session(self):
+        upload_id = self._start().data["id"]
+        other = User.objects.create_user(email="o@example.com", password="Password123!", first_name="O", last_name="U")
+        self.client.force_authenticate(user=other)
+        self.assertEqual(self._put(upload_id, 0, self.video[:100]).status_code, 404)
+
+    def test_a_file_that_is_not_a_video_is_rejected(self):
+        self.video = b"\x00" * 1000
+        upload_id = self._start().data["id"]
+        self._put(upload_id, 0, self.video)
+        response = self.client.post(f"{self.base}/{upload_id}/finish")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(LibraryAsset.objects.filter(project=self.project).exists())
+
+    def test_at_most_three_open_uploads_per_user(self):
+        for _ in range(3):
+            self.assertEqual(self._start().status_code, status.HTTP_201_CREATED)
+        response = self._start()
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
