@@ -27,6 +27,7 @@ def process_run(run_id: str) -> None:
 @shared_task(ignore_result=True)
 def sweep() -> None:
     """Recover runs whose worker died, start due Autopilot/report slots, dispatch every due queued run."""
+    engine.beat()  # a sweep running means Beat and a Celery worker are both up
     engine.recover_stuck()
     run_due()
     for run_id in engine.due_queued_ids(limit=50):

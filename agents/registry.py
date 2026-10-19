@@ -323,13 +323,27 @@ def validate_recipe(data: dict) -> str | None:
     return None
 
 
-def _image_usd() -> Decimal:
-    model = settings.AGENTS_IMAGE_MODEL
+def _image_usd(model: str) -> Decimal:
     row = get_fal_prices([model]).get(model) or FALLBACK_PRICES.get(model) or {}
     price = Decimal(str(row.get("unit_price", "0.03")))
     if row.get("unit") == "megapixels":
         return price * Decimal(IMAGE_WIDTH * IMAGE_HEIGHT) / Decimal(1_000_000)
     return price
+
+
+# Steps that make one AI text call each (research is a text call with web search on top).
+LLM_STEPS = ("research", "concepts", "script", "plan_edit", "package", "write_post", "trends", "analyze")
+
+
+def uses_text_model(spec: AgentSpec) -> bool:
+    return any(step in spec.steps for step in LLM_STEPS + ("get_video",))
+
+
+def sample_input(spec: AgentSpec) -> dict:
+    """The input credit quotes are shown for: per run, per minute (Video Editor) or per hour (Clip Maker)."""
+    if "get_video" in spec.steps:
+        return {"seconds": 3600}
+    return {"seconds": 60} if "prepare" in spec.steps else {"text": "x" * 500}
 
 
 def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = None) -> Decimal:
@@ -338,9 +352,10 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
         return Decimal("0")
     usd = Decimal("0")
     from agents import providers
+    from agents.ai_models import chosen_models, text_call_usd
 
-    llm_calls = sum(step in spec.steps for step in ("concepts", "script", "plan_edit", "package", "write_post", "trends",
-                                                     "analyze"))
+    models = chosen_models(config)
+    llm_calls = sum(step in spec.steps for step in LLM_STEPS)
     if "prepare" in spec.steps:  # video: priced by length (seconds probed when the run starts)
         minutes = Decimal(str(run_input.get("seconds") or MAX_VIDEO_SECONDS)) / Decimal(60)
         audio = AUDIO_LEVELS[video_settings(config or {})[2]][2]
@@ -355,10 +370,10 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     if "listen" in spec.steps:  # only the first 3 minutes are transcribed
         seconds = min(Decimal(str(run_input.get("seconds") or 180)), Decimal(180))
         usd += seconds / Decimal(60) * Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
-    usd += providers.text_usd() * llm_calls
+    usd += text_call_usd(models["text"]) * llm_calls
     usd += providers.research_usd() * sum(step in spec.steps for step in ("research", "trends", "analyze"))
     if "visuals" in spec.steps:
-        usd += _image_usd() * SHORT_SCENES  # worst case: every scene an AI image
+        usd += _image_usd(models["image"]) * SHORT_SCENES  # worst case: every scene an AI image
     if "voice" in spec.steps:
         chars = SHORT_NARRATION_CHARS if "script" in spec.steps else len(str(run_input.get("text", "")))
         usd += providers.speech_usd(chars)
@@ -368,11 +383,13 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     return quantize_credits(cost * admart_markup_multiplier(cost))
 
 
-def image_credits() -> Decimal:
-    """Credits for regenerating one scene image."""
+def image_credits(config: dict | None = None) -> Decimal:
+    """Credits for regenerating one scene image with the deployment's image model."""
     if settings.AGENTS_DRY_RUN:
         return Decimal("0")
-    cost = quantize_credits(_image_usd())
+    from agents.ai_models import chosen_models
+
+    cost = quantize_credits(_image_usd(chosen_models(config)["image"]))
     return quantize_credits(cost * admart_markup_multiplier(cost))
 
 
@@ -398,6 +415,19 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "redoCredits": f"{image_credits():f}" if "visuals" in spec.steps else None,
         **(_video_catalog(spec) if "prepare" in spec.steps else {}),
         **(_clip_catalog(spec) if "get_video" in spec.steps else {}),
+        **(_trend_catalog() if "trends" in spec.steps else {}),
+    }
+
+
+def _trend_catalog() -> dict:
+    """Choices for the Trend Finder."""
+    from agents.trends import MAX_TOPICS, REGIONS, TREND_TOPICS, WINDOWS
+
+    return {
+        "trendTopics": [{"id": key, "label": row["label"]} for key, row in TREND_TOPICS.items()],
+        "regions": [{"id": key, "label": row["label"]} for key, row in REGIONS.items()],
+        "trendWindows": [{"id": key, "label": label} for key, label in WINDOWS.items()],
+        "maxTrendTopics": MAX_TOPICS,
     }
 
 

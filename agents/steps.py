@@ -17,8 +17,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from agents import hooks, providers, render
+from agents.ai_models import chosen_models
 from agents.models import AgentRun
 from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, get_agent, voice_settings
+from agents.trends import REGIONS, TREND_TOPICS, WINDOW_DAYS, WINDOWS, collect_signals
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
 
@@ -125,6 +127,11 @@ def _config(run) -> dict:
     return run.deployment.config or {}
 
 
+def _model(run, kind: str) -> str:
+    """The deployment's chosen "text" or "image" model."""
+    return chosen_models(_config(run))[kind]
+
+
 DEFAULT_PROMPTS = {"research": RESEARCH_PROMPT, "concepts": CONCEPTS_PROMPT, "script": SCRIPT_PROMPT}
 
 
@@ -154,7 +161,8 @@ def _topic(run) -> str:
     if settings.AGENTS_DRY_RUN:
         topic = f"{niche or 'Interesting facts'} #{len(recent) + 1}"
     else:
-        raw = providers.text(TOPIC_PROMPT, f"{_brand_lines(run)}Recent topics:\n" + "\n".join(f"- {t}" for t in recent))
+        raw = providers.text(TOPIC_PROMPT, f"{_brand_lines(run)}Recent topics:\n" + "\n".join(f"- {t}" for t in recent),
+                             model=_model(run, "text"))
         topic = " ".join(str(raw.get("topic") or "").split())[:200]
         if not topic:
             raise RuntimeError("The agent couldn't pick a topic. Please try again.")
@@ -197,56 +205,101 @@ def step_research(run) -> None:
     if settings.AGENTS_DRY_RUN:
         notes, sources = f"- Dry run: research notes about {topic} would appear here.", []
     else:
-        notes, sources = providers.text(_prompt(run, "research"), f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True)
+        notes, sources = providers.text(_prompt(run, "research"), f"Topic: {topic}\n{_brand_lines(run)}", json_mode=False, search=True,
+                                        model=_model(run, "text"))
     run.output["research"] = {"notes": (notes or "").strip()[:3000], "sources": sources}
     _save(run)
 
 
-TRENDS_PROMPT = """You find what is trending right now for a short-video creator. Search the web for news,
-launches, viral discussions and seasonal moments from the last 14 days in the subject area.
-Return JSON only: {"trends": [{"topic": string, "why_now": string, "hook": string, "source": string}]}
-- 5 to 8 trends. topic: one specific Short idea (not a broad category), at most 12 words.
-- why_now: one sentence on what happened recently, and when.
+TRENDS_PROMPT = """You find what is trending for a short-video creator. You get the time window, the region, the
+topics and numbered signals (news headlines, Reddit top posts, popular YouTube videos). Use them, and search the web
+to check and add detail.
+Return JSON only: {"trends": [{"topic": string, "category": string, "why_now": string, "momentum": "rising"|"hot",
+"hook": string, "signals": [number], "source": string (optional)}]}
+- 5 to 8 trends, ranked by momentum. Prefer stories several sources mention and that are NEW in this window:
+  rising beats merely popular.
+- topic: one specific Short idea (not a broad category), at most 12 words.
+- category: exactly one of the picked topics.
+- why_now: one sentence on what happened, and when.
+- momentum: "rising" if it is gaining fast, "hot" if it is already big.
 - hook: the first spoken line of a Short on it, 9-24 words, talks to "you"; specific beats big.
-- source: the URL of the page you found it on.
-Skip anything older than a month, and anything in the "Already covered" list."""
+- signals: the numbers of the signals the trend is based on. source: a URL from your own web search, if any.
+Skip anything outside the window, and anything in the "Already covered" list."""
+
+
+def _trend_settings(run) -> tuple[list[str], str, str, str]:
+    """(topic ids, custom topic, region id, window id) for a Trend Finder run. A run from before topics
+    existed has only a niche; it becomes the custom topic."""
+    config = _config(run)
+    topics = [t for t in config.get("trendTopics") or [] if t in TREND_TOPICS]
+    custom = " ".join(str(config.get("customTopic") or "").split())
+    if not topics and not custom:
+        custom = " ".join(str(run.input.get("topic") or config.get("niche") or run.project.brand_industry or "").split())
+    if not topics and not custom:
+        raise RuntimeError("Pick at least one topic for the Trend Finder.")
+    region = config.get("region") if config.get("region") in REGIONS else "world"
+    window = run.input.get("window") if run.input.get("window") in WINDOWS else "week"
+    return topics, custom, region, window
 
 
 def step_trends(run) -> None:
-    """Trend Finder: 5-8 current topics for the niche, each with a scored hook and a checked source."""
+    """Trend Finder: 5-8 topics rising in the window, from news, Reddit and YouTube signals, each with a scored
+    hook and checked links."""
     if run.output.get("trends"):
         return
-    niche = str(run.input.get("topic") or _config(run).get("niche") or run.project.brand_industry or "").strip()
-    if not niche:
-        raise RuntimeError("Tell the agent your niche, for example \"home coffee brewing\".")
+    topics, custom, region, window = _trend_settings(run)
+    labels = [TREND_TOPICS[t]["label"] for t in topics] + ([custom] if custom else [])
     recent = AgentRun.objects.filter(project_id=run.project_id).exclude(id=run.id).order_by("-created_at")[:30]
     covered = [str(r.input.get("topic")) for r in recent if r.input.get("topic")]
+    signals, counts = [], {"Google News": 0, "Reddit": 0, "YouTube": 0}
     if settings.AGENTS_DRY_RUN:
-        raw, sources = {"trends": [{"topic": f"{niche}: trend {i + 1}", "why_now": "Dry run.",
-                                    "hook": f"You are missing the newest thing in {niche} this week."} for i in range(5)]}, []
+        raw, sources = {"trends": [{"topic": f"{labels[0]}: trend {i + 1}", "category": labels[0], "why_now": "Dry run.",
+                                    "momentum": "rising" if i % 2 else "hot",
+                                    "hook": f"You are missing the newest thing in {labels[0]} this week."} for i in range(5)]}, []
     else:
+        signals, counts = collect_signals(topics, custom, region, window, run.project)
+        lines = [f"{n}. [{s['source']}] {s['title']} ({s['url']})" + (f" score {s['score']}" if s["score"] is not None else "")
+                 for n, s in enumerate(signals, 1)]
         raw, sources = providers.text(
             TRENDS_PROMPT,
-            # No brand name: the search would find news about a company with that name instead of the niche.
-            f"Subject area: {niche}\nToday: {timezone.now():%Y-%m-%d}\nAlready covered:\n"
-            + ("\n".join(f"- {t}" for t in covered) or "- nothing yet"),
+            # No brand name: the search would find news about a company with that name instead of the topics.
+            f"Window: {WINDOWS[window]} (last {WINDOW_DAYS[window]} days)\nRegion: {REGIONS[region]['label']}\n"
+            f"Topics: {', '.join(labels)}\nToday: {timezone.now():%Y-%m-%d}\nSignals:\n" + ("\n".join(lines) or "none found")
+            + "\nAlready covered:\n" + ("\n".join(f"- {t}" for t in covered) or "- nothing yet"),
             search=True,
+            model=_model(run, "text"),
         )
     found = {src["uri"]: src for src in sources}
     trends = []
     for item in raw.get("trends") or []:
         if not isinstance(item, dict) or not str(item.get("topic") or "").strip():
             continue
-        source = found.get(str(item.get("source") or "").strip())  # only links the search really returned
+        links = []
+        for number in item.get("signals") if isinstance(item.get("signals"), list) else []:
+            if isinstance(number, (int, str)) and str(number).isdigit() and 1 <= int(number) <= len(signals):
+                s = signals[int(number) - 1]  # invented numbers are dropped
+                links.append({"title": s["title"], "uri": s["url"], "source": s["source"]})
+        web = found.get(str(item.get("source") or "").strip())  # only links the search really returned
+        if web:
+            links.append({"title": web.get("title") or web["uri"], "uri": web["uri"], "source": "Web"})
+        links = list({link["uri"]: link for link in links}.values())[:4]
+        category = " ".join(str(item.get("category") or "").split())
         trends.append({
             "topic": " ".join(str(item["topic"]).split())[:120],
+            "category": category if category in labels else labels[0] if len(labels) == 1 else "",
             "why_now": str(item.get("why_now") or "").strip()[:300],
+            "momentum": "rising" if item.get("momentum") == "rising" else "hot",
             **scored_hook(" ".join(str(item.get("hook") or "").split())[:240]),
-            "source": source,
+            "sources": links,
+            "source": links[0] if links else None,
         })
     if not trends:
-        raise RuntimeError("No trends came back for this niche. Try a broader niche.")
-    run.output.update({"trends": trends[:8], "sources": sources, "title": f"Trends in {niche}"[:90]})
+        raise RuntimeError("No trends came back. Try other topics or a longer time window.")
+    run.output.update({
+        "trends": trends[:8], "sources": sources, "window": window, "windowLabel": WINDOWS[window], "topics": labels,
+        "region": REGIONS[region]["label"], "signalCounts": counts,
+        "title": f"Trends in {', '.join(labels)} · {WINDOWS[window]}"[:90],
+    })
     _save(run)
 
 
@@ -298,7 +351,8 @@ def step_concepts(run) -> None:
         }
     else:
         notes = run.output.get("research", {}).get("notes", "")
-        raw = providers.text(_prompt(run, "concepts"), f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}")
+        raw = providers.text(_prompt(run, "concepts"), f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}",
+                             model=_model(run, "text"))
     run.output["concepts"] = clean_concepts(raw)
     _save(run)
 
@@ -376,11 +430,12 @@ def step_script(run) -> None:
             else ""
         )
         user = f"Topic: {topic}\n{_brand_lines(run)}{_style_lines(run)}{concept_lines}Research notes:\n{notes}"
-        raw = providers.text(_prompt(run, "script"), user)
+        raw = providers.text(_prompt(run, "script"), user, model=_model(run, "text"))
         limit, words = _word_limit(run), _narration_words(raw)
         if words > limit * 1.1:  # models overshoot the length; one rewrite usually fixes it
             raw = providers.text(_prompt(run, "script"), f"{user}\nYour last script had {words} words of narration. "
-                                 f"Rewrite it with at most {limit} words in total, same JSON shape:\n{json.dumps(raw)}")
+                                 f"Rewrite it with at most {limit} words in total, same JSON shape:\n{json.dumps(raw)}",
+                                 model=_model(run, "text"))
     run.output.update(clean_script(raw, topic))
     _save(run)
 
@@ -462,7 +517,8 @@ def step_visuals(run) -> None:
             name = f"scene-{i}.png"
             render.placeholder_image(folder / name, PLACEHOLDER_COLORS[i % len(PLACEHOLDER_COLORS)])
         else:
-            content, ext = providers.image(f"{scene['image_prompt']}. Style: {style_hint}", IMAGE_WIDTH, IMAGE_HEIGHT)
+            content, ext = providers.image(f"{scene['image_prompt']}. Style: {style_hint}", IMAGE_WIDTH, IMAGE_HEIGHT,
+                                           model=_model(run, "image"))
             name = f"scene-{i}-{int(time.time())}{ext}"  # new name per take so browsers don't show a cached one
             (folder / name).write_bytes(content)
         scene.update({"image": f"{rel}/{name}", "clip": None, "credit": None})

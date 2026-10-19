@@ -150,7 +150,7 @@ def step_write_post(run) -> None:
         kind = "a vertical Short / Reel" if out["short"] else "a video"
         raw = providers.text(POST_PROMPT, f"{base._brand_lines(run)}Write posts for: {names}.\n"
                              f"The video is {kind} called '{fallback}'.\n"
-                             f"Transcript:\n{transcript[:12000] or '(no speech)'}")
+                             f"Transcript:\n{transcript[:12000] or '(no speech)'}", model=base._model(run, "text"))
     posts = clean_posts(raw, platforms, fallback, out["short"])
     out.update({"platforms": platforms, "posts": posts, "title": posts.get("youtube", {}).get("title") or fallback})
     if "youtube" in posts:

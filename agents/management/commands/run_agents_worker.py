@@ -4,10 +4,11 @@ import time
 from django.core.management.base import BaseCommand
 from django.db import DatabaseError, close_old_connections
 
-from agents.engine import claim_next, process
+from agents.engine import beat, claim_next, process
 from agents.runs import run_due
 
 SCHEDULE_EVERY = 30  # seconds between Autopilot checks
+BEAT_EVERY = 10  # seconds between heartbeats (the page shows the runner offline after 60 s without one)
 
 logger = logging.getLogger("agents.worker")
 
@@ -22,8 +23,11 @@ class Command(BaseCommand):
         parser.add_argument("--exclude", nargs="*", default=[], help="Never these agent types.")
 
     def handle(self, *args, **options):
-        last_schedule = 0.0
+        last_schedule = last_beat = 0.0
         while True:
+            if time.monotonic() - last_beat >= BEAT_EVERY:
+                beat()
+                last_beat = time.monotonic()
             try:
                 if time.monotonic() - last_schedule >= SCHEDULE_EVERY or options["once"]:
                     started = run_due()

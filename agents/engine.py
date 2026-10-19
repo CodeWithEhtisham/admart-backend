@@ -8,12 +8,12 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
 from agents import providers
-from agents.models import AgentRun
+from agents.models import AgentRun, RunnerHeartbeat
 from agents.registry import get_agent
 from agents import clips, cross_post, growth, video_edit
 from agents.steps import STEPS, NeedsReview, RunCancelled, WaitUntil
@@ -28,6 +28,7 @@ STEPS.update(growth.STEPS)
 logger = logging.getLogger(__name__)
 
 LEASE = timedelta(minutes=15)  # a run whose worker died is picked up again after this
+RUNNER_ONLINE_WITHIN = timedelta(seconds=60)  # a heartbeat older than this means no runner is checking the queue
 MAX_ATTEMPTS = 3
 STEP_LABELS = {
     "research": "researching the topic",
@@ -98,6 +99,23 @@ def claim_next(only=(), exclude=()) -> AgentRun | None:
         if run:
             return run
     return None
+
+
+def beat(now=None) -> None:
+    """Record that a runner is checking the queue. A busy database skips this beat instead of stopping the runner."""
+    try:
+        RunnerHeartbeat.objects.update_or_create(id=1, defaults={"seen_at": now or timezone.now()})
+    except DatabaseError as exc:
+        logger.warning("Could not record the runner heartbeat: %s", exc)
+
+
+def runner_online(now=None) -> bool:
+    """A recent heartbeat, or a run mid-step (a long render outlasts the heartbeat but keeps its lease fresh)."""
+    now = now or timezone.now()
+    return (
+        RunnerHeartbeat.objects.filter(seen_at__gte=now - RUNNER_ONLINE_WITHIN).exists()
+        or AgentRun.objects.filter(status="running", locked_until__gt=now).exists()
+    )
 
 
 def enqueue(run_id) -> None:

@@ -596,7 +596,7 @@ def step_find_clips(run) -> None:
         for window in _windows(sents):
             lines = "\n".join(f"[{i}] ({_clock(sents[i]['start'])}) {sents[i]['text']}" for i in window)
             answer = providers.text(CLIPS_PROMPT.format(low=low, high=high, count=count),
-                                    f"{brand}Transcript:\n{lines}", temperature=0.4)
+                                    f"{brand}Transcript:\n{lines}", temperature=0.4, model=base._model(run, "text"))
             found = answer.get("clips") if isinstance(answer, dict) else None
             raw += [c for c in found or [] if isinstance(c, dict)]
             base.keep_alive(run)

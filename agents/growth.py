@@ -295,6 +295,7 @@ def step_analyze(run) -> None:
             f"Posts to plan for the next {numbers['period']} days: {count}\n"
             f"Goal: {json.dumps(goal) if goal else 'none'}\nNumbers:\n{json.dumps(numbers, default=str)[:9000]}",
             search=bool(niche),
+            model=base._model(run, "text"),
         )
     plan = []
     for item in (raw.get("plan") or [])[:count]:

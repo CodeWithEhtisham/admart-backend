@@ -153,7 +153,8 @@ def frame_cuts(source: Path, words: list[dict]) -> list[dict]:
 def ai_review(run, words: list[dict], cut: str, duration: float) -> tuple[list[dict], list[dict]]:
     """Retake cuts and caption spelling fixes from one AI call."""
     listing = " ".join(f"{i}:{w['word']}" for i, w in enumerate(words))[:20000]
-    raw = providers.text(EDIT_PROMPT, f"{base._brand_lines(run)}Words:\n{listing}", temperature=0.2)
+    raw = providers.text(EDIT_PROMPT, f"{base._brand_lines(run)}Words:\n{listing}", temperature=0.2,
+                         model=base._model(run, "text"))
     budget = duration * RETAKE_SHARE.get(cut, 0.15)
     cuts = []
     for item in raw.get("retakes") or []:
@@ -413,7 +414,8 @@ def step_package(run) -> None:
         name = run.output.get("source_title") or "My video"
         raw = {"title": name, "thumbnail_text": "", "description": f"{name}. #Shorts", "tags": []}
     else:
-        raw = providers.text(PACKAGE_PROMPT, f"{base._brand_lines(run)}Transcript:\n{transcript[:12000]}")
+        raw = providers.text(PACKAGE_PROMPT, f"{base._brand_lines(run)}Transcript:\n{transcript[:12000]}",
+                             model=base._model(run, "text"))
     title = (str(raw.get("title") or "").strip() or run.output.get("source_title") or "My video")[:90]
     thumb = " ".join(str(raw.get("thumbnail_text") or "").split()[:4])[:40]
     tags = raw.get("tags") or []

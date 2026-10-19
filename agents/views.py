@@ -18,14 +18,19 @@ from rest_framework.views import APIView
 
 from agents import engine, growth
 from agents.models import AgentDeployment, AgentRun
-from agents.runs import OPEN_STATUSES, RunRefused, clean_schedule, clean_topics, month_spend, next_slot, start_run
+from agents.ai_models import IMAGE_IDS, IMAGE_MODELS, TEXT_IDS, TEXT_MODELS, chosen_models
+from agents.runs import (
+    OPEN_STATUSES, RunRefused, clean_schedule, clean_texts, clean_topics, month_spend, next_slot, schedule_mode, start_run,
+)
 from agents.registry import (
-    MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, get_agent, image_credits,
+    MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, STYLES, active_agents, catalog_entry, estimate_credits, get_agent, image_credits,
+    sample_input, uses_text_model,
 )
 from agents.clips import caption_fixes, max_seconds, parse_youtube_url, youtube_info
 from agents.cross_post import connected
 from agents.hooks import lint_title
 from agents.steps import clean_script, scored_hook
+from agents.trends import MAX_TOPICS, REGIONS, TREND_TOPICS, WINDOWS
 from agents.video_edit import asset_file, merge_cuts, probe
 from content.models import LibraryAsset
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
@@ -71,11 +76,34 @@ def deployment_data(deployment: AgentDeployment) -> dict:
         else None,
         "creditsThisMonth": serialize_decimal(month_spend(deployment)),
         "autopilot": deployment.autopilot,
-        "schedule": deployment.schedule,
+        "schedule": {**deployment.schedule, "mode": schedule_mode(deployment.schedule)},
         "topicQueue": deployment.topic_queue,
         "nextRunAt": deployment.next_run_at if deployment.autopilot else None,
         "autopilotNote": deployment.autopilot_note,
         "createdAt": deployment.created_at,
+        **(_model_data(spec, deployment.config or {}) if spec else {}),
+    }
+
+
+def _model_data(spec, config: dict) -> dict:
+    """The writing/image models this agent uses, each choice priced for this agent and its settings."""
+    chosen, sample = chosen_models(config), sample_input(spec)
+    kinds = {"text": TEXT_MODELS} if uses_text_model(spec) else {}
+    if "visuals" in spec.steps:
+        kinds["image"] = IMAGE_MODELS
+
+    def credits(kind: str, model_id: str) -> str:
+        models = {**(config.get("models") if isinstance(config.get("models"), dict) else {}), kind: model_id}
+        return f"{estimate_credits(spec, sample, {**config, 'models': models}):f}"
+
+    return {
+        "models": {kind: chosen[kind] for kind in kinds},
+        "modelChoices": {
+            kind: [{"id": m["id"], "label": m["label"], "strength": m.get("strength"), "creditsPerRun": credits(kind, m["id"])}
+                   for m in choices]
+            for kind, choices in kinds.items()
+        },
+        "estimatedCredits": f"{estimate_credits(spec, sample, config):f}",
     }
 
 
@@ -155,6 +183,9 @@ def run_data(run: AgentRun, request) -> dict:
         "research": out.get("research"),
         "concepts": out.get("concepts", []),
         "trends": out.get("trends", []),
+        "windowLabel": out.get("windowLabel", ""),
+        "region": out.get("region", ""),
+        "signalCounts": out.get("signalCounts", {}),
         "report": out.get("report"),
         "numbers": out.get("numbers"),
         "sentTo": out.get("sent_to"),
@@ -209,7 +240,31 @@ def _parse_config(raw) -> dict:
         return {}
     if not isinstance(raw, dict) or len(json.dumps(raw)) > 2000:
         raise ValueError("Settings must be a small object.")
+    models = raw.get("models")
+    if models is not None and (
+        not isinstance(models, dict) or set(models) - {"text", "image"}
+        or ("text" in models and models["text"] not in TEXT_IDS)
+        or ("image" in models and models["image"] not in IMAGE_IDS)
+    ):
+        raise ValueError("Pick a model from the list.")
+    topics = raw.get("trendTopics", [])
+    if not isinstance(topics, list) or any(t not in TREND_TOPICS for t in topics):
+        raise ValueError("Unknown topic.")
+    custom = " ".join(str(raw.get("customTopic") or "").split())
+    if len(topics) + bool(custom) > MAX_TOPICS or len(set(topics)) != len(topics):
+        raise ValueError("Pick up to 3 topics.")
+    if len(custom) > 60:
+        raise ValueError("Your own topic can be up to 60 characters.")
+    if "region" in raw and raw["region"] not in REGIONS:
+        raise ValueError("Unknown region.")
+    if "customTopic" in raw:
+        raw = {**raw, "customTopic": custom}
     return raw
+
+
+def _has_trend_topics(config: dict) -> bool:
+    """Whether the Trend Finder has something to look for (a run from before topics existed has a niche)."""
+    return bool(config.get("trendTopics") or config.get("customTopic") or config.get("niche"))
 
 
 class _ProjectScoped(APIView):
@@ -259,11 +314,17 @@ class DeploymentListCreateView(_ProjectScoped):
 class DeploymentDetailView(_ProjectScoped):
     """GET|PATCH|DELETE /api/projects/:pid/agents/:id"""
 
+    @staticmethod
+    def _data(deployment: AgentDeployment) -> dict:
+        # Only on this page's response, so listing many agents doesn't ask once per agent.
+        return {**deployment_data(deployment), "runnerOnline": engine.runner_online()}
+
     def get(self, request, project_id, deployment_id):
-        return Response(deployment_data(self.deployment(request, project_id, deployment_id)))
+        return Response(self._data(self.deployment(request, project_id, deployment_id)))
 
     def patch(self, request, project_id, deployment_id):
         deployment = self.deployment(request, project_id, deployment_id)
+        spec = get_agent(deployment.agent_type)
         data = request.data
         try:
             if "status" in data:
@@ -277,19 +338,26 @@ class DeploymentDetailView(_ProjectScoped):
             if "schedule" in data:
                 deployment.schedule = clean_schedule(data["schedule"])
             if "topicQueue" in data:
-                deployment.topic_queue = clean_topics(data["topicQueue"])
+                text_queue = bool(spec and spec.input_kind == "text")  # Voiceover: texts to read
+                deployment.topic_queue = (clean_texts if text_queue else clean_topics)(data["topicQueue"])
             if "autopilot" in data:
                 deployment.autopilot = bool(data["autopilot"])
             if deployment.autopilot:
-                spec = get_agent(deployment.agent_type)
-                if not spec or spec.input_kind not in ("topic", "report"):
-                    raise ValueError("Autopilot works with agents that take a topic.")
+                if not spec:
+                    raise ValueError("This agent is no longer available.")
                 if not deployment.schedule:
                     raise ValueError("Set the days and time first.")
-                if spec.input_kind == "topic" and not deployment.topic_queue and not str(
-                    deployment.config.get("niche") or ""
-                ).strip():
+                niche = str((deployment.config or {}).get("niche") or "").strip()
+                picked = _has_trend_topics(deployment.config or {})
+                if schedule_mode(deployment.schedule) == "manual":
+                    pass  # on, but only the Run button starts it
+                elif "trends" in spec.steps:
+                    if not picked:
+                        raise ValueError("Pick at least one topic so the agent knows what to look for.")
+                elif spec.input_kind == "topic" and not deployment.topic_queue and not niche:
                     raise ValueError("Add some topics, or set the channel niche so the agent can pick topics.")
+                elif spec.input_kind == "text" and not deployment.topic_queue:
+                    raise ValueError("Add at least one text to read.")
         except ValueError as exc:
             return _bad(str(exc))
         # Any schedule change re-plans the next run from now.
@@ -297,7 +365,7 @@ class DeploymentDetailView(_ProjectScoped):
         if not deployment.autopilot:
             deployment.autopilot_note = ""
         deployment.save()
-        return Response(deployment_data(deployment))
+        return Response(self._data(deployment))
 
     def delete(self, request, project_id, deployment_id):
         deployment = self.deployment(request, project_id, deployment_id)
@@ -330,6 +398,13 @@ class RunListCreateView(_ProjectScoped):
                 return run_input
         elif spec.input_kind == "report":
             run_input = {"period": growth.period_of(deployment)}
+        elif "trends" in spec.steps:
+            window = request.data.get("window", "week")
+            if window not in WINDOWS:
+                return _bad("Pick today, this week or this month.")
+            if not _has_trend_topics(deployment.config or {}):
+                return _bad("Pick at least one topic for the Trend Finder.", "NO_TOPICS")
+            run_input = {"window": window}
         elif spec.input_kind == "topic":
             value = " ".join(str(request.data.get("topic", "")).split())
             if len(value) > 200:
@@ -384,7 +459,7 @@ class RunListCreateView(_ProjectScoped):
 
     @classmethod
     def _clip_input(cls, request, deployment):
-        """Clip Maker: a YouTube link (with the user's rights confirmation) or a library video."""
+        """Clip Maker: a YouTube link or a library video."""
         limit = max_seconds(request.user)
         too_long = _bad(f"Your plan takes videos up to {limit // 60} minutes.", "VIDEO_TOO_LONG")
         if "url" not in request.data:
@@ -392,8 +467,6 @@ class RunListCreateView(_ProjectScoped):
             if not isinstance(run_input, Response) and (run_input["seconds"] or 0) > limit + 5:
                 return too_long
             return run_input
-        if request.data.get("rights") is not True:
-            return _bad("Confirm that you own this video or have the rights to use it.", "RIGHTS_REQUIRED")
         url = parse_youtube_url(str(request.data.get("url") or ""))
         if url is None:
             return _bad("Paste a link to a single YouTube video.")
@@ -407,7 +480,7 @@ class RunListCreateView(_ProjectScoped):
             return too_long
         if info["duration"] < 10:
             return _bad("This video is too short to make clips from.")
-        return {"url": url, "seconds": round(info["duration"]), "title": info["title"], "rights": True}
+        return {"url": url, "seconds": round(info["duration"]), "title": info["title"]}
 
 
 class InboxView(_ProjectScoped):
@@ -646,7 +719,7 @@ class RunActionView(_ProjectScoped):
             if not prompt:
                 return _bad("Describe the image you want.")
             scene["image_prompt"] = prompt
-            cost = image_credits()
+            cost = image_credits(run.deployment.config)
             if cost > 0:
                 try:
                     topup = reserve_credits(run.user, cost)

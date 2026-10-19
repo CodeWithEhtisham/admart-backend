@@ -17,7 +17,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from agents import engine, providers, render, steps
+from agents import engine, providers, render, steps, trends
 from agents.models import AgentDeployment, AgentRun
 from agents.registry import BUILTIN_AGENTS, estimate_credits, validate_recipe
 from projects.models import Project
@@ -31,6 +31,17 @@ HERMETIC = {
     "AGENTS_OPENROUTER_MODELS": "m:free", "AGENTS_LLM_USD_PER_RUN": "0.002",
     "AGENTS_MUSIC_DIR": "/nonexistent-agent-music", "GEMINI_API_KEY": "",
 }
+
+
+CHEAP, STRONG = "qwen/qwen3.7-flash", "anthropic/claude-sonnet-5.5"
+LIVE_PRICES = {CHEAP: (Decimal("0.00000003"), Decimal("0.00000013")), STRONG: (Decimal("0.000002"), Decimal("0.00001"))}
+
+
+def no_text_prices():
+    """Text prices without the network: the hard-coded fallback list."""
+    from agents import ai_models
+
+    return patch("agents.ai_models.text_prices", return_value=ai_models.FALLBACK_TEXT_PRICES)
 
 
 def chat(content, annotations=None):
@@ -116,6 +127,11 @@ class CleanScriptTests(SimpleTestCase):
 
 @override_settings(**HERMETIC)
 class EstimateTests(SimpleTestCase):
+    def setUp(self) -> None:
+        text_prices = no_text_prices()
+        text_prices.start()
+        self.addCleanup(text_prices.stop)
+
     @NO_PRICES
     def test_real_runs_cost_credits_and_dry_runs_are_free(self, _prices) -> None:
         shorts = estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {})
@@ -146,6 +162,9 @@ class _AgentAPITestCase(APITestCase):
         prices = NO_PRICES.start()
         self.addCleanup(NO_PRICES.stop)
         self.assertIsNotNone(prices)
+        text_prices = no_text_prices()
+        text_prices.start()
+        self.addCleanup(text_prices.stop)
         self.user = User.objects.create_user(
             email="agent@example.com", password="Password123!", first_name="A", last_name="G", plan="plus"
         )
@@ -727,7 +746,7 @@ class ScheduleTests(SimpleTestCase):
         from agents.runs import clean_schedule
 
         self.assertEqual(clean_schedule({"days": [4, 0, 0], "time": "18:30", "tz": "Europe/London"}),
-                         {"days": [0, 4], "time": "18:30", "tz": "Europe/London"})
+                         {"mode": "weekly", "days": [0, 4], "time": "18:30", "tz": "Europe/London"})
         for bad in ({"days": [], "time": "09:00"}, {"days": [7], "time": "09:00"}, {"days": [1], "time": "9am"},
                     {"days": [1], "time": "09:00", "tz": "Mars/Base"}):
             with self.assertRaises(ValueError):
@@ -763,7 +782,7 @@ class AutopilotTests(_AgentAPITestCase):
         voice = self.deploy("voiceover")
         url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": voice.id})
         bad = self.client.patch(url, {"autopilot": True, "schedule": {"days": [1], "time": "09:00"}}, format="json")
-        self.assertIn("topic", bad.data["message"])
+        self.assertEqual(bad.data["message"], "Add at least one text to read.")
 
     def test_due_slot_starts_one_run_using_the_queue(self) -> None:
         from agents.runs import run_due
@@ -878,6 +897,8 @@ class CutPlanningTests(SimpleTestCase):
 
 @override_settings(**HERMETIC)
 class VideoEstimateTests(SimpleTestCase):
+    setUp = EstimateTests.setUp
+
     @NO_PRICES
     def test_video_price_follows_length_and_audio_level(self, _prices) -> None:
         editor = BUILTIN_AGENTS["video-editor"]
@@ -1120,43 +1141,217 @@ class ScriptLengthTests(_AgentAPITestCase):
         self.assertEqual(sum(len(s["narration"].split()) for s in run.output["scenes"]), 60)
 
 
+SAMPLE_RSS = """<?xml version="1.0"?><rss><channel>
+<item><title>Fresh chip launch - The Verge</title><link>https://news.google.com/rss/articles/a</link>
+<pubDate>{fresh}</pubDate></item>
+<item><title>Old story - Wired</title><link>https://news.google.com/rss/articles/b</link>
+<pubDate>Mon, 01 Jan 2024 10:00:00 GMT</pubDate></item>
+<item><title></title><link>https://news.google.com/rss/articles/c</link></item>
+</channel></rss>"""
+
+
+SAMPLE_REDDIT_ATOM = """<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom">
+<entry><category term="technology"/><title>Big launch</title><link href="https://www.reddit.com/r/technology/comments/1/x/" />
+<published>2026-10-16T18:44:23+00:00</published></entry>
+<entry><category term="technology"/><title>Second tech post</title><link href="https://www.reddit.com/r/technology/comments/3/z/" /></entry>
+<entry><category term="OpenAI"/><title>Model news</title><link href="https://www.reddit.com/r/OpenAI/comments/4/w/" /></entry>
+<entry><category term="technology"/><title></title><link href="https://www.reddit.com/r/technology/comments/2/y/" /></entry>
+</feed>"""
+
+
+class TrendSignalTests(SimpleTestCase):
+    def test_google_news_keeps_items_inside_the_window(self) -> None:
+        from email.utils import format_datetime
+
+        fresh = format_datetime(timezone.now() - timedelta(hours=3))
+        response = MagicMock(content=SAMPLE_RSS.format(fresh=fresh).encode())
+        with patch("agents.trends.requests.get", return_value=response) as get:
+            found = trends.google_news("technology", trends.TREND_TOPICS["technology"], trends.REGIONS["pk"], "week")
+        self.assertEqual([s["title"] for s in found], ["Fresh chip launch - The Verge"])
+        self.assertEqual(found[0]["source"], "Google News")
+        self.assertEqual(found[0]["topic"], "technology")
+        self.assertIsNone(found[0]["score"])
+        url = get.call_args.args[0]
+        self.assertIn("/headlines/section/topic/TECHNOLOGY?hl=en-PK&gl=PK&ceid=PK%3Aen", url)
+
+    def test_google_news_searches_for_a_custom_topic(self) -> None:
+        with patch("agents.trends.requests.get", return_value=MagicMock(content=b"<rss><channel/></rss>")) as get:
+            self.assertEqual(trends.google_news("custom", None, trends.REGIONS["world"], "month", "home coffee"), [])
+        self.assertIn("/rss/search?q=home+coffee+when%3A30d&hl=en-US", get.call_args.args[0])
+
+    def test_reddit_reads_one_combined_feed_for_all_subreddits(self) -> None:
+        # Reddit blocks top.json from servers (403) and rate-limits feeds (429): one Atom feed per run.
+        response = MagicMock(content=SAMPLE_REDDIT_ATOM.encode())
+        with patch.object(trends, "PER_SOURCE", {**trends.PER_SOURCE, "reddit": 1}), \
+                patch("agents.trends.requests.get", return_value=response) as get:
+            found = trends.reddit({"technology": "technology", "openai": "ai"}, "day")
+        self.assertEqual([(s["title"], s["topic"], s["score"], s["source"]) for s in found],
+                         [("Big launch", "technology", None, "Reddit"), ("Model news", "ai", None, "Reddit")])
+        self.assertEqual(found[0]["url"], "https://www.reddit.com/r/technology/comments/1/x/")
+        self.assertEqual(found[0]["published"], "2026-10-16T18:44:23+00:00")
+        get.assert_called_once()
+        self.assertEqual(get.call_args.args[0], "https://www.reddit.com/r/technology+openai/top/.rss")
+        self.assertEqual(get.call_args.kwargs["params"], {"t": "day", "limit": 100})
+        self.assertIn("Mozilla", get.call_args.kwargs["headers"]["User-Agent"])
+
+    def test_a_failing_source_gives_an_empty_list(self) -> None:
+        with patch("agents.trends.requests.get", side_effect=requests.ConnectionError("down")):
+            self.assertEqual(trends.google_news("ai", trends.TREND_TOPICS["ai"], trends.REGIONS["us"], "day"), [])
+            self.assertEqual(trends.reddit({"artificial": "ai"}, "day"), [])
+            self.assertEqual(trends.youtube("ai", "28", trends.REGIONS["us"], "tok"), [])
+        with patch("agents.trends.requests.get", return_value=MagicMock(raise_for_status=MagicMock(
+                side_effect=requests.HTTPError("500")))):
+            self.assertEqual(trends.reddit({"artificial": "ai"}, "day"), [])
+
+    def test_youtube_lists_popular_videos_with_views(self) -> None:
+        response = MagicMock()
+        response.json.return_value = {"items": [{"id": "abc", "snippet": {"title": "Huge video", "publishedAt": "2026-10-18T10:00:00Z"},
+                                                 "statistics": {"viewCount": "123456"}}]}
+        with patch("agents.trends.requests.get", return_value=response) as get:
+            found = trends.youtube("gaming", "20", trends.REGIONS["gb"], "tok")
+        self.assertEqual(found[0]["url"], "https://www.youtube.com/watch?v=abc")
+        self.assertEqual((found[0]["score"], found[0]["source"]), (123456, "YouTube"))
+        self.assertEqual(get.call_args.kwargs["params"]["regionCode"], "GB")
+        self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": "Bearer tok"})
+
+
 class TrendFinderTests(_AgentAPITestCase):
+    CONFIG = {"trendTopics": ["ai", "technology"], "region": "gb"}
+    SIGNALS = [
+        {"title": "Chip launch", "url": "https://news.example/chip", "source": "Google News", "topic": "technology",
+         "published": None, "score": None},
+        {"title": "Chip thread", "url": "https://www.reddit.com/r/technology/1", "source": "Reddit", "topic": "technology",
+         "published": None, "score": 900},
+    ]
+
+    def make_run(self, config=None, **input):
+        deployment = self.deploy("trend-finder", config=self.CONFIG if config is None else config)
+        return AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input=input)
+
     def test_dry_run_lists_trends_with_scored_hooks(self) -> None:
         with override_settings(AGENTS_DRY_RUN=True):
-            deployment = self.deploy("trend-finder")
-            run_id = self.start(deployment, topic="home coffee brewing").data["id"]
+            deployment = self.deploy("trend-finder", config=self.CONFIG)
+            run_id = self.start(deployment, window="month").data["id"]
             call_command("run_agents_worker", "--once", stdout=MagicMock())
         run = AgentRun.objects.get(id=run_id)
         self.assertEqual(run.status, "succeeded", run.error)
         detail = self.client.get(self.runs_url(deployment)).data[0]
         self.assertEqual(len(detail["trends"]), 5)
         self.assertIn("band", detail["trends"][0])
-        self.assertEqual(detail["title"], "Trends in home coffee brewing")
+        self.assertEqual({"topic", "category", "why_now", "momentum", "hook", "sources", "source"} - set(detail["trends"][0]), set())
+        self.assertEqual(detail["title"], "Trends in AI, Technology · This month")
+        self.assertEqual((detail["windowLabel"], detail["region"]), ("This month", "United Kingdom"))
+        self.assertIn("Google News", detail["signalCounts"])
+        self.assertEqual(run.output["windowLabel"], "This month")
+        self.assertEqual(run.output["topics"], ["AI", "Technology"])
+        self.assertEqual(run.output["region"], "United Kingdom")
 
+    @patch("agents.steps.collect_signals")
     @patch("agents.providers.requests.post")
-    def test_keeps_only_sources_the_search_returned(self, post) -> None:
+    def test_maps_signal_numbers_to_real_links(self, post, collect) -> None:
+        collect.return_value = (self.SIGNALS, {"Google News": 1, "Reddit": 1, "YouTube": 0})
         AgentRun.objects.create(deployment=self.deploy("youtube-shorts"), project=self.project, user=self.user,
                                 input={"topic": "cold brew at home"})
         answer = {"trends": [
-            {"topic": "Cloud coffee", "why_now": "Viral this week.", "hook": "You can make cloud coffee in 2 minutes.",
-             "source": "https://real.example/cloud"},
-            {"topic": "Bean prices", "why_now": "Up again.", "hook": "Your coffee costs more this month.",
-             "source": "https://made-up.example/x"},
+            {"topic": "New chip launch", "category": "Technology", "why_now": "Launched today.", "momentum": "rising",
+             "hook": "You can buy the new chip tomorrow and here is why you should wait.", "signals": [1, 2, 9, "x"],
+             "source": "https://real.example/chip"},
+            {"topic": "Odd one", "category": "Made up", "why_now": "Up again.", "momentum": "huge",
+             "hook": "Your week just got stranger.", "signals": [7], "source": "https://made-up.example/x"},
             "not a trend",
         ]}
         post.return_value = chat(json.dumps(answer), [{"type": "url_citation", "url_citation": {
-            "url": "https://real.example/cloud", "title": "Cloud coffee"}}])
-        deployment = self.deploy("trend-finder")
-        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
-                                      input={"topic": "home coffee"})
+            "url": "https://real.example/chip", "title": "Chip review"}}])
+        run = self.make_run(window="day")
         steps.step_trends(run)
-        trends = run.output["trends"]
-        self.assertEqual([t["topic"] for t in trends], ["Cloud coffee", "Bean prices"])
-        self.assertEqual(trends[0]["source"]["uri"], "https://real.example/cloud")
-        self.assertIsNone(trends[1]["source"])  # a link the search didn't return is dropped
+        first, second = run.output["trends"]
+        self.assertEqual([x["uri"] for x in first["sources"]],
+                         ["https://news.example/chip", "https://www.reddit.com/r/technology/1", "https://real.example/chip"])
+        self.assertEqual(first["source"], first["sources"][0])
+        self.assertEqual((first["category"], first["momentum"]), ("Technology", "rising"))
+        self.assertEqual((second["sources"], second["source"], second["momentum"], second["category"]), ([], None, "hot", ""))
+        self.assertEqual(run.output["title"], "Trends in AI, Technology · Today")
+        self.assertEqual(run.output["signalCounts"], {"Google News": 1, "Reddit": 1, "YouTube": 0})
+        self.assertEqual((run.output["window"], run.output["windowLabel"]), ("day", "Today"))
+        collect.assert_called_once_with(["ai", "technology"], "", "gb", "day", self.project)
         sent = post.call_args.kwargs["json"]
         self.assertEqual(sent["plugins"][0]["id"], "web")
-        self.assertIn("- cold brew at home", sent["messages"][1]["content"])  # avoids covered topics
+        prompt = sent["messages"][1]["content"]
+        self.assertIn("1. [Google News] Chip launch (https://news.example/chip)", prompt)
+        self.assertIn("2. [Reddit] Chip thread (https://www.reddit.com/r/technology/1) score 900", prompt)
+        self.assertIn("- cold brew at home", prompt)  # avoids covered topics
+
+    @patch("agents.steps.collect_signals", return_value=([], {"Google News": 0, "Reddit": 0, "YouTube": 0}))
+    @patch("agents.providers.requests.post")
+    def test_a_niche_from_before_topics_is_the_custom_topic(self, post, collect) -> None:
+        post.return_value = chat(json.dumps({"trends": [{"topic": "Cloud coffee", "category": "home coffee",
+                                                         "why_now": "Viral.", "hook": "You can make cloud coffee."}]}))
+        run = self.make_run(config={"niche": "home coffee"}, topic="home coffee")
+        steps.step_trends(run)
+        collect.assert_called_once_with([], "home coffee", "world", "week", self.project)
+        self.assertEqual(run.output["title"], "Trends in home coffee · This week")
+        self.assertEqual(run.output["trends"][0]["category"], "home coffee")
+
+    def test_needs_a_topic(self) -> None:
+        with self.assertRaisesMessage(RuntimeError, "Pick at least one topic for the Trend Finder."):
+            steps.step_trends(self.make_run(config={}))
+
+    def test_start_needs_topics_and_a_valid_window(self) -> None:
+        bare = self.deploy("trend-finder")
+        refused = self.start(bare, window="week")
+        self.assertEqual((refused.status_code, refused.data["code"]), (400, "NO_TOPICS"))
+        self.assertEqual(refused.data["message"], "Pick at least one topic for the Trend Finder.")
+        deployment = self.deploy("trend-finder", config={"customTopic": "home coffee"})
+        bad = self.start(deployment, window="year")
+        self.assertEqual((bad.status_code, bad.data["message"]), (400, "Pick today, this week or this month."))
+        with override_settings(AGENTS_DRY_RUN=True):
+            self.assertEqual(self.start(deployment, window="day").data["input"], {"window": "day"})
+            self.assertEqual(self.start(deployment, topic="ignored").data["input"], {"window": "week"})
+            legacy = self.deploy("trend-finder", config={"niche": "coffee"})
+            self.assertEqual(self.start(legacy, window="month").status_code, 201)
+
+    def test_topics_region_and_custom_topic_are_validated(self) -> None:
+        def make(config):
+            return self.client.post(reverse("agent_deployments", kwargs={"project_id": self.project.id}),
+                                    {"agentType": "trend-finder", "config": config}, format="json")
+        ok = make({"trendTopics": ["ai", "food"], "customTopic": "  home   coffee ", "region": "pk"})
+        self.assertEqual(ok.status_code, 201, ok.data)
+        self.assertEqual(ok.data["config"]["customTopic"], "home coffee")
+        self.assertEqual(make({"trendTopics": ["ai", "food", "gaming"]}).status_code, 201)
+        for config, message in (
+            ({"trendTopics": ["ai", "food", "gaming"], "customTopic": "x"}, "Pick up to 3 topics."),
+            ({"trendTopics": ["ai", "food", "gaming", "travel"]}, "Pick up to 3 topics."),
+            ({"trendTopics": ["ai", "ai"]}, "Pick up to 3 topics."),
+            ({"trendTopics": ["nope"]}, "Unknown topic."),
+            ({"trendTopics": "ai"}, "Unknown topic."),
+            ({"region": "mars"}, "Unknown region."),
+            ({"customTopic": "x" * 61}, "Your own topic can be up to 60 characters."),
+        ):
+            response = make(config)
+            self.assertEqual((response.status_code, response.data["message"]), (400, message), config)
+
+    def test_catalog_lists_the_choices(self) -> None:
+        entry = next(e for e in self.client.get(reverse("agent_catalog")).data if e["slug"] == "trend-finder")
+        self.assertEqual(entry["maxTrendTopics"], 3)
+        self.assertEqual(entry["trendTopics"][0], {"id": "ai", "label": "AI"})
+        self.assertEqual(len(entry["trendTopics"]), 13)
+        self.assertEqual(entry["regions"][1], {"id": "us", "label": "United States"})
+        self.assertEqual(entry["trendWindows"], [{"id": "day", "label": "Today"}, {"id": "week", "label": "This week"},
+                                                 {"id": "month", "label": "This month"}])
+
+    @patch("agents.trends.youtube_token", return_value="")
+    @patch("agents.trends.requests.get")
+    def test_one_source_down_does_not_fail_the_collection(self, get, token) -> None:
+        def answer(url, **kwargs):
+            if "reddit" in url:
+                raise requests.ConnectionError("blocked")
+            return MagicMock(content=b"<rss><channel><item><title>Only story</title><link>https://n.example/1</link>"
+                                     b"</item></channel></rss>")
+        get.side_effect = answer
+        found, counts = trends.collect_signals(["technology", "science"], "home coffee", "us", "week", self.project)
+        self.assertEqual(counts, {"Google News": 1, "Reddit": 0, "YouTube": 0})  # same title de-duplicated
+        self.assertEqual(found[0]["title"], "Only story")
+        token.assert_called_once()
 
 
 class WorkerTests(_AgentAPITestCase):
@@ -1195,6 +1390,74 @@ class WorkerTests(_AgentAPITestCase):
         steps.keep_alive(run)
         run.refresh_from_db()
         self.assertGreater(run.locked_until, timezone.now() + timedelta(minutes=14))
+
+
+class RunnerHeartbeatTests(_AgentAPITestCase):
+    """The page tells the user whether anything is there to pick up their runs."""
+
+    def _detail(self, deployment):
+        return self.client.get(
+            reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
+        )
+
+    def test_offline_until_a_runner_checks_in(self) -> None:
+        self.assertFalse(engine.runner_online())
+        engine.beat()
+        self.assertTrue(engine.runner_online())
+
+    def test_an_old_heartbeat_is_offline(self) -> None:
+        engine.beat(timezone.now() - timedelta(minutes=2))
+        self.assertFalse(engine.runner_online())
+
+    def test_a_run_mid_step_means_online(self) -> None:
+        # A long step (render) can outlast the heartbeat; its live lease shows the runner is there.
+        deployment = self.deploy("script-writer")
+        AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user, input={"topic": "a"},
+                                status="running", locked_until=timezone.now() + timedelta(minutes=10))
+        self.assertTrue(engine.runner_online())
+
+    def test_a_locked_database_skips_the_beat(self) -> None:
+        from django.db import OperationalError
+
+        with patch("agents.engine.RunnerHeartbeat.objects.update_or_create",
+                   side_effect=OperationalError("database is locked")), self.assertLogs("agents.engine", "WARNING"):
+            engine.beat()
+        self.assertFalse(engine.runner_online())
+
+    def test_worker_records_a_heartbeat(self) -> None:
+        with patch("agents.management.commands.run_agents_worker.run_due", return_value=0):
+            call_command("run_agents_worker", "--once", stdout=MagicMock())
+        self.assertTrue(engine.runner_online())
+
+    def test_worker_beats_at_most_every_few_seconds(self) -> None:
+        run = AgentRun.objects.create(deployment=self.deploy("script-writer"), project=self.project, user=self.user,
+                                      input={"topic": "a"})
+        claim = MagicMock(side_effect=[run, run, None])
+        with patch("agents.management.commands.run_agents_worker.claim_next", claim), \
+                patch("agents.management.commands.run_agents_worker.run_due", return_value=0), \
+                patch("agents.management.commands.run_agents_worker.process"), \
+                patch("agents.management.commands.run_agents_worker.beat") as beat:
+            call_command("run_agents_worker", "--once", stdout=MagicMock())
+        self.assertEqual(claim.call_count, 3)
+        beat.assert_called_once()
+
+    def test_celery_sweep_records_a_heartbeat(self) -> None:
+        from agents import tasks
+
+        with patch("agents.tasks.run_due", return_value=0):
+            tasks.sweep()
+        self.assertTrue(engine.runner_online())
+
+    def test_deployment_reports_runner_status(self) -> None:
+        deployment = self.deploy("script-writer")
+        self.assertIs(self._detail(deployment).data["runnerOnline"], False)
+        engine.beat()
+        self.assertIs(self._detail(deployment).data["runnerOnline"], True)
+        patched = self.client.patch(
+            reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id}),
+            {"status": "paused"}, format="json",
+        )
+        self.assertIs(patched.data["runnerOnline"], True)
 
 
 def _w(text: str, start: float, step: float = 0.5) -> list[dict]:
@@ -1420,21 +1683,20 @@ class ClipMakerPipelineTests(_AgentAPITestCase):
         detail = self.client.get(self.runs_url(deployment)).data[0]
         self.assertTrue(detail["clips"][0]["videoUrl"].endswith(".mp4"))
 
-    def test_youtube_link_needs_rights_and_fits_the_plan(self) -> None:
+    def test_youtube_link_must_fit_the_plan(self) -> None:
         deployment = self.deploy("clip-maker")
         link = "https://youtu.be/dQw4w9WgXcQ"
-        self.assertEqual(self.start(deployment, url=link).data["code"], "RIGHTS_REQUIRED")
-        self.assertEqual(self.start(deployment, url="https://vimeo.com/1", rights=True).status_code, 400)
+        self.assertEqual(self.start(deployment, url="https://vimeo.com/1").status_code, 400)
         info = {"title": "Talk", "duration": 3 * 60 * 60, "live": False}
         with patch("agents.views.youtube_info", return_value=info):
-            self.assertEqual(self.start(deployment, url=link, rights=True).data["code"], "VIDEO_TOO_LONG")
+            self.assertEqual(self.start(deployment, url=link).data["code"], "VIDEO_TOO_LONG")
         with patch("agents.views.youtube_info", return_value={**info, "duration": 600, "live": True}):
-            self.assertEqual(self.start(deployment, url=link, rights=True).status_code, 400)
+            self.assertEqual(self.start(deployment, url=link).status_code, 400)
         with patch("agents.views.youtube_info", return_value={**info, "duration": 600}):
-            response = self.start(deployment, url=link, rights=True)
+            response = self.start(deployment, url=link)
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["input"], {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                                                  "seconds": 600, "title": "Talk", "rights": True})
+                                                  "seconds": 600, "title": "Talk"})
 
     def test_youtube_video_is_downloaded_by_the_first_step(self) -> None:
         from agents import clips
@@ -2039,3 +2301,401 @@ class CeleryTaskTests(_AgentAPITestCase):
                                       input={"topic": "a"})
         self.assertIsNotNone(engine.claim(run.id))
         self.assertIsNone(engine.claim(run.id))
+
+
+# ── AI model choice and schedules for every agent ─────────────────────────
+
+class AIModelTests(SimpleTestCase):
+    @override_settings(AGENTS_OPENROUTER_MODELS=f"{CHEAP},google/gemini-2.5-flash-lite", AGENTS_IMAGE_MODEL="fal-ai/flux/schnell")
+    def test_chosen_models_default_and_ignore_unknown_ids(self) -> None:
+        from agents.ai_models import chosen_models
+
+        defaults = {"text": CHEAP, "image": "fal-ai/flux/schnell"}
+        self.assertEqual(chosen_models({}), defaults)
+        self.assertEqual(chosen_models(None), defaults)
+        self.assertEqual(chosen_models({"models": {"text": STRONG, "image": "fal-ai/nano-banana-pro"}}),
+                         {"text": STRONG, "image": "fal-ai/nano-banana-pro"})
+        self.assertEqual(chosen_models({"models": {"text": "made/up", "image": "fal-ai/nope"}}), defaults)
+        self.assertEqual(chosen_models({"models": "claude"}), defaults)
+
+    def test_text_models_are_curated_with_fallback_prices(self) -> None:
+        from agents.ai_models import FALLBACK_TEXT_PRICES, IMAGE_MODELS, TEXT_MODELS
+
+        self.assertTrue(6 <= len(TEXT_MODELS) <= 8)
+        for model in TEXT_MODELS:
+            self.assertEqual(set(model), {"id", "label", "strength"})
+            self.assertIn(model["id"], FALLBACK_TEXT_PRICES)
+        for default in ("google/gemini-2.5-flash-lite", CHEAP, "deepseek/deepseek-v4-flash"):
+            self.assertIn(default, [m["id"] for m in TEXT_MODELS])
+        self.assertIn("fal-ai/flux/schnell", [m["id"] for m in IMAGE_MODELS])
+
+    @override_settings(OPENROUTER_API_KEY="k")
+    def test_live_text_prices_are_cached_and_fall_back_offline(self) -> None:
+        from agents import ai_models
+
+        rows = [{"id": STRONG, "pricing": {"prompt": "0.000004", "completion": "0.00002"}},
+                {"id": "broken", "pricing": {"prompt": "n/a"}}]
+        with patch.dict(ai_models._CACHE, {"prices": None, "expires_at": 0.0}), \
+                patch("agents.ai_models.requests.get") as get:
+            get.return_value = MagicMock(json=lambda: {"data": rows})
+            expected = ai_models.PROMPT_TOKENS * Decimal("0.000004") + ai_models.COMPLETION_TOKENS * Decimal("0.00002")
+            self.assertEqual(ai_models.text_call_usd(STRONG), expected)
+            ai_models.text_call_usd(CHEAP)
+            self.assertEqual(get.call_count, 1)  # cached
+        with patch.dict(ai_models._CACHE, {"prices": None, "expires_at": 0.0}), \
+                patch("agents.ai_models.requests.get", side_effect=requests.ConnectionError):
+            prompt, completion = ai_models.FALLBACK_TEXT_PRICES[STRONG]
+            self.assertEqual(ai_models.text_call_usd(STRONG),
+                             ai_models.PROMPT_TOKENS * prompt + ai_models.COMPLETION_TOKENS * completion)
+
+    @override_settings(AGENTS_LLM_USD_PER_RUN="0.002")
+    def test_unknown_text_model_uses_the_flat_price(self) -> None:
+        from agents import ai_models
+
+        with no_text_prices():
+            self.assertEqual(ai_models.text_call_usd("m:free"), Decimal("0.002"))
+
+    @NO_PRICES
+    @override_settings(AGENTS_DRY_RUN=False, AGENTS_OPENROUTER_MODELS=CHEAP, AGENTS_IMAGE_MODEL="fal-ai/flux/schnell")
+    def test_a_pricier_model_raises_the_estimate(self, _prices) -> None:
+        shorts = BUILTIN_AGENTS["youtube-shorts"]
+        with patch("agents.ai_models.text_prices", return_value=LIVE_PRICES):
+            cheap = estimate_credits(shorts, {}, {})
+            strong = estimate_credits(shorts, {}, {"models": {"text": STRONG}})
+            pricey_image = estimate_credits(shorts, {}, {"models": {"image": "fal-ai/nano-banana-pro"}})
+        self.assertGreater(strong, cheap)
+        self.assertGreater(pricey_image, cheap)
+        from agents.registry import image_credits
+
+        self.assertGreater(image_credits({"models": {"image": "fal-ai/nano-banana-pro"}}), image_credits({}))
+        with override_settings(AGENTS_DRY_RUN=True):
+            self.assertEqual(estimate_credits(shorts, {}, {"models": {"text": STRONG}}), 0)
+
+    @override_settings(OPENROUTER_API_KEY="k", GEMINI_API_KEY="", AGENTS_OPENROUTER_MODELS="a,b,c")
+    @patch("agents.providers.requests.post")
+    def test_openrouter_tries_the_chosen_model_first(self, post) -> None:
+        post.return_value = chat('{"ok": true}')
+        providers.text("sys", "user", model="x")
+        self.assertEqual(post.call_args.kwargs["json"]["models"], ["x", "a", "b"])
+        providers.text("sys", "user", model="b")
+        self.assertEqual(post.call_args.kwargs["json"]["models"], ["b", "a", "c"])
+        providers.text("sys", "user")
+        self.assertEqual(post.call_args.kwargs["json"]["models"], ["a", "b", "c"])
+
+    @override_settings(FAL_KEY="k", AGENTS_IMAGE_MODEL="fal-ai/flux/schnell")
+    @patch("agents.providers.requests.get")
+    @patch("agents.providers.fal_client")
+    def test_image_uses_the_chosen_model_with_its_size_options(self, fal, get) -> None:
+        fake_fal(fal, {"images": [{"url": "https://cdn/x.png"}]})
+        get.return_value = MagicMock(content=b"png", headers={"Content-Type": "image/png"})
+        providers.image("a cat", 768, 1344)
+        model, args = fal.submit.call_args.args
+        self.assertEqual(model, "fal-ai/flux/schnell")
+        self.assertEqual(args["image_size"], {"width": 768, "height": 1344})
+        providers.image("a cat", 768, 1344, model="fal-ai/nano-banana-pro")
+        model, args = fal.submit.call_args.args
+        self.assertEqual((model, args["aspect_ratio"]), ("fal-ai/nano-banana-pro", "9:16"))
+
+
+class ModelChoiceAPITests(_AgentAPITestCase):
+    def url(self, deployment) -> str:
+        return reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
+
+    def test_unknown_model_is_rejected(self) -> None:
+        create = reverse("agent_deployments", kwargs={"project_id": self.project.id})
+        bad = self.client.post(create, {"agentType": "youtube-shorts", "config": {"models": {"text": "made/up"}}},
+                               format="json")
+        self.assertEqual(bad.data["message"], "Pick a model from the list.")
+        deployment = self.deploy(config={"models": {"text": STRONG, "image": "fal-ai/nano-banana-pro"}})
+        for models in ({"image": "fal-ai/nope"}, "claude", {"video": "x"}):
+            bad = self.client.patch(self.url(deployment), {"config": {"models": models}}, format="json")
+            self.assertEqual(bad.data["message"], "Pick a model from the list.")
+
+    def test_deployment_shows_models_choices_and_their_credits(self) -> None:
+        from agents.ai_models import IMAGE_MODELS, TEXT_MODELS
+
+        deployment = self.deploy(config={"models": {"text": STRONG}})
+        with no_text_prices():
+            data = self.client.get(self.url(deployment)).data
+            expected = estimate_credits(BUILTIN_AGENTS["youtube-shorts"], {"text": "x" * 500}, deployment.config)
+        self.assertEqual(data["models"], {"text": STRONG, "image": "fal-ai/flux/schnell"})
+        self.assertEqual(data["estimatedCredits"], f"{expected:f}")
+        self.assertEqual([m["id"] for m in data["modelChoices"]["text"]], [m["id"] for m in TEXT_MODELS])
+        self.assertEqual([m["id"] for m in data["modelChoices"]["image"]], [m["id"] for m in IMAGE_MODELS])
+        credits = {m["id"]: Decimal(m["creditsPerRun"]) for m in data["modelChoices"]["text"]}
+        self.assertEqual(credits[STRONG], expected)
+        self.assertGreater(credits[STRONG], credits[CHEAP])
+        self.assertTrue(all(set(m) == {"id", "label", "strength", "creditsPerRun"}
+                            for m in data["modelChoices"]["text"] + data["modelChoices"]["image"]))
+
+    def test_only_the_models_an_agent_uses_are_offered(self) -> None:
+        voice = self.client.get(self.url(self.deploy("voiceover"))).data
+        self.assertEqual((voice["models"], voice["modelChoices"]), ({}, {}))
+        trends = self.client.get(self.url(self.deploy("trend-finder"))).data
+        self.assertEqual(set(trends["models"]), {"text"})
+        self.assertEqual(set(trends["modelChoices"]), {"text"})
+        editor = self.client.get(self.url(self.deploy("video-editor"))).data
+        self.assertEqual(editor["estimatedCredits"],
+                         f"{estimate_credits(BUILTIN_AGENTS['video-editor'], {'seconds': 60}, {}):f}")  # per minute
+
+    def test_schedule_is_returned_with_its_mode(self) -> None:
+        deployment = self.deploy()
+        self.assertEqual(self.client.get(self.url(deployment)).data["schedule"], {"mode": "manual"})
+        AgentDeployment.objects.filter(id=deployment.id).update(schedule={"days": [1], "time": "09:00", "tz": "UTC"})
+        self.assertEqual(self.client.get(self.url(deployment)).data["schedule"],
+                         {"mode": "weekly", "days": [1], "time": "09:00", "tz": "UTC"})
+
+    @patch("agents.providers.requests.get")
+    @patch("agents.providers.fal_client")
+    @patch("agents.providers.requests.post")
+    def test_steps_use_the_deployments_models(self, post, fal, get) -> None:
+        deployment = self.deploy(config={"models": {"text": STRONG, "image": "fal-ai/nano-banana-pro"}})
+        run = AgentRun.objects.create(deployment=deployment, project=self.project, user=self.user,
+                                      input={"topic": "coffee"})
+        post.return_value = chat(SCRIPT_JSON)
+        run.output = {"concept": {"title": "C", "hook": "Did you know?", "angle": "facts"}, "research": {"notes": "n"}}
+        steps.step_script(run)
+        self.assertEqual(post.call_args.kwargs["json"]["models"], [STRONG, "m:free"])
+        fake_fal(fal, {"images": [{"url": "https://cdn/x.png"}]})
+        get.return_value = MagicMock(content=b"png", headers={"Content-Type": "image/png"})
+        steps.step_visuals(run)
+        self.assertEqual(fal.submit.call_args.args[0], "fal-ai/nano-banana-pro")
+
+
+class ScheduleModeTests(SimpleTestCase):
+    def test_daily_weekly_monthly_and_manual_slots(self) -> None:
+        from datetime import datetime, timezone as dt_tz
+
+        from agents.runs import next_slot
+
+        utc = dt_tz.utc
+        tue_noon = datetime(2026, 10, 13, 12, 0, tzinfo=utc)
+        daily = {"mode": "daily", "time": "09:00", "tz": "UTC"}
+        self.assertEqual(next_slot(daily, tue_noon), datetime(2026, 10, 14, 9, 0, tzinfo=utc))
+        self.assertEqual(next_slot(daily, datetime(2026, 10, 13, 8, 0, tzinfo=utc)), datetime(2026, 10, 13, 9, 0, tzinfo=utc))
+        weekly = {"mode": "weekly", "days": [0], "time": "09:00", "tz": "UTC"}
+        self.assertEqual(next_slot(weekly, tue_noon), datetime(2026, 10, 19, 9, 0, tzinfo=utc))
+        monthly = {"mode": "monthly", "dayOfMonth": 15, "time": "09:00", "tz": "UTC"}
+        self.assertEqual(next_slot(monthly, tue_noon), datetime(2026, 10, 15, 9, 0, tzinfo=utc))
+        self.assertEqual(next_slot(monthly, datetime(2026, 10, 15, 9, 0, tzinfo=utc)),
+                         datetime(2026, 11, 15, 9, 0, tzinfo=utc))  # exactly at the slot: next month
+        self.assertEqual(next_slot(monthly, datetime(2026, 12, 20, tzinfo=utc)), datetime(2027, 1, 15, 9, 0, tzinfo=utc))
+        self.assertIsNone(next_slot({"mode": "manual"}, tue_noon))
+        self.assertIsNone(next_slot({"mode": "manual", "days": [1], "time": "09:00"}, tue_noon))
+
+    def test_legacy_schedule_is_weekly(self) -> None:
+        from agents.runs import clean_schedule, schedule_mode
+
+        self.assertEqual(schedule_mode({"days": [1], "time": "09:00"}), "weekly")
+        self.assertEqual(schedule_mode({}), "manual")
+        self.assertEqual(clean_schedule({"days": [1], "time": "09:00"})["mode"], "weekly")
+
+    def test_clean_schedule_keeps_only_the_fields_of_its_mode(self) -> None:
+        from agents.runs import clean_schedule
+
+        self.assertEqual(clean_schedule({"mode": "daily", "days": [1], "dayOfMonth": 3, "time": "07:15", "tz": "UTC"}),
+                         {"mode": "daily", "time": "07:15", "tz": "UTC"})
+        self.assertEqual(clean_schedule({"mode": "monthly", "days": [1], "dayOfMonth": 28, "time": "07:15"}),
+                         {"mode": "monthly", "dayOfMonth": 28, "time": "07:15", "tz": "UTC"})
+        self.assertEqual(clean_schedule({"mode": "manual", "time": "07:15", "days": [1]}), {"mode": "manual"})
+        for bad in ({"mode": "hourly", "time": "09:00"}, {"mode": "monthly", "dayOfMonth": 29, "time": "09:00"},
+                    {"mode": "monthly", "dayOfMonth": "5", "time": "09:00"}, {"mode": "monthly", "time": "09:00"},
+                    {"mode": "daily", "time": "9am"}, {"mode": "weekly", "days": [], "time": "09:00"}):
+            with self.assertRaises(ValueError):
+                clean_schedule(bad)
+
+
+class ScheduleEveryAgentTests(_AgentAPITestCase):
+    DAILY = {"mode": "daily", "time": "09:00", "tz": "UTC"}
+
+    def patch(self, deployment, **payload):
+        url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
+        return self.client.patch(url, {"autopilot": True, "schedule": self.DAILY, **payload}, format="json")
+
+    def make_due(self, deployment):
+        AgentDeployment.objects.filter(id=deployment.id).update(next_run_at=timezone.now() - timedelta(minutes=1))
+
+    def video(self, title, minutes_ago=0, **extra):
+        from content.models import LibraryAsset
+
+        asset = LibraryAsset.objects.create(project=self.project, user=self.user, media_type="video", title=title,
+                                            status="ready", source_url=f"https://cdn.example.com/{title}.mp4", **extra)
+        LibraryAsset.objects.filter(id=asset.id).update(created_at=timezone.now() - timedelta(minutes=minutes_ago))
+        return asset
+
+    def test_each_agent_needs_its_input_to_run_on_a_schedule(self) -> None:
+        trends = self.deploy("trend-finder")
+        self.assertEqual(self.patch(trends).data["message"], "Pick at least one topic so the agent knows what to look for.")
+        self.assertIsNotNone(self.patch(trends, config={"trendTopics": ["ai"]}).data["nextRunAt"])
+        self.assertIsNotNone(self.patch(trends, config={"niche": "coffee"}).data["nextRunAt"])  # saved before topics existed
+        voice = self.deploy("voiceover")
+        self.assertEqual(self.patch(voice).data["message"], "Add at least one text to read.")
+        long_text = "word " * 500
+        ok = self.patch(voice, topicQueue=[long_text])
+        self.assertEqual(ok.status_code, 200, ok.data)
+        self.assertEqual(ok.data["topicQueue"], [long_text.strip()])
+        self.assertEqual(self.patch(voice, topicQueue=["x" * 3001]).status_code, 400)
+        for agent in ("video-editor", "clip-maker", "cross-poster"):
+            response = self.patch(self.deploy(agent))
+            self.assertEqual(response.status_code, 200, (agent, response.data))
+            self.assertIsNotNone(response.data["nextRunAt"])
+
+    def test_on_with_manual_mode_only_runs_from_the_button(self) -> None:
+        response = self.patch(self.deploy(), schedule={"mode": "manual"})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["autopilot"])
+        self.assertIsNone(response.data["nextRunAt"])
+
+    def test_scheduled_trend_finder_looks_back_one_period(self) -> None:
+        from agents.runs import run_due
+
+        for mode, window, schedule in (("daily", "day", self.DAILY),
+                                       ("weekly", "week", {"mode": "weekly", "days": [0, 1, 2, 3, 4, 5, 6], "time": "09:00", "tz": "UTC"}),
+                                       ("monthly", "month", {"mode": "monthly", "dayOfMonth": 5, "time": "09:00", "tz": "UTC"})):
+            deployment = self.deploy("trend-finder", config={"trendTopics": ["ai"]})
+            self.patch(deployment, schedule=schedule)
+            self.make_due(deployment)
+            self.assertEqual(run_due(), 1, mode)
+            self.assertEqual(AgentRun.objects.get(deployment=deployment).input, {"window": window})
+
+    def test_scheduled_voiceover_reads_the_next_text(self) -> None:
+        from agents.runs import run_due
+
+        deployment = self.deploy("voiceover")
+        self.patch(deployment, topicQueue=["First text.", "Second text."])
+        self.make_due(deployment)
+        self.assertEqual(run_due(), 1)
+        self.assertEqual(AgentRun.objects.get(deployment=deployment).input, {"text": "First text."})
+        deployment.refresh_from_db()
+        self.assertEqual(deployment.topic_queue, ["Second text."])
+
+    def test_scheduled_video_agent_takes_the_newest_unused_library_video(self) -> None:
+        from agents.runs import run_due
+
+        older, newer = self.video("older", minutes_ago=10), self.video("newer", minutes_ago=5)
+        self.video("made-by-an-agent", capability="agent")  # the editor's own output is not edited again
+        self.video("deleted", deleted_at=timezone.now())
+        deployment = self.deploy("video-editor")
+        self.patch(deployment)
+        for expected in (newer, older):
+            self.make_due(deployment)
+            self.assertEqual(run_due(), 1)
+            run = deployment.runs.order_by("-created_at").first()
+            self.assertEqual(run.input, {"assetId": str(expected.id), "seconds": None, "title": expected.title})
+        self.make_due(deployment)
+        self.assertEqual(run_due(), 0)
+        deployment.refresh_from_db()
+        self.assertIn("no new video in your Library", deployment.autopilot_note)
+
+    def test_scheduled_video_agent_skips_videos_that_are_too_long(self) -> None:
+        from agents.runs import run_due
+
+        self.video("long")
+        deployment = self.deploy("video-editor")
+        self.patch(deployment)
+        self.make_due(deployment)
+        with patch("agents.runs.asset_file", return_value=Path("/x.mp4")), \
+                patch("agents.runs.probe", return_value={"duration": 240}):
+            self.assertEqual(run_due(), 0)
+        deployment.refresh_from_db()
+        self.assertIn("up to 3 minutes", deployment.autopilot_note)
+
+    def test_scheduled_clip_maker_and_cross_poster_inputs_match_a_manual_start(self) -> None:
+        from agents.runs import run_due
+
+        talk = self.video("talk", capability="upload")
+        short = self.video("short", capability="agent")  # agent-made Shorts are what the Cross-poster posts
+        clips = self.deploy("clip-maker")
+        self.patch(clips)
+        self.make_due(clips)
+        with patch("agents.runs.asset_file", return_value=Path("/x.mp4")), \
+                patch("agents.runs.probe", return_value={"duration": 1200.5}):
+            self.assertEqual(run_due(), 1)
+        self.assertEqual(clips.runs.get().input, {"assetId": str(talk.id), "seconds": 1200.5, "title": "talk"})
+        poster = self.deploy("cross-poster")
+        self.patch(poster)
+        self.make_due(poster)
+        self.assertEqual(run_due(), 0)  # nothing connected yet
+        poster.refresh_from_db()
+        self.assertIn("Connect YouTube, Instagram or Facebook", poster.autopilot_note)
+        from projects.models import SocialAccount
+
+        SocialAccount.objects.create(project=self.project, platform="youtube")
+        self.make_due(poster)
+        self.assertEqual(run_due(), 1)
+        self.assertEqual(poster.runs.get().input["assetId"], str(short.id))
+
+
+class AgentImageModelListTests(SimpleTestCase):
+    def test_models_that_misbehave_for_agents_are_not_offered(self):
+        from agents.ai_models import IMAGE_IDS
+
+        # GPT Image 2 has only a placeholder $1 price; Nano Banana 2.1 can't do 9:16 yet.
+        self.assertNotIn("openai/gpt-image-2", IMAGE_IDS)
+        self.assertNotIn("google/nano-banana-2.1", IMAGE_IDS)
+        self.assertIn("fal-ai/flux/schnell", IMAGE_IDS)
+
+
+class FalPollingTests(SimpleTestCase):
+    @patch("agents.providers.time.sleep")
+    @patch("agents.providers.fal_client")
+    def test_a_network_blip_while_waiting_does_not_fail_the_job(self, fal, _sleep) -> None:
+        # Seen live: one status check hit "Temporary failure in name resolution" and failed the voice step.
+        fal.submit.return_value = MagicMock(status_url="s", response_url="r")
+        fal.status.side_effect = [requests.ConnectionError("dns"), {"status": "IN_PROGRESS"}, {"status": "COMPLETED"},
+                                  {"status": "COMPLETED"}]
+        fal.result.side_effect = [requests.Timeout("slow"), {"audio": "ok"}]
+        self.assertEqual(providers._fal("fal-ai/kokoro/american-english", {}), {"audio": "ok"})
+
+    @patch("agents.providers.time.monotonic", side_effect=[0, 0, 10_000])
+    @patch("agents.providers.time.sleep")
+    @patch("agents.providers.fal_client")
+    def test_a_network_that_stays_down_still_times_out(self, fal, _sleep, _clock) -> None:
+        fal.submit.return_value = MagicMock(status_url="s", response_url="r")
+        fal.status.side_effect = requests.ConnectionError("dns")
+        with self.assertRaises(RuntimeError):
+            providers._fal("fal-ai/kokoro/american-english", {})
+
+
+class FalDownloadTests(SimpleTestCase):
+    @patch("agents.providers.time.sleep")
+    @patch("agents.providers.requests.get")
+    def test_a_slow_download_is_retried(self, get, _sleep) -> None:
+        # Seen live: "HTTPSConnectionPool(host='v3b.fal.media'): Read timed out" failed the voice step.
+        ok = MagicMock(content=b"audio")
+        get.side_effect = [requests.Timeout("slow"), requests.ConnectionError("reset"), ok]
+        self.assertIs(providers._download("https://v3b.fal.media/a.wav"), ok)
+        self.assertEqual(get.call_count, 3)
+
+    @patch("agents.providers.time.sleep")
+    @patch("agents.providers.requests.get", side_effect=requests.Timeout("slow"))
+    def test_a_download_that_keeps_failing_still_fails(self, get, _sleep) -> None:
+        with self.assertRaises(requests.Timeout):
+            providers._download("https://v3b.fal.media/a.wav")
+        self.assertEqual(get.call_count, 3)
+
+
+class ProviderErrorMessageTests(SimpleTestCase):
+    def failure(self, exc) -> str:
+        def boom():
+            raise exc
+        with self.assertRaises(RuntimeError) as caught:
+            providers._call("voice", "fal", True, boom)
+        return str(caught.exception)
+
+    def test_a_network_problem_says_to_check_the_connection(self) -> None:
+        for exc in (requests.ConnectionError("Temporary failure in name resolution"), requests.Timeout("Read timed out")):
+            message = self.failure(exc)
+            self.assertIn("internet connection", message)
+            self.assertIn("voice service (fal)", message)
+
+    def test_a_content_check_refusal_says_to_change_the_text(self) -> None:
+        from content.fal_client import FalError
+
+        message = self.failure(FalError("The content could not be processed because it contained material flagged by "
+                                        "a content checker.", status_code=422))
+        self.assertIn("safety check", message)
+        self.assertNotIn("try again later", message.lower())
+
+    def test_any_other_failure_keeps_the_general_message(self) -> None:
+        self.assertEqual(self.failure(ValueError("x")), "The voice service (fal) failed. Please try again later.")

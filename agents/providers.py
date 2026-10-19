@@ -49,6 +49,21 @@ def note(name: str) -> None:
         names.append(name)
 
 
+def _failure_message(job: str, name: str, exc: BaseException) -> str:
+    """What went wrong, in words the user can act on."""
+    chain = []
+    while exc is not None and len(chain) < 5:
+        chain.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    if any(isinstance(e, (requests.ConnectionError, requests.Timeout)) for e in chain):
+        return (f"The {job} service ({name}) couldn't be reached: your internet connection looks slow or offline. "
+                "Check your Wi-Fi or connection and try again.")
+    if any("content checker" in str(e) or "content_policy" in str(e) for e in chain):
+        return (f"The {job} service ({name}) refused this text: its safety check flagged the content (for example "
+                "graphic violence or drugs). Edit the script or pick another topic, then try again.")
+    return f"The {job} service ({name}) failed. Please try again later."
+
+
 def _call(job: str, name: str, ready: bool, fn):
     """Run one service call with a clear, user-safe error."""
     if not ready:
@@ -57,7 +72,7 @@ def _call(job: str, name: str, ready: bool, fn):
         result = fn()
     except Exception as exc:
         logger.warning("%s service %s failed: %s", job, name, exc)
-        raise RuntimeError(f"The {job} service ({name}) failed. Please try again later.") from exc
+        raise RuntimeError(_failure_message(job, name, exc)) from exc
     note(name)
     return result
 
@@ -65,11 +80,12 @@ def _call(job: str, name: str, ready: bool, fn):
 # ── text (research, concepts, script) via OpenRouter ──────────────────────
 
 
-def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperature: float):
-    """One chat call. Returns (text, sources). OpenRouter falls through the listed models."""
+def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperature: float, model: str | None = None):
+    """One chat call. Returns (text, sources). OpenRouter falls through the listed models: the chosen one,
+    then the server defaults."""
     models = [m.strip() for m in settings.AGENTS_OPENROUTER_MODELS.split(",") if m.strip()]
     body = {
-        "models": models[:3],
+        "models": list(dict.fromkeys(([model] if model else []) + models))[:3],
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
         "max_tokens": 8000,
@@ -137,9 +153,10 @@ def _as_dict(raw: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def text(system: str, user: str, *, json_mode: bool = True, search: bool = False, temperature: float = 0.8):
+def text(system: str, user: str, *, json_mode: bool = True, search: bool = False, temperature: float = 0.8,
+         model: str | None = None):
     """JSON mode returns a dict, otherwise (text, sources); with search always (result, sources).
-    A garbled JSON answer is retried once."""
+    A garbled JSON answer is retried once. `model` is an OpenRouter id tried first (Gemini ignores it)."""
     use_gemini = not settings.OPENROUTER_API_KEY and bool(settings.GEMINI_API_KEY)
 
     def run():
@@ -147,7 +164,7 @@ def text(system: str, user: str, *, json_mode: bool = True, search: bool = False
             if use_gemini:
                 raw, sources = _gemini(system, user, json_mode, temperature)
             else:
-                raw, sources = _openrouter(system, user, json_mode, search, temperature)
+                raw, sources = _openrouter(system, user, json_mode, search, temperature, model)
             if not json_mode:
                 return raw, sources
             parsed = _as_dict(raw)
@@ -168,18 +185,31 @@ def _fal(model: str, arguments: dict) -> dict:
     job = fal_client.submit(model, arguments)
     deadline = time.monotonic() + FAL_TIMEOUT_SECONDS
     while True:
-        state = str(fal_client.status(status_url=job.status_url).get("status", "")).upper()
-        if state == "COMPLETED":
-            return fal_client.result(response_url=job.response_url)
+        # A network blip (DNS, timeout) while waiting is retried until the deadline; the job keeps running on fal.
+        try:
+            state = str(fal_client.status(status_url=job.status_url).get("status", "")).upper()
+            if state == "COMPLETED":
+                return fal_client.result(response_url=job.response_url)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            logger.warning("fal job %s: network error while waiting, retrying: %s", model, exc)
+            state = ""
         if state in ("FAILED", "ERROR", "CANCELLED") or time.monotonic() > deadline:
             raise RuntimeError(f"fal job {model} ended in state {state or 'timeout'}")
         time.sleep(1)
 
 
-def _download(url: str) -> requests.Response:
-    response = requests.get(url, timeout=120)
-    response.raise_for_status()
-    return response
+def _download(url: str, attempts: int = 3) -> requests.Response:
+    """Fetch a finished file from fal's CDN, retrying a slow or dropped connection."""
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(url, timeout=(10, 60))
+            response.raise_for_status()
+            return response
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            if attempt == attempts:
+                raise
+            logger.warning("Download of %s failed (attempt %d), retrying: %s", url, attempt, exc)
+            time.sleep(2 * attempt)
 
 
 def _to_mp3(raw: bytes) -> bytes:
@@ -238,12 +268,18 @@ def clean_audio(audio: Path, model: str) -> bytes:
     return _call("audio cleanup", "fal", bool(settings.FAL_KEY), run)
 
 
-def image(prompt: str, width: int, height: int) -> tuple[bytes, str]:
+def image(prompt: str, width: int, height: int, model: str | None = None) -> tuple[bytes, str]:
+    """A 9:16 image from the chosen fal text-to-image model (default AGENTS_IMAGE_MODEL); each model family
+    gets its own size option (exact size, or a 9:16 aspect ratio)."""
+    from content.mapping import build_fal_input
+
+    model = model or settings.AGENTS_IMAGE_MODEL
+
     def run():
-        out = _fal(settings.AGENTS_IMAGE_MODEL, {
+        out = _fal(model, build_fal_input("textToImage", model, {
             "prompt": f"{prompt}. Vertical 9:16 composition, no text, no letters, no logos.",
-            "image_size": {"width": width, "height": height}, "num_images": 1, "enable_safety_checker": True,
-        })
+            "imageSize": {"width": width, "height": height}, "aspectRatio": "9:16", "numImages": 1,
+        }))
         images = out.get("images") or []
         if not images or not images[0].get("url"):
             raise RuntimeError("fal returned no image")

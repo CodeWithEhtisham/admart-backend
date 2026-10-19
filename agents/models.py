@@ -100,3 +100,13 @@ class AgentRun(models.Model):
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["deployment", "-created_at"]),
         ]
+
+
+class RunnerHeartbeat(models.Model):
+    """When an agents runner (worker or Celery sweep) last checked in.
+
+    One row in the database because that is the only store every process shares (the default cache is per process).
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    seen_at = models.DateTimeField()
