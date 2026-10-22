@@ -95,6 +95,7 @@ class Payment(models.Model):
     PAYMENT_TYPE_CHOICES = [
         ("subscription", "Subscription"),
         ("topup", "Top-up"),
+        ("storage", "Extra storage"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

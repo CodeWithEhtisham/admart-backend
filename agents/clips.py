@@ -122,8 +122,10 @@ def parse_youtube_url(text: str) -> str | None:
 
 
 def max_seconds(user) -> int:
-    """Longest source video for the user's plan."""
-    return FREE_MAX_SECONDS if getattr(user, "plan", "free") == "free" else PAID_MAX_SECONDS
+    """Longest source video for the user's plan (a plan without its own limit gets the free length)."""
+    from users.entitlements import clip_max_seconds
+
+    return clip_max_seconds(user) or FREE_MAX_SECONDS
 
 
 def _ytdlp_options(**extra) -> dict:
@@ -506,6 +508,7 @@ def step_get_video(run) -> None:
     if run.output.get("clip_source"):
         return
     folder, rel = base.media_dir(run)
+    local = None  # the library video, when the source is one on our disk
     if run.input.get("url"):
         target = download_youtube(run.input["url"], folder, run=run)
         title = run.input.get("title") or "YouTube video"
@@ -515,12 +518,13 @@ def step_get_video(run) -> None:
         ).first()
         if asset is None:
             raise RuntimeError("The video is no longer in your library.")
-        suffix = Path(urlparse(asset.source_url or "").path).suffix.lower()
-        target = folder / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
         local = asset_file(asset)
         if local:
-            shutil.copyfile(local, target)
+            # Work on the library file itself: a copy would count against the user's storage twice.
+            target = local
         else:
+            suffix = Path(urlparse(asset.source_url or "").path).suffix.lower()
+            target = folder / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
             target.write_bytes(fetch_media(asset.source_url, timeout=600)[0])
         title = asset.title
     info = probe(target)
@@ -532,7 +536,8 @@ def step_get_video(run) -> None:
         raise RuntimeError("This video is too short to make clips from.")
     render._run(["ffmpeg", "-y", "-i", str(target), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k",
                  str(folder / "audio.mp3")], timeout=1800)
-    run.output.update({"clip_source": f"{rel}/{target.name}", "clip_info": info, "clip_audio": f"{rel}/audio.mp3",
+    source = target.relative_to(Path(settings.MEDIA_ROOT).resolve()).as_posix() if local else f"{rel}/{target.name}"
+    run.output.update({"clip_source": source, "clip_info": info, "clip_audio": f"{rel}/audio.mp3",
                        "source_title": (title or "")[:120]})
     base._save(run)
 
@@ -685,6 +690,7 @@ def _styled_captions(words: list[dict], duration: float, highlight: str, style: 
     )
     color = render._ass_color(highlight)
     words = [w for w in words if w.get("word")]
+    rtl = render.is_rtl([w["word"] for w in words])
     lines = []
     for i in range(0, len(words), per_line):
         group = words[i : i + per_line]
@@ -692,14 +698,13 @@ def _styled_captions(words: list[dict], duration: float, highlight: str, style: 
         for k, current in enumerate(group):
             end = group[k + 1]["start"] if k + 1 < len(group) else current["end"]
             if mode == "colour":
-                shown = [f"{{\\c{color}}}{t}{{\\c&H00FFFFFF&}}" if j == k else t for j, t in enumerate(texts)]
+                shown = render.line_with_highlight(texts, k, f"{{\\c{color}}}", "{\\c&H00FFFFFF&}", rtl)
             elif mode == "box":  # a thick outline in the brand colour reads as a box behind the word
-                shown = [f"{{\\3c{color}&\\bord14}}{t}{{\\3c&H00000000&\\bord6}}" if j == k else t
-                         for j, t in enumerate(texts)]
+                shown = render.line_with_highlight(texts, k, f"{{\\3c{color}&\\bord14}}", "{\\3c&H00000000&\\bord6}", rtl)
             else:
-                shown = texts
+                shown = " ".join(texts)
             lines.append(f"Dialogue: 0,{render._ass_time(current['start'])},"
-                         f"{render._ass_time(max(end, current['start'] + 0.05))},Cap,,0,0,0,,{' '.join(shown)}")
+                         f"{render._ass_time(max(end, current['start'] + 0.05))},Cap,,0,0,0,,{shown}")
     return head + "\n".join(lines) + "\n"
 
 
@@ -716,7 +721,7 @@ def clip_ass(words: list[dict], hook: str, duration: float, highlight: str, styl
 
 
 def _burn(captions: Path) -> str:
-    return f"ass='{captions}':fontsdir='{Path(settings.AGENTS_CAPTION_FONT).parent}'"
+    return f"ass='{captions}':fontsdir='{render.FONTS_DIR}'"
 
 
 def _video_filter(layout: str, captions: Path) -> str:

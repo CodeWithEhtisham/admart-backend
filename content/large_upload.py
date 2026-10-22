@@ -29,6 +29,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content.models import LibraryAsset
+from content.storage_quota import storage_changed, storage_problem
 from content.storage_utils import absolute_media_url
 from projects.models import Project
 
@@ -112,6 +113,9 @@ class LargeUploadStartView(APIView):
         if size > settings.LIBRARY_LARGE_VIDEO_BYTES:
             limit = settings.LIBRARY_LARGE_VIDEO_BYTES // 1024**3
             return _bad(f"Videos can be up to {limit} GB.", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        full = storage_problem(request.user, size)
+        if full:
+            return Response(full.response_data(), status=status.HTTP_403_FORBIDDEN)
         _clean_stale()
         mine = 0
         for meta in _root().glob("*/meta.json") if _root().exists() else []:
@@ -187,6 +191,7 @@ class LargeUploadFinishView(APIView):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(session.data), target)
         shutil.rmtree(session.folder, ignore_errors=True)
+        storage_changed(request.user.pk)
         url = absolute_media_url(rel, request=request)
         asset = LibraryAsset.objects.create(
             project=session.project, user=request.user, media_type="video", title=session.meta["title"],

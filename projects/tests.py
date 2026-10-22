@@ -779,7 +779,7 @@ class OrganicPublishTests(APITestCase):
         self.url = reverse("project_publish", kwargs={"project_id": self.project.id})
 
     def test_schedule_requires_plan_feature(self) -> None:
-        self.user.plan = "basic"
+        self.user.plan = "free"  # Starter: manual and automatic publishing, no scheduled posts
         self.user.save(update_fields=["plan"])
         response = self.client.post(
             self.url,
@@ -1553,7 +1553,7 @@ class ProjectAnalyticsTests(APITestCase):
         self.url = reverse("project_analytics", kwargs={"project_id": self.project.id})
 
     def test_plan_without_analytics_is_forbidden(self) -> None:
-        self.user.plan = "plus"
+        self.user.plan = "basic"
         self.user.save(update_fields=["plan"])
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1911,7 +1911,7 @@ class SocialConnectionLimitTests(APITestCase):
     """The plan's max_social_connections_per_project applies to real OAuth connects."""
 
     def setUp(self) -> None:
-        self.user = User.objects.create_user(email="limit@example.com", password="Password123!")  # Free: 1 slot
+        self.user = User.objects.create_user(email="limit@example.com", password="Password123!")  # Starter: 2 slots
         self.project = Project.objects.create(owner=self.user, name="Brand")
         self.client.force_authenticate(user=self.user)
 
@@ -1922,8 +1922,9 @@ class SocialConnectionLimitTests(APITestCase):
         )
 
     @patch("projects.oauth.YouTubeProvider.exchange_code")
-    def test_second_platform_over_limit_is_refused(self, mock_exchange) -> None:
+    def test_third_platform_over_limit_is_refused(self, mock_exchange) -> None:
         SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
         response = _complete_oauth(self, "social", "youtube", "code", self._state("youtube"))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data["code"], "SOCIAL_CONNECTION_LIMIT_REACHED")
@@ -2008,6 +2009,7 @@ class SingleMetaConnectionTests(APITestCase):
     def test_free_plan_slot_connects_facebook_and_explains_instagram_skip(self) -> None:
         self.user.plan = "free"
         self.user.save(update_fields=["plan"])
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)  # 1 of Starter's 2
         response = self._connect()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["instagramSkipped"], "plan_limit")

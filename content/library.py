@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from django.conf import settings
 from django.utils import timezone
 
 from content.models import ImageJob, LibraryAsset, VideoJob
+from content.storage_quota import storage_changed
+from content.url_resolve import media_file
 
 
 def _title_from_prompt(prompt: str | None) -> str:
@@ -12,6 +17,32 @@ def _title_from_prompt(prompt: str | None) -> str:
     if not text:
         return "Untitled"
     return text[:80] + ("…" if len(text) > 80 else "")
+
+
+def delete_asset_file(asset: LibraryAsset) -> None:
+    """Free the storage of a library item the user deleted: remove its file from the project's folder,
+    unless another item still in the library shows the same file."""
+    url = asset.source_url
+    if not url or LibraryAsset.objects.filter(
+        project_id=asset.project_id, source_url=url, deleted_at__isnull=True
+    ).exclude(pk=asset.pk).exists():
+        return
+    try:
+        path = media_file(url)
+    except ValueError:  # not our file (e.g. a fal URL), or already gone
+        return
+    root = Path(settings.MEDIA_ROOT).resolve()
+    if not path.is_relative_to(root / "projects" / str(asset.project_id)):
+        return
+    from agents.management.commands.cleanup_clip_sources import FINISHED
+    from agents.models import AgentRun
+
+    if AgentRun.objects.filter(
+        project_id=asset.project_id, output__clip_source=path.relative_to(root).as_posix()
+    ).exclude(status__in=FINISHED).exists():
+        return  # Clip Maker is still working on it; cleanup_clip_sources removes it once that run is done
+    path.unlink(missing_ok=True)
+    storage_changed(asset.user_id)
 
 
 def sync_library_from_image_job(job: ImageJob) -> list[LibraryAsset]:

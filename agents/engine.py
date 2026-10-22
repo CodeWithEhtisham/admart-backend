@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
+from django.core.mail import send_mail
 from django.db import DatabaseError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -67,7 +68,7 @@ def recover_stuck(now=None) -> int:
 
 
 def due_queued_ids(now=None, limit: int = 10, only=(), exclude=()) -> list:
-    """Queued runs that may start now, oldest first (a scheduled post waits until its time).
+    """Queued runs that may start now, priority-plan runs first, then oldest first (a scheduled post waits until its time).
 
     `only` / `exclude` are agent types, so long jobs (Clip Maker) can have their own worker.
     """
@@ -77,7 +78,7 @@ def due_queued_ids(now=None, limit: int = 10, only=(), exclude=()) -> list:
         queued = queued.filter(deployment__agent_type__in=only)
     if exclude:
         queued = queued.exclude(deployment__agent_type__in=exclude)
-    return list(queued.order_by("created_at").values_list("id", flat=True)[:limit])
+    return list(queued.order_by("-priority", "created_at").values_list("id", flat=True)[:limit])
 
 
 def claim(run_id, now=None) -> AgentRun | None:
@@ -118,6 +119,28 @@ def runner_online(now=None) -> bool:
     )
 
 
+WAITING_SUBJECTS = {
+    "script": "Your {name}'s script is ready for a quick check",
+    "final": "Your {name} result is ready to review",
+}
+
+
+def notify_waiting(run: AgentRun, spec, gate: str) -> None:
+    """Email the owner that a run is waiting for them; once per stop, so a resumed stop doesn't email again."""
+    notified = list(run.output.get("notified") or [])
+    if gate in notified or not run.user.email:
+        return
+    run.output["notified"] = notified + [gate]
+    AgentRun.objects.filter(id=run.id).update(output=run.output)
+    subject = WAITING_SUBJECTS.get(gate, "{name}: waiting for you").format(name=spec.name)
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/agents/{run.deployment_id}?run={run.id}"
+    body = f"{subject}.\n\nOpen it here: {link}\n\nNothing is posted until you approve it."
+    try:
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [run.user.email])
+    except Exception as exc:  # an email problem must never fail the run
+        logger.warning("Couldn't email %s about run %s: %s", run.user.email, run.id, exc)
+
+
 def enqueue(run_id) -> None:
     """With Celery, start the run as soon as the database change is saved (Beat's sweep is the safety net)."""
     if settings.USE_CELERY:
@@ -143,15 +166,16 @@ def process(run: AgentRun) -> None:
             run.save(update_fields=["step", "locked_until", "updated_at"])
             used, started = providers.track(), timezone.now()
             STEPS[step](run)
-            _log(run, step, started, used)
+            _log(run, step, started, used, providers.text_spent())
     except RunCancelled:
         logger.info("Run %s was cancelled while working", run.id)
         return
     except NeedsReview as pause:
         # Waiting for a person: nothing failed and no credits move.
-        AgentRun.objects.filter(id=run.id, status="running").update(
+        if AgentRun.objects.filter(id=run.id, status="running").update(
             status="needs_review", step=pause.gate, locked_until=None
-        )
+        ):
+            notify_waiting(run, spec, pause.gate)
         return
     except WaitUntil as wait:
         AgentRun.objects.filter(id=run.id, status="running").update(
@@ -161,19 +185,24 @@ def process(run: AgentRun) -> None:
     except Exception as exc:  # noqa: BLE001 — every failure must end in a refunded, readable state
         fail(run, _message(exc, STEP_LABELS.get(run.step, "running the agent")))
         return
-    AgentRun.objects.filter(id=run.id, status="running").update(
+    finished = AgentRun.objects.filter(id=run.id, status="running").update(
         status="needs_review" if spec.review else "succeeded",
         step="final" if spec.review else "",
         locked_until=None,
         finished_at=timezone.now(),
     )
+    if finished and spec.review:
+        notify_waiting(run, spec, "final")
 
 
-def _log(run: AgentRun, step: str, started, used: list[str]) -> None:
-    """When each step ran and which services it used. A skipped (already done) step keeps its entry."""
+def _log(run: AgentRun, step: str, started, used: list[str], text_usd: Decimal = Decimal("0")) -> None:
+    """When each step ran, which services it used, and the run's running total of real AI-writer cost (textUsd,
+    for the admin: the flat writer fee should stay well above it). A skipped (already done) step keeps its entry."""
     log = run.output.setdefault("log", {})
     if step in log and not used:
         return
+    if text_usd:
+        run.output["textUsd"] = str(Decimal(run.output.get("textUsd") or "0") + text_usd)
     log[step] = {"startedAt": started.isoformat(), "finishedAt": timezone.now().isoformat(), "providers": used}
     run.save(update_fields=["output", "updated_at"])
 

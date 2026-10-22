@@ -203,6 +203,89 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             negative_prompt=True,
             strength="Next-gen coherent scenes",
         ),
+        _m(
+            id="google/gemini-omni-flash/v1.1/text-to-video",
+            label="Gemini Omni Flash",
+            family="gemini",
+            inputs="text",
+            duration=["4", "6", "8", "10"],
+            aspect_ratio=["16:9", "9:16"],
+            resolution=["720p", "1080p"],
+            strength="Google's fast all-rounder",
+        ),
+        _m(
+            id="bytedance/seedance-2.0/fast/text-to-video",
+            label="Seedance 2.0 Fast",
+            family="seedance",
+            inputs="text",
+            duration=["auto", "4", "5", "6", "8", "10", "12", "15"],
+            aspect_ratio=["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+            resolution=["480p", "720p"],
+            generate_audio=True,
+            strength="Seedance quality, lower cost",
+        ),
+        _m(
+            id="bytedance/seedance-2.0/mini/text-to-video",
+            label="Seedance 2.0 Mini",
+            family="seedance",
+            inputs="text",
+            duration=["auto", "4", "5", "6", "8", "10", "12", "15"],
+            aspect_ratio=["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+            resolution=["480p", "720p"],
+            generate_audio=True,
+            strength="Cheapest Seedance",
+        ),
+        _m(
+            id="fal-ai/kling-video/o3/pro/text-to-video",
+            label="Kling O3 Pro",
+            family="kling",
+            inputs="text",
+            duration=["5", "10", "15"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            generate_audio=True,
+            strength="Kling's newest, up to 15 s",
+        ),
+        _m(
+            id="fal-ai/kling-video/v2.6/pro/text-to-video",
+            label="Kling 2.6 Pro",
+            family="kling",
+            inputs="text",
+            duration=["5", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            generate_audio=True,
+            strength="Motion with native audio",
+        ),
+        _m(
+            id="fal-ai/pixverse/v6/text-to-video",
+            label="PixVerse V6",
+            family="pixverse",
+            inputs="text",
+            duration=["5", "8", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1", "4:3", "3:4"],
+            resolution=["540p", "720p", "1080p"],
+            negative_prompt=True,
+            strength="Low-cost stylized clips",
+        ),
+        _m(
+            id="minimax/h3/text-to-video",
+            label="MiniMax H3",
+            family="minimax",
+            inputs="text",
+            duration=["5", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            resolution=["768P", "2K"],
+            strength="Sharp 2K social video",
+        ),
+        _m(
+            id="xai/grok-imagine-video/text-to-video",
+            label="Grok Imagine Video",
+            family="grok",
+            inputs="text",
+            duration=["6", "10"],
+            aspect_ratio=["16:9", "9:16", "1:1"],
+            resolution=["480p", "720p"],
+            strength="Fast, playful clips",
+        ),
     ],
     "imageToVideo": [
         _m(
@@ -336,6 +419,90 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             duration=["5", "8"],
             strength="Stylized motion",
         ),
+        _m(
+            id="google/gemini-omni-flash/v1.1/image-to-video",
+            label="Gemini Omni Flash",
+            family="gemini",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["4", "6", "8", "10"],
+            aspect_ratio=["16:9", "9:16"],
+            resolution=["720p", "1080p"],
+            strength="Google's fast all-rounder",
+        ),
+        _m(
+            id="alibaba/wan-3.0/image-to-video",
+            label="Wan 3.0",
+            family="wan",
+            inputs="image",
+            fal_image_keys={"start": "start_image_url"},
+            duration=["5", "10"],
+            resolution=["720p", "1080p"],
+            strength="Next-gen coherent motion",
+        ),
+        _m(
+            id="bytedance/seedance-2.0/fast/image-to-video",
+            label="Seedance 2.0 Fast",
+            family="seedance",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["auto", "4", "5", "6", "8", "10", "12", "15"],
+            aspect_ratio=["auto", "16:9", "9:16", "1:1"],
+            resolution=["480p", "720p"],
+            generate_audio=True,
+            strength="Seedance quality, lower cost",
+        ),
+        _m(
+            id="fal-ai/kling-video/o3/pro/image-to-video",
+            label="Kling O3 Pro",
+            family="kling",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "10", "15"],
+            generate_audio=True,
+            strength="Kling's newest, up to 15 s",
+        ),
+        _m(
+            id="fal-ai/pixverse/v6/image-to-video",
+            label="PixVerse V6",
+            family="pixverse",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "8", "10"],
+            resolution=["540p", "720p", "1080p"],
+            negative_prompt=True,
+            strength="Low-cost stylized motion",
+        ),
+        _m(
+            id="minimax/h3/image-to-video",
+            label="MiniMax H3",
+            family="minimax",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["5", "10"],
+            resolution=["768P", "2K"],
+            strength="Sharp 2K social video",
+        ),
+        _m(
+            id="minimax/h3-max-turbo/image-to-video",
+            label="MiniMax H3 Max Turbo",
+            family="minimax",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["6", "10"],
+            strength="Fast high-res video",
+        ),
+        _m(
+            id="xai/grok-imagine-video/image-to-video",
+            label="Grok Imagine Video",
+            family="grok",
+            inputs="image",
+            fal_image_keys={"start": "image_url"},
+            duration=["6", "10"],
+            aspect_ratio=["auto", "16:9", "9:16", "1:1"],
+            resolution=["480p", "720p"],
+            strength="Fast, playful clips",
+        ),
     ],
     "firstLastFrame": [
         _m(
@@ -405,6 +572,39 @@ VIDEO_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             duration=["5", "10"],
             strength="Start + end (tail)",
         ),
+        _m(
+            id="google/gemini-omni-flash/v1.1/image-to-video",
+            label="Gemini Omni Flash Start→End",
+            family="gemini",
+            inputs="firstLast",
+            fal_image_keys={"start": "image_url", "end": "end_image_url"},
+            duration=["4", "6", "8", "10"],
+            aspect_ratio=["16:9", "9:16"],
+            resolution=["720p", "1080p"],
+            strength="Fast keyframe transition",
+        ),
+        _m(
+            id="bytedance/seedance-2.0/fast/image-to-video",
+            label="Seedance 2.0 Fast Start→End",
+            family="seedance",
+            inputs="firstLast",
+            fal_image_keys={"start": "image_url", "end": "end_image_url"},
+            duration=["auto", "4", "5", "6", "8", "10"],
+            aspect_ratio=["auto", "16:9", "9:16", "1:1"],
+            resolution=["480p", "720p"],
+            generate_audio=True,
+            strength="Low-cost keyframe transition",
+        ),
+        _m(
+            id="fal-ai/kling-video/o3/pro/image-to-video",
+            label="Kling O3 Pro Start→End",
+            family="kling",
+            inputs="firstLast",
+            fal_image_keys={"start": "image_url", "end": "end_image_url"},
+            duration=["5", "10", "15"],
+            generate_audio=True,
+            strength="Newest Kling keyframes",
+        ),
     ],
 }
 
@@ -436,14 +636,6 @@ def get_model_entry(capability: str, model_id: str) -> dict[str, Any] | None:
     for entry in VIDEO_MODEL_CATALOG.get(capability, []):
         if entry["id"] == model_id:
             return entry
-    try:
-        from content.fal_models import merged_video_catalog
-        catalog = merged_video_catalog(include_discovery=True)
-        for entry in catalog.get(capability, []):
-            if entry.get("id") == model_id:
-                return entry
-    except Exception:
-        pass
     return None
 
 
@@ -451,13 +643,6 @@ def resolve_video_model(capability: str, model: str | None) -> str:
     chosen = (model or "").strip() or DEFAULT_VIDEO_MODELS[capability]
     if chosen in VIDEO_ALLOW_LISTS.get(capability, set()):
         return chosen
-    try:
-        from content.fal_models import merged_video_catalog
-        catalog = merged_video_catalog(include_discovery=True)
-        if any(m.get("id") == chosen for m in catalog.get(capability, [])):
-            return chosen
-    except Exception:
-        pass
     raise ValueError(f"Model not allowed for {capability}: {chosen}")
 
 

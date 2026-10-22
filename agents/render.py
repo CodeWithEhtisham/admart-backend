@@ -19,7 +19,9 @@ from django.conf import settings
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 TRANSITION = 0.4  # seconds of crossfade between scenes
-CAPTION_WORDS = 3  # words per on-screen caption line
+CAPTION_WORDS = 3  # most words per on-screen caption line
+CAPTION_CHARS = {"en": 16, "ur": 22}  # most characters per line, so a line fits the screen at the caption size
+FONTS_DIR = Path(__file__).resolve().parent / "data" / "fonts"  # Montserrat (SIL OFL, see OFL.txt there)
 MAX_SECONDS = 180  # YouTube Shorts limit
 # Camera moves cycled across image scenes so stills never feel like a slideshow.
 MOVES = (
@@ -88,29 +90,87 @@ def _ass_text(word: str) -> str:
     return re.sub(r"[{}\\]", "", word)
 
 
-def build_captions(scenes: list[dict], highlight_hex: str, size: tuple[int, int] = (WIDTH, HEIGHT)) -> str:
-    """ASS subtitles: 3-word lines, the word being spoken highlighted in the brand colour."""
+_RTL = re.compile(r"[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
+
+
+def is_rtl(words: list[str]) -> bool:
+    """True when the words are in a right-to-left script (Urdu, Arabic, Persian, Hebrew)."""
+    return any(_RTL.search(w) for w in words)
+
+
+def line_with_highlight(texts: list[str], k: int, on: str, off: str, rtl: bool) -> str:
+    """One caption line with texts[k] between the `on` and `off` override tags. libass lays the runs
+    between tags out left to right, so right-to-left text goes in as [after][word][before] to read in order."""
+    if not rtl:
+        return " ".join(f"{on}{t}{off}" if j == k else t for j, t in enumerate(texts))
+    return " ".join(part for part in (" ".join(texts[k + 1:]), f"{on}{texts[k]}{off}", " ".join(texts[:k])) if part)
+
+
+def caption_font(language: str = "en") -> tuple[str, str]:
+    """(font family, font file) for captions and the thumbnail: an Urdu font for Urdu, else Montserrat ExtraBold."""
+    if language == "ur":
+        return "Noto Naskh Arabic", settings.AGENTS_URDU_CAPTION_FONT
+    return "Montserrat ExtraBold", str(FONTS_DIR / "Montserrat-ExtraBold.ttf")
+
+
+def caption_groups(words: list[dict], language: str = "en") -> list[list[dict]]:
+    """Words cut into caption lines of at most CAPTION_WORDS words and CAPTION_CHARS characters (a longer word
+    gets a line of its own)."""
+    limit = CAPTION_CHARS.get(language, CAPTION_CHARS["en"])
+    groups: list[list[dict]] = []
+    for word in words:
+        line = groups[-1] if groups else None
+        if line and len(line) < CAPTION_WORDS and len(" ".join(w["word"] for w in line + [word])) <= limit:
+            line.append(word)
+        else:
+            groups.append([word])
+    return groups
+
+
+# Shorts look: heavy white words with a thick outline and a soft shadow; the spoken word in the brand colour,
+# popping slightly bigger as it is said. (size, outline, shadow, letter spacing) per language: Urdu script reads
+# smaller, and any letter spacing stops Urdu letters joining, so it has none.
+CAPTION_LOOK = {"en": (92, 10, 4, 1), "ur": (112, 9, 3, 0)}
+
+
+def caption_highlight(hex_color: str) -> str:
+    """The brand colour for the spoken word, lightened toward white when it is too dark to read on a black outline."""
+    h = hex_color.lstrip("#") if re.fullmatch(r"#?[0-9a-fA-F]{6}", hex_color or "") else "FFD400"
+    rgb = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+    luma = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+    if luma >= 150:
+        return f"#{h.upper()}"
+    mix = (150 - luma) / (255 - luma) + 0.1  # just enough white to reach a readable brightness
+    return "#" + "".join(f"{round(c + (255 - c) * min(mix, 1)):02X}" for c in rgb)
+
+
+def build_captions(scenes: list[dict], highlight_hex: str, size: tuple[int, int] = (WIDTH, HEIGHT),
+                   language: str = "en") -> str:
+    """ASS subtitles: short lines (upper case in English), the word being spoken highlighted in the brand colour."""
     width, height = size
+    family = caption_font(language)[0]
+    font_size, outline, shadow, spacing = CAPTION_LOOK["ur" if language == "ur" else "en"]
+    bold = -1 if language == "ur" else 0  # Montserrat ExtraBold is already heavy; Naskh uses its bold face
     head = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\n\n"
         "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Cap,DejaVu Sans,{round(78 * width / WIDTH)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,"
-        f"100,100,0,0,1,7,2,2,60,60,{round(height * 0.27)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Style: Cap,{family},{round(font_size * width / WIDTH)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,{bold},0,0,0,"
+        f"100,100,{spacing},0,1,{outline},{shadow},2,70,70,{round(height * 0.30)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-    color = _ass_color(highlight_hex)
+    color = _ass_color(caption_highlight(highlight_hex))
+    on = f"{{\\c{color}&\\fscx100\\fscy100\\t(0,90,\\fscx112\\fscy112)}}"
+    off = "{\\c&H00FFFFFF&\\fscx100\\fscy100}"
     lines, offset = [], 0.0
     for scene in scenes:
         words = [w for w in scene["words"] if w.get("word")]
-        for i in range(0, len(words), CAPTION_WORDS):
-            group = words[i : i + CAPTION_WORDS]
+        rtl = is_rtl([w["word"] for w in words])
+        for group in caption_groups(words, "ur" if rtl else language):
+            texts = [_ass_text(w["word"] if rtl else w["word"].upper()) for w in group]
             for k, current in enumerate(group):
                 end = group[k + 1]["start"] if k + 1 < len(group) else current["end"]
-                text = " ".join(
-                    f"{{\\c{color}}}{_ass_text(w['word'])}{{\\c&H00FFFFFF&}}" if j == k else _ass_text(w["word"])
-                    for j, w in enumerate(group)
-                )
+                text = line_with_highlight(texts, k, on, off, rtl)
                 lines.append(
                     f"Dialogue: 0,{_ass_time(offset + current['start'])},{_ass_time(offset + max(end, current['start'] + 0.05))},"
                     f"Cap,,0,0,0,,{text}"
@@ -146,16 +206,29 @@ def _scene_clip(index: int, scene: dict, length: float, workdir: Path) -> Path:
     return out
 
 
-def thumbnail(source_clip: Path, title: str, highlight_hex: str, out: Path, workdir: Path) -> None:
+def thumbnail(source_clip: Path, title: str, highlight_hex: str, out: Path, workdir: Path, language: str = "en") -> None:
     """Frame from the first scene with the title in a brand-coloured box (scaled to 1080 wide so the text fits)."""
-    text_file = workdir / "thumb-title.txt"
-    text_file.write_text("\n".join(textwrap.wrap(title, 16)[:4]), encoding="utf-8")
+    lines = textwrap.wrap(title, 16)[:4]
     box = highlight_hex if re.fullmatch(r"#[0-9a-fA-F]{6}", highlight_hex or "") else "#FFD400"
+    font = caption_font(language)[1]
+    if language == "ur":
+        # Right-to-left text: one centred drawtext per line (a newline inside shaped Urdu text draws a stray box).
+        draws = []
+        for i, line in enumerate(lines):
+            text_file = workdir / f"thumb-title-{i}.txt"
+            text_file.write_text(line, encoding="utf-8")
+            draws.append(f"drawtext=fontfile='{font}':textfile='{text_file}':fontsize=104:fontcolor=black:box=1:"
+                         f"boxcolor={box}@0.92:boxborderw=30:x=(w-text_w)/2:y=h*0.18+{i * 190}")
+        text_filter = ",".join(draws)
+    else:
+        text_file = workdir / "thumb-title.txt"
+        text_file.write_text("\n".join(lines), encoding="utf-8")
+        text_filter = (f"drawtext=fontfile='{font}':textfile='{text_file}':fontsize=104:"
+                       f"fontcolor=black:line_spacing=18:box=1:boxcolor={box}@0.92:boxborderw=34:"
+                       f"x=(w-text_w)/2:y=h*0.18")
     _run([
         "ffmpeg", "-y", "-ss", "1", "-i", str(source_clip), "-frames:v", "1", "-vf",
-        f"scale=1080:-2,drawtext=fontfile='{settings.AGENTS_CAPTION_FONT}':textfile='{text_file}':fontsize=104:"
-        f"fontcolor=black:line_spacing=18:box=1:boxcolor={box}@0.92:boxborderw=34:"
-        f"x=(w-text_w)/2:y=h*0.18",
+        f"scale=1080:-2,{text_filter}",
         "-q:v", "3", str(out),
     ])
 
@@ -170,6 +243,8 @@ def render_short(
     highlight_hex: str = "#FFD400",
     music: Path | None = None,
     expect_sound: bool = True,
+    language: str = "en",
+    captions: bool = True,
 ) -> dict:
     """Render scenes into one 9:16 Short + thumbnail; returns quality-check results.
 
@@ -182,8 +257,8 @@ def render_short(
     ]
     total = sum(s["duration"] for s in scenes)
 
-    captions = workdir / "captions.ass"
-    captions.write_text(build_captions(scenes, highlight_hex), encoding="utf-8")
+    captions_file = workdir / "captions.ass"
+    captions_file.write_text(build_captions(scenes, highlight_hex, language=language), encoding="utf-8")
 
     inputs: list[str] = []
     for clip in clips:
@@ -198,8 +273,10 @@ def render_short(
         offset += scenes[i - 1]["duration"]
         graph.append(f"{last}[{i}:v]xfade=transition=fade:duration={TRANSITION}:offset={offset:.3f}[x{i}]")
         last = f"[x{i}]"
-    fonts = Path(settings.AGENTS_CAPTION_FONT).parent
-    graph.append(f"{last}ass='{captions}':fontsdir='{fonts}'[vout]")
+    if captions:
+        graph.append(f"{last}ass='{captions_file}':fontsdir='{FONTS_DIR}'[vout]")
+    else:
+        graph.append(f"{last}null[vout]")
 
     voices = "".join(f"[{count + i}:a]" for i in range(count))
     graph.append(f"{voices}concat=n={count}:v=0:a=1,aresample=44100,aformat=channel_layouts=mono[voice]")
@@ -218,7 +295,7 @@ def render_short(
         "-t", f"{total:.3f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(out_path),
     ])
-    thumbnail(clips[0], title, highlight_hex, thumb_path, workdir)
+    thumbnail(clips[0], title, highlight_hex, thumb_path, workdir, language)
     return check_video(out_path, expect_sound=expect_sound)
 
 

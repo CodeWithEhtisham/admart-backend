@@ -28,6 +28,8 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 FAL_TIMEOUT_SECONDS = 180
 KOKORO_US = "fal-ai/kokoro/american-english"
 KOKORO_UK = "fal-ai/kokoro/british-english"
+GEMINI_TTS = "fal-ai/gemini-tts"  # Urdu voices
+GEMINI_LANGUAGE = "Urdu (Pakistan)"
 
 
 class ProviderUnavailable(RuntimeError):
@@ -38,9 +40,20 @@ _used = threading.local()
 
 
 def track() -> list[str]:
-    """Start recording which services answer on this thread; returns the live list."""
+    """Start recording which services answer (and what the AI writer costs) on this thread; returns the live list."""
     _used.names = []
+    _used.text_usd = Decimal("0")
     return _used.names
+
+
+def note_text_cost(usd: Decimal) -> None:
+    if hasattr(_used, "text_usd"):
+        _used.text_usd += usd
+
+
+def text_spent() -> Decimal:
+    """USD the AI writer really cost since track(), as OpenRouter reported it."""
+    return getattr(_used, "text_usd", Decimal("0"))
 
 
 def note(name: str) -> None:
@@ -91,6 +104,7 @@ def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperatu
         "max_tokens": 8000,
         # Thinking made cheap models ~10x slower (70 s) and sometimes left no answer (tested 2026-10-14).
         "reasoning": {"enabled": False},
+        "usage": {"include": True},  # the real cost of the call, recorded per run
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
@@ -108,7 +122,11 @@ def _openrouter(system: str, user: str, json_mode: bool, search: bool, temperatu
         del body["plugins"]
         response = post()
     response.raise_for_status()
-    message = response.json()["choices"][0]["message"]
+    data = response.json()
+    cost = (data.get("usage") or {}).get("cost")
+    if cost:
+        note_text_cost(Decimal(str(cost)))
+    message = data["choices"][0]["message"]
     content = message.get("content")
     if not content:
         raise RuntimeError("The AI writer returned nothing.")
@@ -227,25 +245,38 @@ def _data_uri(audio: Path) -> str:
 
 
 def speech(text_: str, voice: tuple | None = None, speed: float = 1.0) -> bytes:
-    """MP3 bytes of the spoken text, read by Kokoro on fal. `voice` is a registry.VOICES entry."""
+    """MP3 bytes of the spoken text: Kokoro on fal for English, Gemini TTS on fal for Urdu.
+    `voice` is a registry.VOICES entry."""
     from agents.registry import VOICES
 
     voice_id = (voice or VOICES["heart"])[1]
+    if voice_id.startswith("gemini:"):
+        # Gemini has no speed setting: the pace is asked for in words.
+        pace = "brisk, energetic" if speed > 1.05 else "slow, calm" if speed < 0.95 else "natural, steady"
+        model, arguments = GEMINI_TTS, {
+            "prompt": text_,
+            "voice": voice_id.split(":", 1)[1],
+            "language_code": GEMINI_LANGUAGE,
+            "style_instructions": f"Read this aloud in natural Pakistani Urdu, like a short-video narrator, at a {pace} pace.",
+            "output_format": "mp3",
+        }
+    else:
+        model = KOKORO_UK if voice_id.startswith("b") else KOKORO_US
+        arguments = {"prompt": text_, "voice": voice_id, "speed": speed}
 
     def run():
-        out = _fal(KOKORO_UK if voice_id.startswith("b") else KOKORO_US,
-                   {"prompt": text_, "voice": voice_id, "speed": speed})
+        out = _fal(model, arguments)
         return _to_mp3(_download(out["audio"]["url"]).content)
 
     return _call("voice", "fal", bool(settings.FAL_KEY), run)
 
 
-def word_times(audio: Path) -> list[dict] | None:
+def word_times(audio: Path, language: str = "en") -> list[dict] | None:
     """Exact word timings from Whisper on fal, or None so captions fall back to an even estimate."""
     if not settings.FAL_KEY:
         return None
     try:
-        out = _fal(settings.AGENTS_WHISPER_MODEL, {"audio_url": _data_uri(audio), "chunk_level": "word", "language": "en"})
+        out = _fal(settings.AGENTS_WHISPER_MODEL, {"audio_url": _data_uri(audio), "chunk_level": "word", "language": language})
     except Exception:  # noqa: BLE001 — estimated timing is good enough
         logger.warning("Word timings unavailable; using estimated caption timing", exc_info=True)
         return None

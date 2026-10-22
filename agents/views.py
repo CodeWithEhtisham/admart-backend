@@ -18,7 +18,7 @@ from rest_framework.views import APIView
 
 from agents import engine, growth
 from agents.models import AgentDeployment, AgentRun
-from agents.ai_models import IMAGE_IDS, IMAGE_MODELS, TEXT_IDS, TEXT_MODELS, chosen_models
+from agents.ai_models import IMAGE_IDS, IMAGE_MODELS, TEXT_IDS, TEXT_MODELS, chosen_models, text_fee
 from agents.runs import (
     OPEN_STATUSES, RunRefused, clean_schedule, clean_texts, clean_topics, month_spend, next_slot, schedule_mode, start_run,
 )
@@ -34,10 +34,12 @@ from agents.trends import MAX_TOPICS, REGIONS, TREND_TOPICS, WINDOWS
 from agents.video_edit import asset_file, merge_cuts, probe
 from content.models import LibraryAsset
 from content.credits import InsufficientCredits, refund_credits, reserve_credits
+from content.library import delete_asset_file
 from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
 from projects.models import Project
 from projects.publish import PLATFORM_LABELS
+from users import entitlements
 from users.plans import get_plan
 
 # Stopping at these checkpoints refunds the run: nothing expensive has been made yet.
@@ -57,8 +59,38 @@ def _bad(message: str, code: str = "INVALID", http=status.HTTP_400_BAD_REQUEST, 
     return Response({"message": message, "code": code, **extra}, status=http)
 
 
+def _plan_required(problem) -> Response:
+    return Response(problem.response_data(), status=status.HTTP_403_FORBIDDEN)
+
+
 def _media(rel: str | None, request) -> str | None:
     return absolute_media_url(rel, request=request) if rel else None
+
+
+def cancel_open_run(run: AgentRun) -> bool:
+    """Stop a waiting or working run and refund its credits. False while it is posting: a post can't be stopped."""
+    credits, topup = run.credits_reserved, run.topup_reserved
+    cancelled = AgentRun.objects.filter(id=run.id, status__in=OPEN_STATUSES).exclude(
+        status="running", step="post"
+    ).update(status="discarded", error="Cancelled. Your credits were refunded.", finished_at=timezone.now(),
+             locked_until=None, credits_reserved=0, topup_reserved=0)
+    if cancelled and credits > 0:
+        refund_credits(run.user, credits, topup=topup)
+    return bool(cancelled)
+
+
+def latest_run_data(deployment: AgentDeployment) -> dict | None:
+    """What the agent did last, so a list can say "working now", "waiting for you" or "done" truthfully."""
+    run = deployment.runs.only("id", "status", "step", "input", "output", "updated_at").first()
+    if run is None:
+        return None
+    return {
+        "id": str(run.id),
+        "status": run.status,
+        "step": run.step,
+        "title": (run.output or {}).get("title") or run.input.get("topic") or "",
+        "updatedAt": run.updated_at,
+    }
 
 
 def deployment_data(deployment: AgentDeployment) -> dict:
@@ -80,6 +112,7 @@ def deployment_data(deployment: AgentDeployment) -> dict:
         "topicQueue": deployment.topic_queue,
         "nextRunAt": deployment.next_run_at if deployment.autopilot else None,
         "autopilotNote": deployment.autopilot_note,
+        "latestRun": latest_run_data(deployment),
         "createdAt": deployment.created_at,
         **(_model_data(spec, deployment.config or {}) if spec else {}),
     }
@@ -99,7 +132,8 @@ def _model_data(spec, config: dict) -> dict:
     return {
         "models": {kind: chosen[kind] for kind in kinds},
         "modelChoices": {
-            kind: [{"id": m["id"], "label": m["label"], "strength": m.get("strength"), "creditsPerRun": credits(kind, m["id"])}
+            kind: [{"id": m["id"], "label": m["label"], "strength": m.get("strength"), "creditsPerRun": credits(kind, m["id"]),
+                    **({"fee": f"{text_fee(m['id']):f}"} if kind == "text" else {})}
                    for m in choices]
             for kind, choices in kinds.items()
         },
@@ -285,7 +319,11 @@ class AgentCatalogView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response([catalog_entry(spec) for spec in active_agents()])
+        return Response([
+            {**catalog_entry(spec),
+             "requiredPlan": entitlements.required_plan(entitlements.agent_problem(request.user, spec.slug, spec.name))}
+            for spec in active_agents()
+        ])
 
 
 class DeploymentListCreateView(_ProjectScoped):
@@ -300,6 +338,9 @@ class DeploymentListCreateView(_ProjectScoped):
         agent_type = str(request.data.get("agentType", ""))
         if agent_type not in {spec.slug for spec in active_agents()}:
             return _bad("Unknown agent.")
+        problem = entitlements.agent_problem(request.user, agent_type, get_agent(agent_type).name)
+        if problem:
+            return _plan_required(problem)
         try:
             config = _parse_config(request.data.get("config"))
             limit = _parse_limit(request.data.get("monthlyCreditLimit"))
@@ -358,6 +399,9 @@ class DeploymentDetailView(_ProjectScoped):
                     raise ValueError("Add some topics, or set the channel niche so the agent can pick topics.")
                 elif spec.input_kind == "text" and not deployment.topic_queue:
                     raise ValueError("Add at least one text to read.")
+                problem = entitlements.schedule_problem(request.user, deployment)
+                if problem:
+                    return _plan_required(problem)
         except ValueError as exc:
             return _bad(str(exc))
         # Any schedule change re-plans the next run from now.
@@ -369,8 +413,10 @@ class DeploymentDetailView(_ProjectScoped):
 
     def delete(self, request, project_id, deployment_id):
         deployment = self.deployment(request, project_id, deployment_id)
-        if deployment.runs.filter(status__in=OPEN_STATUSES).exists():
-            return _bad("Wait for running jobs to finish before removing this agent.", "AGENT_BUSY")
+        # Waiting and working runs are cancelled (and refunded) with the agent; only a post going out blocks it.
+        for run in deployment.runs.filter(status__in=OPEN_STATUSES):
+            if not cancel_open_run(run):
+                return _bad("It is posting right now. Try again in a minute, once the post is out.", "AGENT_BUSY")
         deployment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -420,6 +466,11 @@ class RunListCreateView(_ProjectScoped):
         try:
             run = start_run(deployment, run_input)
         except RunRefused as refused:
+            if refused.code == "PLAN_REQUIRED":
+                return _bad(refused.message, refused.code, http=status.HTTP_403_FORBIDDEN,
+                            requiredPlan=refused.required_plan)
+            if refused.code == "STORAGE_FULL":
+                return _bad(refused.message, refused.code, http=status.HTTP_403_FORBIDDEN)
             if refused.code != "INSUFFICIENT_CREDITS":
                 return _bad(refused.message, refused.code)
             request.user.refresh_from_db()
@@ -566,6 +617,15 @@ class RunActionView(_ProjectScoped):
             if chosen.get("hook"):
                 chosen.update(scored_hook(chosen["hook"]))  # the user may have rewritten it
             out["concept"] = chosen
+        elif run.step == "script" and "concept" in data:
+            # "Use this idea instead": write a new script for another idea, then stop here again.
+            concepts = out.get("concepts") or []
+            try:
+                out["concept"] = dict(concepts[int(data["concept"])])
+            except (ValueError, TypeError, IndexError):
+                return _bad("Pick one of the ideas.")
+            for key in ("title", "thumbnail_text", "title_check", "description", "tags", "scenes"):
+                out.pop(key, None)
         elif run.step == "script":
             if "scenes" in data:
                 try:
@@ -758,17 +818,8 @@ class RunActionView(_ProjectScoped):
 
     def _discard(self, run, data):
         if run.status in ("queued", "running"):  # cancel: a scheduled post, or a job waiting or in progress
-            if run.status == "running" and run.step == "post":
+            if not cancel_open_run(run):
                 return _bad("It is being posted right now, so it can't be cancelled.")
-            credits, topup = run.credits_reserved, run.topup_reserved
-            cancelled = AgentRun.objects.filter(id=run.id, status__in=("queued", "running")).exclude(
-                status="running", step="post"
-            ).update(status="discarded", error="Cancelled. Your credits were refunded.", finished_at=timezone.now(),
-                     locked_until=None, credits_reserved=0, topup_reserved=0)
-            if not cancelled:
-                return _bad("It is being posted right now, so it can't be cancelled.")
-            if credits > 0:
-                refund_credits(run.user, credits, topup=topup)
             run.refresh_from_db()
             return None
         if run.status not in ("needs_review", "succeeded"):
@@ -785,5 +836,6 @@ class RunActionView(_ProjectScoped):
         if run.library_asset_id:
             run.library_asset.deleted_at = timezone.now()
             run.library_asset.save(update_fields=["deleted_at", "updated_at"])
+            delete_asset_file(run.library_asset)
         run.save(update_fields=fields)
         return None

@@ -551,6 +551,7 @@ class AdminPaymentListView(AdminAPIView):
         except (TypeError, ValueError):
             limit = 50
 
+        from content.storage_quota import STORAGE_ADDON
         from users.packs import get_topup_pack
         from users.plans import get_plan
 
@@ -558,8 +559,9 @@ class AdminPaymentListView(AdminAPIView):
         items = []
         for p in payments:
             is_topup = getattr(p, "payment_type", "subscription") == "topup"
+            is_storage = p.payment_type == "storage"
             pack_obj = get_topup_pack(p.pack) if is_topup else None
-            plan_obj = get_plan(p.plan) if not is_topup else None
+            plan_obj = get_plan(p.plan) if not (is_topup or is_storage) else None
             items.append(
                 {
                     **PaymentSerializer(p).data,
@@ -567,7 +569,9 @@ class AdminPaymentListView(AdminAPIView):
                     "plan": p.plan,
                     "pack": getattr(p, "pack", ""),
                     "planName": (
-                        pack_obj["name"]
+                        f"{STORAGE_ADDON['name']} (+{STORAGE_ADDON['gb']} GB)"
+                        if is_storage
+                        else pack_obj["name"]
                         if is_topup and pack_obj
                         else (plan_obj["name"] if plan_obj else p.plan or p.pack)
                     ),

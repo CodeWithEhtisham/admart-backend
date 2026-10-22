@@ -242,7 +242,7 @@ class PaymentSubmitSerializer(serializers.Serializer):
     DUPLICATE_TXN_ERROR = "This transaction ID has already been submitted."
 
     paymentType = serializers.ChoiceField(
-        choices=["subscription", "topup"], required=False, default="subscription"
+        choices=["subscription", "topup", "storage"], required=False, default="subscription"
     )
     plan = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
     pack = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
@@ -300,7 +300,11 @@ class PaymentSubmitSerializer(serializers.Serializer):
         pack = attrs.get("pack")
         payment_type = attrs.get("paymentType")
 
-        if pack or payment_type == "topup":
+        if payment_type == "storage":
+            from content.storage_quota import STORAGE_ADDON
+
+            attrs["pack"] = STORAGE_ADDON["id"]
+        elif pack or payment_type == "topup":
             if not pack:
                 raise serializers.ValidationError({"pack": self.PACK_ERROR})
             attrs["paymentType"] = "topup"

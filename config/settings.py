@@ -421,6 +421,8 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 # Folder of royalty-free music tracks (.mp3/.m4a/.wav) mixed under the voice. Empty folder = no music.
 AGENTS_MUSIC_DIR = os.getenv("AGENTS_MUSIC_DIR") or str(BASE_DIR / "agent_music")
 AGENTS_CAPTION_FONT = os.getenv("AGENTS_CAPTION_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+# Urdu Shorts: captions and thumbnail text (Debian/Ubuntu package fonts-noto-core).
+AGENTS_URDU_CAPTION_FONT = os.getenv("AGENTS_URDU_CAPTION_FONT", "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf")
 
 # Clip Maker (long video -> vertical clips). See agents/clips.py and docs/plans/2026-10-14-clip-maker-agent.md.
 # Transcription services tried in order: groq (free tier, GROQ_API_KEY), local (faster-whisper on this
@@ -457,6 +459,9 @@ REDIS_URL = os.getenv("REDIS_URL", "")
 if REDIS_URL:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
 USE_CELERY = os.getenv("USE_CELERY", "False").lower() in ("true", "1", "yes")
+# Local development: `manage.py runserver` also runs the agent runner (the work `run_agents_worker` does),
+# so agent runs never wait for a second process nobody started. On by default when DEBUG is on.
+AGENTS_RUNNER_WITH_RUNSERVER = os.getenv("AGENTS_RUNNER_WITH_RUNSERVER", str(DEBUG)).lower() in ("true", "1", "yes")
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_IGNORE_RESULT = True
@@ -470,4 +475,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "content.tasks.refresh_templates",
         "schedule": 60.0 * max(1, int(os.getenv("TEMPLATE_AUTO_REFRESH_MINUTES", "30") or 30)),
     },
+    # fal's unit prices into the shared snapshot that every process quotes from.
+    "fal-price-refresh": {"task": "content.tasks.refresh_fal_prices", "schedule": 6 * 60 * 60.0},
+    # fal models Admart does not offer yet, listed for staff review in the admin.
+    "fal-model-discovery": {"task": "content.tasks.discover_fal_models", "schedule": 24 * 60 * 60.0},
+    # Old Clip Maker sources, stale downloads, files of long-inactive free accounts.
+    "storage-cleanup": {"task": "content.tasks.clean_storage", "schedule": 24 * 60 * 60.0},
 }

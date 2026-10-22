@@ -7,7 +7,9 @@ an endpoint is enabled for users.
 
 from __future__ import annotations
 
+import logging
 import time
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -29,7 +31,6 @@ DEFAULT_STATUS = "active"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 CACHE_TTL_SECONDS = 15 * 60
-MERGE_TTL_SECONDS = 10 * 60
 
 IMAGE_CAPABILITY_CATEGORIES = {
     "textToImage": ("text-to-image",),
@@ -45,16 +46,9 @@ VIDEO_CAPABILITY_CATEGORIES = {
     "firstLastFrame": ("image-to-video",),
 }
 
-# Utility models that surface in shared provider categories but don't fit the
-# capability (e.g. background removers listed under image-to-image).
-_DISCOVERY_EXCLUDE_PATTERNS = {
-    "edit": ("birefnet", "background", "upscale", "segmentation", "seedvr"),
-    "multiEdit": ("birefnet", "background", "upscale", "segmentation", "seedvr"),
-    "imageToVideo": ("lipsync", "audio-to-video", "reference-to-video"),
-    "firstLastFrame": ("lipsync", "audio-to-video", "reference-to-video"),
-}
-
 _CACHE: dict[str, Any] = {}
+
+logger = logging.getLogger(__name__)
 
 
 class FalModelSearchError(RuntimeError):
@@ -303,142 +297,78 @@ def _label_from_id(endpoint_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Live provider catalog merge (curated + discovered)
+# New-model discovery for staff (never shown to users)
 # ---------------------------------------------------------------------------
-# Discovered models are exposed for visibility ("coming soon") while curated
-# catalogs stay authoritative for generation. Discovery entries carry live provider
-# pricing and are disabled unless a model has been curated/enabled.
 
-# Model-specific overrides so labels/strengths read naturally in the UI instead
-# of falling back to id-derived ones.
-_DISCOVERY_OVERRIDES: dict[str, dict[str, str]] = {
-    "fal-ai/flux-2-pro": {
-        "label": "Flux 2 Pro",
-        "strength": "Latest FLUX.2 — sharp text & editing",
-        "family": "flux",
-    },
-    "openai/gpt-image-2.5/flare/text-to-image": {
-        "label": "GPT Image 2.5 Flare",
-        "strength": "OpenAI's fast, high-quality default",
-        "family": "openai",
-    },
-    "openai/gpt-image-2.5/sunburst/text-to-image": {
-        "label": "GPT Image 2.5 Sunburst",
-        "strength": "OpenAI's creative-oriented variant",
-        "family": "openai",
-    },
-}
+DISCOVERY_CATEGORIES = ("text-to-image", "image-to-image", "text-to-video", "image-to-video")
+DISCOVERY_PAGES = 3  # up to 300 models per category, newest and most used first
+DISCOVER_EVERY = timedelta(days=1)
 
 
-def _discovery_entry_from_model(model: dict[str, Any]) -> dict[str, Any]:
-    """Build a UI catalog entry (same shape as curated entries) from a
-    normalized provider search item (as returned by ``search_fal_models``)."""
-    endpoint_id = model.get("id") or ""
-    overrides = _DISCOVERY_OVERRIDES.get(endpoint_id, {})
-    label = overrides.get("label") or model.get("label") or _label_from_id(endpoint_id)
-    family = overrides.get("family") or model.get("family") or _family_from_id(endpoint_id)
+def discover_new_models() -> list[str]:
+    """List fal's image/video models that Admart doesn't offer yet in FalModelListing.
 
-    entry: dict[str, Any] = {
-        "id": endpoint_id,
-        "label": label,
-        "family": family,
-        "default": False,
-        "enabled": True,
-        "source": "provider",
-        "strength": overrides.get("strength")
-        or (model.get("description") or "")[:120],
-    }
+    Returns the endpoint ids seen for the first time. Staff review them in the Django admin;
+    curated ids are skipped, and a listed model that has since been curated is marked "added".
+    """
+    from content.models import FalModelListing
 
-    pricing = model.get("pricing")
-    if pricing:
-        entry["pricing"] = pricing
-    return entry
-
-
-def _merged_discovery(
-    *,
-    capability_categories: dict[str, tuple[str, ...]],
-    enabled_catalog: dict[str, list[dict[str, Any]]],
-    cache_key: str,
-    limit_per_capability: int,
-) -> dict[str, list[dict[str, Any]]]:
-    """Fetch the provider's live catalog grouped per capability (cached)."""
-    cached = _CACHE.get(cache_key)
-    now = time.monotonic()
-    if cached and now < cached["expires_at"]:
-        return cached["data"]
-
-    enabled_ids = _catalog_ids(enabled_catalog)
-    merged: dict[str, list[dict[str, Any]]] = {}
-    attempted = 0
-    succeeded = 0
-    for capability, categories in capability_categories.items():
-        exclude = _DISCOVERY_EXCLUDE_PATTERNS.get(capability)
-        seen: dict[str, dict[str, Any]] = {}
-        for category in categories:
-            attempted += 1
+    curated = _catalog_ids(MODEL_CATALOG) | _catalog_ids(VIDEO_MODEL_CATALOG)
+    found: dict[str, dict[str, Any]] = {}
+    for category in DISCOVERY_CATEGORIES:
+        cursor = ""
+        for _ in range(DISCOVERY_PAGES):
             try:
-                result = search_fal_models(
-                    category=category,
-                    status=DEFAULT_STATUS,
-                    limit=limit_per_capability,
-                    include_pricing=True,
-                )
-            except FalModelSearchError:
-                continue
-            succeeded += 1
-            for item in result["items"]:
-                if item["id"] in enabled_ids or item["id"] in seen:
-                    continue
-                if exclude and any(pat in item["id"] for pat in exclude):
-                    continue
-                seen[item["id"]] = _discovery_entry_from_model(item)
-        merged[capability] = list(seen.values())[:limit_per_capability]
+                data = _request_models(q="", category=category, status=DEFAULT_STATUS, limit=MAX_LIMIT,
+                                       cursor=cursor, expand="")
+            except FalModelSearchError as exc:
+                logger.warning("fal model list unavailable for %s: %s", category, exc.__cause__ or exc)
+                break
+            for model in data.get("models") or []:
+                endpoint_id = str(model.get("endpoint_id") or "").strip()
+                if endpoint_id:
+                    found.setdefault(endpoint_id, {**model, "category": category})
+            cursor = data.get("next_cursor") or ""
+            if not data.get("has_more") or not cursor:
+                break
 
-    if attempted and not succeeded:
-        raise FalModelSearchError("provider model discovery failed for all categories")
-
-    _CACHE[cache_key] = {
-        "expires_at": now + MERGE_TTL_SECONDS,
-        "data": merged,
-    }
-    return merged
-
-def merged_image_catalog(
-    *, include_discovery: bool = True, limit_per_capability: int = 12
-) -> dict[str, list[dict[str, Any]]]:
-    """Curated image catalog plus live provider models grouped per capability."""
-
-    payload = {cap: list(models) for cap, models in MODEL_CATALOG.items()}
-    if not include_discovery:
-        return payload
-
-    merged = _merged_discovery(
-        capability_categories=IMAGE_CAPABILITY_CATEGORIES,
-        enabled_catalog=MODEL_CATALOG,
-        cache_key="merged_image",
-        limit_per_capability=limit_per_capability,
-    )
-    for capability, discovered in merged.items():
-        payload[capability] = payload.get(capability, []) + discovered
-    return payload
+    FalModelListing.objects.filter(endpoint_id__in=curated).exclude(status="added").update(status="added")
+    candidates = {mid: model for mid, model in found.items() if mid not in curated}
+    prices = get_fal_prices(list(candidates)) if candidates else {}
+    now = timezone.now()
+    existing = set(FalModelListing.objects.filter(endpoint_id__in=candidates).values_list("endpoint_id", flat=True))
+    new_ids: list[str] = []
+    for endpoint_id, model in candidates.items():
+        metadata = model.get("metadata") or {}
+        price = prices.get(endpoint_id) or {}
+        fields = {
+            "label": (metadata.get("display_name") or _label_from_id(endpoint_id))[:200],
+            "category": metadata.get("category") or model["category"],
+            "description": metadata.get("description") or "",
+            "model_url": (metadata.get("model_url") or "")[:300],
+            "unit_price": Decimal(str(price["unit_price"])) if price.get("unit_price") is not None else None,
+            "unit": str(price.get("unit") or ""),
+            "last_seen": now,
+        }
+        if endpoint_id in existing:
+            FalModelListing.objects.filter(endpoint_id=endpoint_id).update(**fields)
+        else:
+            FalModelListing.objects.create(endpoint_id=endpoint_id, first_seen=now, **fields)
+            new_ids.append(endpoint_id)
+    if new_ids:
+        logger.info("New fal models to review: %s", ", ".join(new_ids))
+    return new_ids
 
 
-def merged_video_catalog(
-    *, include_discovery: bool = True, limit_per_capability: int = 12
-) -> dict[str, list[dict[str, Any]]]:
-    """Curated video catalog plus live provider models grouped per capability."""
+def discover_if_stale(max_age: timedelta = DISCOVER_EVERY) -> list[str] | None:
+    """Run discovery when the newest listing is older than ``max_age`` (and a FAL_KEY is set)."""
+    if not getattr(settings, "FAL_KEY", ""):
+        return None
+    from django.db.models import Max
 
-    payload = {cap: list(models) for cap, models in VIDEO_MODEL_CATALOG.items()}
-    if not include_discovery:
-        return payload
+    from content.models import FalModelListing
 
-    merged = _merged_discovery(
-        capability_categories=VIDEO_CAPABILITY_CATEGORIES,
-        enabled_catalog=VIDEO_MODEL_CATALOG,
-        cache_key="merged_video",
-        limit_per_capability=limit_per_capability,
-    )
-    for capability, discovered in merged.items():
-        payload[capability] = payload.get(capability, []) + discovered
-    return payload
+    newest = FalModelListing.objects.aggregate(newest=Max("last_seen"))["newest"]
+    if newest is not None and newest > timezone.now() - max_age:
+        return None
+    return discover_new_models()

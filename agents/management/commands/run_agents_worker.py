@@ -6,8 +6,11 @@ from django.db import DatabaseError, close_old_connections
 
 from agents.engine import beat, claim_next, process
 from agents.runs import run_due
+from content import fal_models, pricing
 
 SCHEDULE_EVERY = 30  # seconds between Autopilot checks
+PRICES_EVERY = 30 * 60  # seconds between checks that fal's price snapshot is fresh (refreshed when 6 h old)
+# and that the list of new fal models is fresh (checked once a day)
 BEAT_EVERY = 10  # seconds between heartbeats (the page shows the runner offline after 60 s without one)
 
 logger = logging.getLogger("agents.worker")
@@ -24,7 +27,18 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         last_schedule = last_beat = 0.0
+        last_prices = float("-inf")
         while True:
+            if not options["once"] and time.monotonic() - last_prices >= PRICES_EVERY:
+                last_prices = time.monotonic()
+                try:
+                    pricing.refresh_prices_if_stale()
+                except Exception as exc:  # prices must never stop the worker
+                    logger.warning("fal price refresh failed, keeping the last known prices: %s", exc)
+                try:
+                    fal_models.discover_if_stale()
+                except Exception as exc:  # nor must the new-model check
+                    logger.warning("fal new-model check failed: %s", exc)
             if time.monotonic() - last_beat >= BEAT_EVERY:
                 beat()
                 last_beat = time.monotonic()

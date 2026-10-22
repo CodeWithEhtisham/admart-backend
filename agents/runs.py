@@ -18,6 +18,8 @@ from agents.registry import MAX_TEXT_INPUT, MAX_VIDEO_SECONDS, estimate_credits,
 from agents.video_edit import asset_file, probe
 from content.credits import InsufficientCredits, reserve_credits
 from content.models import LibraryAsset
+from content.storage_quota import storage_problem
+from users import entitlements
 
 OPEN_STATUSES = ("queued", "running")
 MAX_OPEN_RUNS = 3  # per deployment, so a double-click can't queue (and charge) a pile of runs
@@ -30,9 +32,10 @@ VIDEO_CANDIDATES = 10  # newest unused Library videos checked per scheduled vide
 class RunRefused(Exception):
     """A run can't start; message is safe to show users."""
 
-    def __init__(self, message: str, code: str = "INVALID", credits: Decimal | None = None):
+    def __init__(self, message: str, code: str = "INVALID", credits: Decimal | None = None,
+                 required_plan: str | None = None):
         super().__init__(message)
-        self.message, self.code, self.credits = message, code, credits
+        self.message, self.code, self.credits, self.required_plan = message, code, credits, required_plan
 
 
 def month_spend(deployment: AgentDeployment) -> Decimal:
@@ -45,13 +48,19 @@ def month_spend(deployment: AgentDeployment) -> Decimal:
     return total or Decimal("0")
 
 
-def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
+def start_run(deployment: AgentDeployment, run_input: dict, scheduled: bool = False) -> AgentRun:
     """Check limits, reserve credits and queue a run. Raises RunRefused."""
     spec = get_agent(deployment.agent_type)
     if spec is None:
         raise RunRefused("This agent is no longer available.")
     if deployment.status != "active":
         raise RunRefused("This agent is paused. Resume it to run.", "AGENT_PAUSED")
+    problem = entitlements.agent_problem(deployment.user, deployment.agent_type, spec.name)
+    if problem:
+        raise RunRefused(problem.message, "PLAN_REQUIRED", required_plan=problem.plan_id)
+    full = storage_problem(deployment.user)
+    if full:
+        raise RunRefused(full.message, "STORAGE_FULL")
     open_runs = deployment.runs.filter(status__in=OPEN_STATUSES).exclude(status="queued", step="wait")  # scheduled
     if open_runs.count() >= MAX_OPEN_RUNS:
         raise RunRefused("This agent already has jobs in progress. Wait for one to finish.", "AGENT_BUSY")
@@ -68,6 +77,8 @@ def start_run(deployment: AgentDeployment, run_input: dict) -> AgentRun:
         project=deployment.project,
         user=deployment.user,
         input=run_input,
+        scheduled=scheduled,
+        priority=entitlements.has_priority(deployment.user),
         credits_reserved=credits,
         topup_reserved=topup,
     )
@@ -186,10 +197,14 @@ def run_due(now: datetime | None = None) -> int:
         deployment.refresh_from_db()
         queue = list(deployment.topic_queue or [])
         try:
+            problem = entitlements.schedule_problem(deployment.user, deployment, earlier_only=True)
+            if problem:
+                raise RunRefused(problem.short, "NO_INPUT")
             run_input, pops = _scheduled_input(deployment, spec, every)
-            start_run(deployment, run_input)
+            start_run(deployment, run_input, scheduled=True)
         except RunRefused as refused:
-            note = ("not enough credits" if refused.code == "INSUFFICIENT_CREDITS" else refused.message
+            note = ("not enough credits" if refused.code == "INSUFFICIENT_CREDITS"
+                    else "storage is full" if refused.code == "STORAGE_FULL" else refused.message
                     if refused.code == "NO_INPUT" else refused.message.rstrip(".").lower())
             when = timezone.localtime(now, ZoneInfo(deployment.schedule.get("tz") or "UTC")).strftime("%a %d %b %H:%M")
             AgentDeployment.objects.filter(id=deployment.id).update(autopilot_note=f"Skipped {when}: {note}."[:200])

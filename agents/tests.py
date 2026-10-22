@@ -23,7 +23,7 @@ from agents.registry import BUILTIN_AGENTS, estimate_credits, validate_recipe
 from projects.models import Project
 
 User = get_user_model()
-NO_PRICES = patch("agents.registry.get_fal_prices", return_value={})
+NO_PRICES = patch("content.pricing.get_fal_prices", return_value={})
 # Tests never depend on the developer's .env. Real (non-dry) mode with fake keys (every HTTP call
 # is patched), no stock, no music.
 HERMETIC = {
@@ -113,8 +113,9 @@ class CleanScriptTests(SimpleTestCase):
     def test_captions_highlight_the_spoken_word_and_strip_ass_codes(self) -> None:
         scenes = [{"duration": 2.0, "words": render.estimate_word_times("hi {bad} there", 2.0)},
                   {"duration": 1.0, "words": [{"word": "next", "start": 0.0, "end": 1.0}]}]
-        ass = render.build_captions(scenes, "#FF5500")
-        self.assertIn("{\\c&H000055FF}hi{\\c&H00FFFFFF&} bad there", ass)
+        ass = render.build_captions(scenes, "#FFD400")
+        # English captions are upper case; the spoken word is in the brand colour and pops a little bigger.
+        self.assertRegex(ass, r"\{\\c&H0000D4FF&[^}]*\\t\([^}]*\}HI\{[^}]*\} BAD THERE")
         self.assertNotIn("{bad}", ass)
         self.assertIn("Dialogue: 0,0:00:02.00,", ass)  # second scene is offset by the first
 
@@ -202,8 +203,9 @@ class DryRunPipelineTests(_AgentAPITestCase):
     def _work(self):
         call_command("run_agents_worker", "--once", stdout=MagicMock())
 
-    def test_shorts_run_with_every_checkpoint(self) -> None:
-        deployment = self.deploy(config={"style": "anime"})
+    def test_shorts_run_with_the_script_check(self) -> None:
+        # One check, at the script: the idea, script and caption on one screen, before anything is paid for.
+        deployment = self.deploy(config={"style": "anime", "checkpoints": "script"})
         response = self.start(deployment)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         self.assertEqual(response.data["credits"], "0")
@@ -211,17 +213,19 @@ class DryRunPipelineTests(_AgentAPITestCase):
 
         self._work()
         run = AgentRun.objects.get(id=run_id)
-        self.assertEqual((run.status, run.step), ("needs_review", "concept"), run.error)
+        self.assertEqual((run.status, run.step), ("needs_review", "script"), run.error)
         self.assertEqual(len(run.output["concepts"]), 3)
+        self.assertEqual(run.output["concept"], run.output["concepts"][0])
         self.assertIn("research", run.output)
 
-        self.assertEqual(self._action(deployment, run_id, "continue", {"index": 7}).status_code, 400)
-        self._action(deployment, run_id, "continue", {"index": 1, "hook": "My own hook."})
+        # "Use this idea instead": a new script for another idea, then the same check again.
+        self.assertEqual(self._action(deployment, run_id, "continue", {"concept": 7}).status_code, 400)
+        self.assertEqual(self._action(deployment, run_id, "continue", {"concept": 1}).status_code, 200)
         self._work()
         run.refresh_from_db()
-        self.assertEqual((run.status, run.step), ("needs_review", "script"))
-        self.assertEqual(run.output["concept"]["hook"], "My own hook.")
-        self.assertIn("score", run.output["concept"])  # rewritten hooks are scored again
+        self.assertEqual((run.status, run.step), ("needs_review", "script"), run.error)
+        self.assertEqual(run.output["concept"]["title"], run.output["concepts"][1]["title"])
+        self.assertIn(run.output["concepts"][1]["title"][:20], run.output["title"])
 
         edited = {
             "title": "Edited title",
@@ -232,29 +236,51 @@ class DryRunPipelineTests(_AgentAPITestCase):
         self._action(deployment, run_id, "continue", edited)
         self._work()
         run.refresh_from_db()
-        self.assertEqual((run.status, run.step), ("needs_review", "storyboard"))
+        self.assertEqual((run.status, run.step), ("needs_review", "final"), run.error)  # no storyboard stop
+        self.assertLess(run.attempts, 2)  # checkpoint resumes don't count as retries
         self.assertEqual(len(run.output["scenes"]), 3)
         self.assertTrue(all(s["image"] and s["audio"] and s["words"] for s in run.output["scenes"]))
-        first_image = run.output["scenes"][0]["image"]
-
-        self.assertEqual(self._action(deployment, run_id, "regenerate", {"scene": 0, "prompt": "a red cup"}).status_code, 200)
-        self._work()
-        run.refresh_from_db()
-        self.assertEqual(run.step, "storyboard")
-        self.assertEqual(run.output["scenes"][0]["image_prompt"], "a red cup")
-        self.assertTrue(run.output["scenes"][0]["image"])
-
-        self._action(deployment, run_id, "continue")
-        self._work()
-        run.refresh_from_db()
-        self.assertEqual((run.status, run.step), ("needs_review", "final"), run.error)
-        self.assertLess(run.attempts, 2)  # checkpoint resumes don't count as retries
         video = Path(self.media) / run.output["video"]
         self.assertGreater(render.duration_of(video), 3)
         self.assertIn("No black frames", run.output["checks"])
         self.assertEqual(run.output["title"], "Edited title")
         self.assertEqual(run.library_asset.media_type, "video")
-        self.assertIsNotNone(first_image)
+
+    def test_older_every_checkpoint_setting_now_means_the_script_check(self) -> None:
+        deployment = self.deploy(config={"checkpoints": "all"})
+        run_id = self.start(deployment).data["id"]
+        self._work()
+        self.assertEqual(AgentRun.objects.get(id=run_id).step, "script")
+
+    def test_scheduled_runs_never_wait_at_a_check(self) -> None:
+        from agents.runs import start_run
+
+        deployment = self.deploy(config={"checkpoints": "script"})
+        run = start_run(deployment, {"topic": "coffee facts"}, scheduled=True)
+        self._work()
+        run.refresh_from_db()
+        self.assertTrue(run.scheduled)
+        self.assertEqual((run.status, run.step), ("needs_review", "final"), run.error)  # still approved before posting
+
+    def test_a_run_waiting_for_the_user_sends_one_email_per_stop(self) -> None:
+        from django.core import mail
+
+        deployment = self.deploy(config={"checkpoints": "script"})
+        run_id = self.start(deployment).data["id"]
+        self._work()
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("script", mail.outbox[0].subject.lower())
+        self.assertEqual(mail.outbox[0].to, [self.user.email])
+        self.assertIn(f"/agents/{deployment.id}?run={run_id}", mail.outbox[0].body)
+
+        self._action(deployment, run_id, "continue", {"concept": 1})  # the user is here: no second script email
+        self._work()
+        self.assertEqual(len(mail.outbox), 1)
+
+        self._action(deployment, run_id, "continue")
+        self._work()
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertIn("ready", mail.outbox[1].subject.lower())
 
         detail = self.client.get(
             reverse("agent_run", kwargs={"project_id": self.project.id, "deployment_id": deployment.id, "run_id": run_id})
@@ -509,6 +535,24 @@ class AgentAPITests(_AgentAPITestCase):
         shorts = next(a for a in data if a["slug"] == "youtube-shorts")
         self.assertIn("Script Writer", shorts["uses"])
 
+    def test_my_agents_list_says_what_each_agent_last_did(self) -> None:
+        idle = self.deploy("voiceover")
+        busy = self.deploy()
+        AgentRun.objects.create(
+            deployment=busy, project=self.project, user=self.user, status="running", step="script",
+            input={"topic": "coffee facts"},
+        )
+        rows = {r["id"]: r for r in self.client.get(reverse("agent_deployments", kwargs={"project_id": self.project.id})).data}
+        self.assertIsNone(rows[str(idle.id)]["latestRun"])
+        latest = rows[str(busy.id)]["latestRun"]
+        self.assertEqual((latest["status"], latest["step"], latest["title"]), ("running", "script", "coffee facts"))
+
+    def test_catalog_offers_english_and_urdu_voices(self) -> None:
+        shorts = next(a for a in self.client.get(reverse("agent_catalog")).data if a["slug"] == "youtube-shorts")
+        self.assertEqual([lang["id"] for lang in shorts["languages"]], ["en", "ur"])
+        languages = {v["id"]: v["language"] for v in shorts["voices"]}
+        self.assertEqual((languages["heart"], languages["ur-kore"]), ("en", "ur"))
+
     def test_unknown_agent_and_bad_limit_are_rejected(self) -> None:
         url = reverse("agent_deployments", kwargs={"project_id": self.project.id})
         self.assertEqual(self.client.post(url, {"agentType": "hack"}, format="json").status_code, 400)
@@ -559,11 +603,24 @@ class AgentAPITests(_AgentAPITestCase):
             self.assertEqual(self.start(deployment).status_code, 201)
         self.assertEqual(self.start(deployment).data["code"], "AGENT_BUSY")
 
-    def test_cannot_remove_agent_with_open_runs(self) -> None:
+    def test_removing_an_agent_cancels_its_waiting_runs_and_refunds(self) -> None:
         deployment = self.deploy()
-        self.start(deployment)
+        self.user.refresh_from_db()
+        before = self.user.credits_remaining
+        self.assertEqual(self.start(deployment).status_code, 201)
+        url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
+        self.assertEqual(self.client.delete(url).status_code, 204)
+        self.assertFalse(AgentDeployment.objects.filter(id=deployment.id).exists())
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, before)
+
+    def test_cannot_remove_agent_while_it_is_posting(self) -> None:
+        deployment = self.deploy()
+        run_id = self.start(deployment).data["id"]
+        AgentRun.objects.filter(id=run_id).update(status="running", step="post")
         url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
         self.assertEqual(self.client.delete(url).data["code"], "AGENT_BUSY")
+        self.assertTrue(AgentDeployment.objects.filter(id=deployment.id).exists())
 
     def test_discard_at_an_early_checkpoint_refunds(self) -> None:
         deployment = self.deploy()
@@ -1110,6 +1167,11 @@ class CrossPosterTests(_AgentAPITestCase):
         self.assertEqual(self.calls[0][1]["caption"], "My clip")
 
     def test_scheduling_needs_the_plan(self) -> None:
+        from admin_panel.models import PlanDefinition
+
+        basic = PlanDefinition.objects.get(plan_id="basic")  # every plan with the Cross-poster schedules posts
+        basic.limits = {**basic.limits, "can_schedule_publishing": False}  # unless an admin turns it off
+        basic.save()
         self.user.plan = "basic"
         self.user.save()
         deployment, run = self._to_review()
@@ -1532,8 +1594,10 @@ class ClipHelperTests(SimpleTestCase):
     def test_length_limit_depends_on_the_plan(self) -> None:
         from agents import clips
 
-        self.assertEqual(clips.max_seconds(MagicMock(plan="free")), 30 * 60)
-        self.assertEqual(clips.max_seconds(MagicMock(plan="plus")), 2 * 60 * 60)
+        with patch("users.plans._load_db_plans", return_value=None):  # the built-in plans
+            self.assertEqual(clips.max_seconds(MagicMock(plan="free")), 30 * 60)  # no Clip Maker: the free length
+            self.assertEqual(clips.max_seconds(MagicMock(plan="basic")), 60 * 60)
+            self.assertEqual(clips.max_seconds(MagicMock(plan="plus")), 2 * 60 * 60)
 
 
 @override_settings(**HERMETIC, GROQ_API_KEY="g", CLIPS_TRANSCRIBE_PROVIDERS="groq,local,fal")
@@ -2425,8 +2489,8 @@ class ModelChoiceAPITests(_AgentAPITestCase):
         credits = {m["id"]: Decimal(m["creditsPerRun"]) for m in data["modelChoices"]["text"]}
         self.assertEqual(credits[STRONG], expected)
         self.assertGreater(credits[STRONG], credits[CHEAP])
-        self.assertTrue(all(set(m) == {"id", "label", "strength", "creditsPerRun"}
-                            for m in data["modelChoices"]["text"] + data["modelChoices"]["image"]))
+        self.assertTrue(all(set(m) == {"id", "label", "strength", "creditsPerRun", "fee"} for m in data["modelChoices"]["text"]))
+        self.assertTrue(all(set(m) == {"id", "label", "strength", "creditsPerRun"} for m in data["modelChoices"]["image"]))
 
     def test_only_the_models_an_agent_uses_are_offered(self) -> None:
         voice = self.client.get(self.url(self.deploy("voiceover"))).data
@@ -2507,6 +2571,12 @@ class ScheduleModeTests(SimpleTestCase):
 
 class ScheduleEveryAgentTests(_AgentAPITestCase):
     DAILY = {"mode": "daily", "time": "09:00", "tz": "UTC"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        User.objects.filter(id=self.user.id).update(plan="pro")  # schedules every agent: more than Plus's 3
+        self.user.refresh_from_db()
+        self.client.force_authenticate(user=self.user)
 
     def patch(self, deployment, **payload):
         url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
@@ -2699,3 +2769,156 @@ class ProviderErrorMessageTests(SimpleTestCase):
 
     def test_any_other_failure_keeps_the_general_message(self) -> None:
         self.assertEqual(self.failure(ValueError("x")), "The voice service (fal) failed. Please try again later.")
+
+
+class UrduTests(SimpleTestCase):
+    """Urdu Shorts: Gemini TTS voices, an Urdu script, Urdu caption timing and an Urdu caption font."""
+
+    def test_urdu_picks_a_gemini_voice_and_english_keeps_kokoro(self) -> None:
+        from agents.registry import VOICES, language_of, voice_settings
+
+        self.assertEqual(language_of({"language": "ur"}), "ur")
+        self.assertEqual(language_of({"language": "xx"}), "en")
+        self.assertEqual(voice_settings({"language": "ur", "voice": "heart"})[0], VOICES["ur-kore"])
+        self.assertEqual(voice_settings({"language": "ur", "voice": "ur-puck"})[0], VOICES["ur-puck"])
+        self.assertEqual(voice_settings({"voice": "ur-puck"})[0], VOICES["heart"])
+
+    @override_settings(FAL_KEY="k")
+    def test_urdu_speech_uses_gemini_tts_in_urdu(self) -> None:
+        from agents.registry import VOICES
+
+        with patch.object(providers, "_fal", return_value={"audio": {"url": "u"}}) as fal, \
+                patch.object(providers, "_download", return_value=MagicMock(content=b"mp3")), \
+                patch.object(providers, "_to_mp3", side_effect=lambda b: b):
+            self.assertEqual(providers.speech("سلام", VOICES["ur-kore"], 1.12), b"mp3")
+        model, args = fal.call_args.args
+        self.assertEqual(model, providers.GEMINI_TTS)
+        self.assertEqual((args["prompt"], args["voice"], args["language_code"]), ("سلام", "Kore", "Urdu (Pakistan)"))
+        self.assertIn("brisk", args["style_instructions"])
+
+    def test_urdu_script_is_asked_for_in_urdu_script(self) -> None:
+        lines = steps._style_lines(MagicMock(deployment=MagicMock(config={"language": "ur"})))
+        self.assertIn("Urdu script", lines)
+        self.assertNotIn("Urdu", steps._style_lines(MagicMock(deployment=MagicMock(config={}))))
+
+    def test_urdu_captions_use_an_urdu_font(self) -> None:
+        scenes = [{"duration": 1.0, "words": [{"word": "سلام", "start": 0.0, "end": 1.0}]}]
+        self.assertIn("Style: Cap,Noto Naskh Arabic,", render.build_captions(scenes, "#FF5500", language="ur"))
+        self.assertIn("Style: Cap,Montserrat ExtraBold,", render.build_captions(scenes, "#FF5500"))
+        self.assertTrue(Path(render.caption_font("en")[1]).exists())  # the font ships with the code
+
+    def test_right_to_left_captions_keep_word_order_when_one_word_is_highlighted(self) -> None:
+        # libass lays the runs between colour tags out left to right, so Urdu goes in as [after][word][before].
+        self.assertEqual(render.line_with_highlight(["a", "b", "c"], 1, "<", ">", rtl=True), "c <b> a")
+        self.assertEqual(render.line_with_highlight(["a", "b", "c"], 1, "<", ">", rtl=False), "a <b> c")
+        self.assertTrue(render.is_rtl(["دو", "ہزار"]))
+        self.assertFalse(render.is_rtl(["two", "thousand"]))
+        words = [{"word": w, "start": i * 0.5, "end": i * 0.5 + 0.5} for i, w in enumerate(["دو", "ہزار", "چوبیس"])]
+        ass = render.build_captions([{"duration": 1.5, "words": words}], "#FFD400", language="ur")
+        self.assertRegex(ass, r",,چوبیس \{\\c&H0000D4FF&[^}]*\}ہزار\{[^}]*\} دو")
+
+    @override_settings(FAL_KEY="k")
+    def test_word_times_listen_for_the_given_language(self) -> None:
+        with patch.object(providers, "_fal", return_value={"chunks": []}) as fal:
+            providers.word_times(Path(__file__), language="ur")
+        self.assertEqual(fal.call_args.args[1]["language"], "ur")
+
+
+class DevRunnerTests(SimpleTestCase):
+    """`manage.py runserver` starts the agent runner too, so local runs never wait for a runner nobody started."""
+
+    def test_starts_only_in_the_serving_runserver_process(self) -> None:
+        from agents.apps import starts_runner
+
+        on = {"AGENTS_RUNNER_WITH_RUNSERVER": True, "USE_CELERY": False}
+        self.assertTrue(starts_runner(["manage.py", "runserver"], {"RUN_MAIN": "true"}, **on))
+        self.assertTrue(starts_runner(["manage.py", "runserver", "--noreload"], {}, **on))
+        # The autoreloader's parent process only watches files; its child serves (and runs agents).
+        self.assertFalse(starts_runner(["manage.py", "runserver"], {}, **on))
+        self.assertFalse(starts_runner(["manage.py", "migrate"], {"RUN_MAIN": "true"}, **on))
+        self.assertFalse(starts_runner(["manage.py", "runserver"], {"RUN_MAIN": "true"},
+                                       AGENTS_RUNNER_WITH_RUNSERVER=False, USE_CELERY=False))
+        self.assertFalse(starts_runner(["manage.py", "runserver"], {"RUN_MAIN": "true"},
+                                       AGENTS_RUNNER_WITH_RUNSERVER=True, USE_CELERY=True))
+
+
+class TextModelFeeTests(_AgentAPITestCase):
+    """Text models are priced in groups: fast ones are included, smarter ones add a flat fee per run."""
+
+    def _estimate(self, model: str, agent: str = "youtube-shorts", run_input: dict | None = None) -> Decimal:
+        return estimate_credits(BUILTIN_AGENTS[agent], run_input or {"topic": "x"}, {"models": {"text": model}})
+
+    def test_each_model_has_a_fee_group(self) -> None:
+        from agents.ai_models import text_fee
+
+        self.assertEqual(text_fee("nvidia/nemotron-3-super-120b-a12b:free"), Decimal("0"))
+        self.assertEqual(text_fee("qwen/qwen3.7-flash"), Decimal("0"))
+        self.assertEqual(text_fee("deepseek/deepseek-v4-pro"), Decimal("0.05"))
+        self.assertEqual(text_fee("anthropic/claude-sonnet-5.5"), Decimal("0.25"))
+        self.assertEqual(text_fee("openai/gpt-5.5"), Decimal("0.50"))
+
+    def test_a_smarter_writer_adds_its_flat_fee_to_the_run(self) -> None:
+        free = self._estimate("nvidia/nemotron-3-super-120b-a12b:free")
+        self.assertEqual(self._estimate("anthropic/claude-sonnet-5.5") - free, Decimal("0.25"))
+        self.assertEqual(self._estimate("openai/gpt-5.5") - free, Decimal("0.50"))
+
+    def test_long_jobs_pay_the_fee_for_every_three_text_calls(self) -> None:
+        from agents.ai_models import text_credits
+
+        self.assertEqual(text_credits("anthropic/claude-sonnet-5.5", 3), Decimal("0.25"))
+        self.assertEqual(text_credits("anthropic/claude-sonnet-5.5", 4), Decimal("0.50"))
+        self.assertEqual(text_credits("qwen/qwen3.7-flash", 9), Decimal("0"))
+
+    def test_the_fee_never_falls_below_real_cost_with_markup(self) -> None:
+        from agents.ai_models import text_credits
+
+        with patch("agents.ai_models.text_call_usd", return_value=Decimal("1")):  # a model that got expensive
+            self.assertGreater(text_credits("anthropic/claude-sonnet-5.5", 3), Decimal("4.5"))
+
+    def test_model_choices_show_each_fee(self) -> None:
+        deployment = self.deploy()
+        url = reverse("agent_deployment", kwargs={"project_id": self.project.id, "deployment_id": deployment.id})
+        fees = {m["id"]: m["fee"] for m in self.client.get(url).data["modelChoices"]["text"]}
+        self.assertEqual((fees["qwen/qwen3.7-flash"], fees["openai/gpt-5.5"]), ("0", "0.50"))
+
+    def test_the_real_text_cost_of_each_run_is_recorded(self) -> None:
+        response = MagicMock(ok=True)
+        response.json.return_value = {"choices": [{"message": {"content": "hi"}}], "usage": {"cost": 0.0123}}
+        providers.track()
+        with patch("agents.providers.requests.post", return_value=response) as post:
+            providers._openrouter("sys", "user", False, False, 0.5)
+        self.assertEqual(post.call_args.kwargs["json"]["usage"], {"include": True})
+        self.assertEqual(providers.text_spent(), Decimal("0.0123"))
+        run = MagicMock(output={})
+        engine._log(run, "script", timezone.now(), ["openrouter"], Decimal("0.0123"))
+        engine._log(run, "concepts", timezone.now(), ["openrouter"], Decimal("0.0007"))
+        self.assertEqual(run.output["textUsd"], "0.0130")
+
+
+class CaptionLookTests(SimpleTestCase):
+    """Shorts subtitles: short lines that fit the screen, and an option to leave them out."""
+
+    def test_lines_stay_short_enough_to_fit(self) -> None:
+        words = [{"word": w, "start": i, "end": i + 1} for i, w in enumerate("Millions of stalls feed families".split())]
+        lines = [" ".join(w["word"] for w in g) for g in render.caption_groups(words, "en")]
+        self.assertEqual(lines, ["Millions of", "stalls feed", "families"])
+        self.assertTrue(all(len(line) <= render.CAPTION_CHARS["en"] for line in lines))
+
+    def test_subtitles_can_be_turned_off(self) -> None:
+        from agents.registry import captions_on
+
+        self.assertTrue(captions_on({}))
+        self.assertFalse(captions_on({"captions": False}))
+        run = MagicMock(output={"scenes": [{"audio": "a.mp3", "narration": "hi there", "duration": 1.0}]},
+                        deployment=MagicMock(config={"captions": False}))
+        with patch.object(providers, "word_times") as timing:
+            steps.step_captions(run)
+        timing.assert_not_called()  # no paid word timing for subtitles nobody sees
+        self.assertEqual(run.output["scenes"][0]["words"], [])
+
+    def test_a_dark_brand_colour_is_lightened_so_the_spoken_word_stays_readable(self) -> None:
+        self.assertEqual(render.caption_highlight("#FFD400"), "#FFD400")  # bright: used as it is
+        light = render.caption_highlight("#1E3A8A")  # dark navy
+        r, g, b = (int(light[i:i + 2], 16) for i in (1, 3, 5))
+        self.assertGreater(0.299 * r + 0.587 * g + 0.114 * b, 150)
+        self.assertGreater(b, r)  # still the brand's hue

@@ -88,6 +88,8 @@ class AgentRun(models.Model):
     credits_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     topup_reserved = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     error = models.TextField(blank=True, default="")
+    scheduled = models.BooleanField(default=False)  # started by the agent's schedule: never waits at a check
+    priority = models.BooleanField(default=False)  # the owner's plan has the priority queue: taken first
     attempts = models.PositiveSmallIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)

@@ -19,7 +19,9 @@ from django.utils import timezone
 from agents import hooks, providers, render
 from agents.ai_models import chosen_models
 from agents.models import AgentRun
-from agents.registry import IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, get_agent, voice_settings
+from agents.registry import (
+    IMAGE_HEIGHT, IMAGE_WIDTH, LENGTHS, STYLES, TONES, captions_on, get_agent, language_of, voice_settings,
+)
 from agents.trends import REGIONS, TREND_TOPICS, WINDOW_DAYS, WINDOWS, collect_signals
 from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
@@ -172,8 +174,9 @@ def _topic(run) -> str:
 
 
 def _checkpoints(run) -> bool:
-    """Pause at concept/script/storyboard unless the user chose 'final review only'."""
-    return _config(run).get("checkpoints", "all") != "final"
+    """Pause at the agent's check (the Shorts script, the Clip Maker's clips, the Video Editor's cut)
+    unless the user chose 'final review only'. Scheduled runs never wait: they go to the final review."""
+    return _config(run).get("checkpoints", "all") != "final" and not run.scheduled
 
 
 def _brand_lines(run) -> str:
@@ -187,12 +190,21 @@ def _brand_lines(run) -> str:
     )
 
 
+def _language_line(run) -> str:
+    """How to write for an Urdu Short (empty for English, the default)."""
+    if language_of(_config(run)) != "ur":
+        return ""
+    return ("Language: Urdu. Write every title, hook, narration, description, thumbnail_text and tag in Urdu script "
+            "(اردو), never Roman Urdu, in natural spoken Pakistani Urdu. Keep stock_query and image_prompt in English.\n")
+
+
 def _style_lines(run) -> str:
-    """Tone and length the user picked for this agent."""
+    """Tone, length and language the user picked for this agent."""
     config = _config(run)
     tone = TONES.get(config.get("tone"))
     seconds = config.get("length") if config.get("length") in LENGTHS else 45
-    return (f"Tone: {tone[1]}\n" if tone else "") + f"Length: about {seconds} seconds, at most {_word_limit(run)} words of narration\n"
+    return ((f"Tone: {tone[1]}\n" if tone else "") + f"Length: about {seconds} seconds, at most {_word_limit(run)} words of narration\n"
+            + _language_line(run))
 
 
 # ── pre-production ────────────────────────────────────────────────────────
@@ -351,20 +363,18 @@ def step_concepts(run) -> None:
         }
     else:
         notes = run.output.get("research", {}).get("notes", "")
-        raw = providers.text(_prompt(run, "concepts"), f"Topic: {topic}\n{_brand_lines(run)}\nResearch notes:\n{notes}",
+        raw = providers.text(_prompt(run, "concepts"), f"Topic: {topic}\n{_brand_lines(run)}{_language_line(run)}\nResearch notes:\n{notes}",
                              model=_model(run, "text"))
     run.output["concepts"] = clean_concepts(raw)
     _save(run)
 
 
 def step_pick_concept(run) -> None:
+    # The idea is chosen at the script check ("use this idea instead"), not at a stop of its own.
     if run.output.get("concept"):
         return
-    if not _checkpoints(run):
-        run.output["concept"] = run.output["concepts"][0]
-        _save(run)
-        return
-    raise NeedsReview("concept")
+    run.output["concept"] = run.output["concepts"][0]
+    _save(run)
 
 
 def clean_script(raw: dict, topic: str) -> dict:
@@ -483,11 +493,15 @@ def step_voice(run) -> None:
 
 
 def step_captions(run) -> None:
-    """Word timings per scene: real ones from transcription, or an even estimate."""
+    """Word timings per scene: real ones from transcription, or an even estimate. None with subtitles off."""
+    show = captions_on(_config(run))
     for scene in run.output["scenes"]:
         if "words" in scene:
             continue
-        words = None if settings.AGENTS_DRY_RUN else providers.word_times(media_path(scene["audio"]))
+        if not show:
+            scene["words"] = []
+            continue
+        words = None if settings.AGENTS_DRY_RUN else providers.word_times(media_path(scene["audio"]), language_of(_config(run)))
         scene["words"] = words or render.estimate_word_times(scene["narration"], scene["duration"])
         _save(run)
 
@@ -562,13 +576,11 @@ def _pexels_clip(query: str, min_seconds: float) -> tuple[bytes, dict] | None:
 
 
 def step_review_storyboard(run) -> None:
+    # No stop here any more (the script is the one check); runs already waiting here still resume.
     if run.output.get("storyboard_ok"):
         return
-    if not _checkpoints(run):
-        run.output["storyboard_ok"] = True
-        _save(run)
-        return
-    raise NeedsReview("storyboard")
+    run.output["storyboard_ok"] = True
+    _save(run)
 
 
 # ── edit + finish ─────────────────────────────────────────────────────────
@@ -617,6 +629,8 @@ def step_render(run) -> None:
             highlight_hex=highlight(run),
             music=music,
             expect_sound=not settings.AGENTS_DRY_RUN,
+            language=language_of(_config(run)),
+            captions=captions_on(_config(run)),
         )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

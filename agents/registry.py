@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from django.conf import settings
 
-from content.pricing import FALLBACK_PRICES, admart_markup_multiplier, get_fal_prices, quantize_credits
+from content.pricing import admart_markup_multiplier, quantize_credits, quote_image_job
 
 SHORT_SCENES = 6
 SHORT_NARRATION_CHARS = 900  # ~130 words: the longest (60 s) Short, for cost quotes
@@ -29,7 +29,10 @@ STYLES = {
     "anime": ("Anime", "anime style, clean line art, cel shading, vibrant colours"),
     "minimal": ("Minimal", "minimalist composition, soft pastel palette, lots of negative space"),
 }
-# Narrator voices: id -> (label, Kokoro voice on fal). British voices use fal's British endpoint.
+# The language a Short is written and spoken in (deployment config "language").
+LANGUAGES = {"en": "English", "ur": "Urdu"}
+# Narrator voices: id -> (label, voice). English voices are Kokoro on fal (British ones use fal's British
+# endpoint); Urdu voices are Gemini TTS presets on fal, written "gemini:<preset>".
 VOICES = {
     "heart": ("Heart: warm female, US", "af_heart"),
     "bella": ("Bella: bright female, US", "af_bella"),
@@ -37,7 +40,12 @@ VOICES = {
     "fenrir": ("Fenrir: deep male, US", "am_fenrir"),
     "emma": ("Emma: female, UK", "bf_emma"),
     "george": ("George: male, UK", "bm_george"),
+    "ur-kore": ("Kore: clear female, Urdu", "gemini:Kore"),
+    "ur-aoede": ("Aoede: warm female, Urdu", "gemini:Aoede"),
+    "ur-charon": ("Charon: calm male, Urdu", "gemini:Charon"),
+    "ur-puck": ("Puck: upbeat male, Urdu", "gemini:Puck"),
 }
+DEFAULT_VOICES = {"en": "heart", "ur": "ur-kore"}
 PACES = {"calm": ("Calm", 0.9), "normal": ("Normal", 1.0), "fast": ("Fast", 1.12)}
 TONES = {
     "fun": ("Fun", "playful and funny, light jokes"),
@@ -49,9 +57,30 @@ TONES = {
 LENGTHS = {30: 65, 45: 100, 60: 130}  # seconds -> most narration words (narrators speak ~2.2 words/s)
 
 
+def captions_on(config: dict) -> bool:
+    """Whether a Short gets subtitles (config "captions", on unless turned off)."""
+    return (config or {}).get("captions", True) is not False
+
+
+def voice_language(voice: tuple) -> str:
+    """The language a VOICES entry speaks."""
+    return "ur" if voice[1].startswith("gemini:") else "en"
+
+
+def language_of(config: dict) -> str:
+    """The deployment's language: "en" (the default) or "ur"."""
+    language = (config or {}).get("language")
+    return language if language in LANGUAGES else "en"
+
+
 def voice_settings(config: dict) -> tuple[tuple, float]:
-    """(VOICES entry, speed) for a deployment config; unknown values fall back to the defaults."""
-    return VOICES.get(config.get("voice"), VOICES["heart"]), PACES.get(config.get("pace"), PACES["normal"])[1]
+    """(VOICES entry, speed) for a deployment config; unknown values, or a voice of the other language,
+    fall back to that language's default voice."""
+    language = language_of(config)
+    voice = VOICES.get(config.get("voice"))
+    if voice is None or voice_language(voice) != language:
+        voice = VOICES[DEFAULT_VOICES[language]]
+    return voice, PACES.get(config.get("pace"), PACES["normal"])[1]
 
 
 # Pause points where a person approves before money is spent on the next stage.
@@ -324,11 +353,9 @@ def validate_recipe(data: dict) -> str | None:
 
 
 def _image_usd(model: str) -> Decimal:
-    row = get_fal_prices([model]).get(model) or FALLBACK_PRICES.get(model) or {}
-    price = Decimal(str(row.get("unit_price", "0.03")))
-    if row.get("unit") == "megapixels":
-        return price * Decimal(IMAGE_WIDTH * IMAGE_HEIGHT) / Decimal(1_000_000)
-    return price
+    """fal cost of one scene image, quoted like the image studio for the request providers.image sends."""
+    data = {"imageSize": {"width": IMAGE_WIDTH, "height": IMAGE_HEIGHT}, "aspectRatio": "9:16", "numImages": 1}
+    return quote_image_job("textToImage", model, data)["fal_cost_decimal"]
 
 
 # Steps that make one AI text call each (research is a text call with web search on top).
@@ -352,7 +379,7 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
         return Decimal("0")
     usd = Decimal("0")
     from agents import providers
-    from agents.ai_models import chosen_models, text_call_usd
+    from agents.ai_models import chosen_models, text_call_usd, text_credits
 
     models = chosen_models(config)
     llm_calls = sum(step in spec.steps for step in LLM_STEPS)
@@ -370,7 +397,10 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     if "listen" in spec.steps:  # only the first 3 minutes are transcribed
         seconds = min(Decimal(str(run_input.get("seconds") or 180)), Decimal(180))
         usd += seconds / Decimal(60) * Decimal(settings.AGENTS_TRANSCRIBE_USD_PER_MIN)
-    usd += text_call_usd(models["text"]) * llm_calls
+    # A fast writer is part of the run's price; a smarter one adds its flat fee after the markup.
+    writer = text_credits(models["text"], llm_calls)
+    if not writer:
+        usd += text_call_usd(models["text"]) * llm_calls
     usd += providers.research_usd() * sum(step in spec.steps for step in ("research", "trends", "analyze"))
     if "visuals" in spec.steps:
         usd += _image_usd(models["image"]) * SHORT_SCENES  # worst case: every scene an AI image
@@ -380,7 +410,7 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     if "captions" in spec.steps:
         usd += providers.timing_usd()
     cost = quantize_credits(usd)
-    return quantize_credits(cost * admart_markup_multiplier(cost))
+    return quantize_credits(cost * admart_markup_multiplier(cost) + writer)
 
 
 def image_credits(config: dict | None = None) -> Decimal:
@@ -408,7 +438,9 @@ def catalog_entry(spec: AgentSpec) -> dict:
         "estimatedCredits": f"{estimate_credits(spec, {'text': 'x' * 500}):f}",
         "steps": [step for step in spec.steps if step not in GATES],
         "styles": [{"id": key, "label": label} for key, (label, _) in STYLES.items()] if "visuals" in spec.steps else [],
-        "voices": [{"id": key, "label": v[0]} for key, v in VOICES.items()] if "voice" in spec.steps else [],
+        "voices": [{"id": key, "label": v[0], "language": voice_language(v)} for key, v in VOICES.items()]
+        if "voice" in spec.steps else [],
+        "languages": [{"id": key, "label": label} for key, label in LANGUAGES.items()] if "voice" in spec.steps else [],
         "paces": [{"id": key, "label": label} for key, (label, _) in PACES.items()] if "voice" in spec.steps else [],
         "tones": [{"id": key, "label": label} for key, (label, _) in TONES.items()] if "script" in spec.steps else [],
         "lengths": list(LENGTHS) if "script" in spec.steps else [],

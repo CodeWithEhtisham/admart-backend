@@ -138,6 +138,7 @@ def run_row(run: AgentRun) -> dict:
         "step": run.step,
         "input": (run.input.get("topic") or run.input.get("text") or "")[:120],
         "credits": serialize_decimal(run.credits_reserved),
+        "textCostUsd": (run.output or {}).get("textUsd"),  # what the AI writer really cost
         "error": run.error,
         "attempts": run.attempts,
         "createdAt": run.created_at,

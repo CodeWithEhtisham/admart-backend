@@ -3,12 +3,15 @@
 Agent runs (Shorts Creator, Script Writer, Voiceover, Video Editor, Cross-poster) are processed by a separate
 process, `manage.py run_agents_worker`. Without it, runs stay "Queued".
 
+On your own computer you don't start it: with `DEBUG=True`, `manage.py runserver` runs it inside the server
+(and restarts it with the server on every code change). Set `AGENTS_RUNNER_WITH_RUNSERVER=False` to turn that off.
+
 Nothing in `deploy/` or the CI workflow changes. These are one-time steps on the VPS.
 
 ## 1. FFmpeg (CPU only, no GPU needed)
 
 ```bash
-sudo apt install -y ffmpeg fonts-dejavu-core
+sudo apt install -y ffmpeg fonts-dejavu-core fonts-noto-core  # Noto: Urdu captions
 ffmpeg -version | head -1
 ```
 
