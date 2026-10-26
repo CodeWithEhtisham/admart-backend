@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from content import fal_models
 from content.models import FalModelListing
+from content.tests_pricing import join_catalog_refresh
 from users.models import User
 
 
@@ -114,6 +115,7 @@ class DiscoverNewModelsTests(TestCase):
                 patch("agents.management.commands.run_agents_worker.time.sleep"):
             with self.assertRaises(KeyboardInterrupt):
                 call_command("run_agents_worker", stdout=StringIO())
+            join_catalog_refresh()
         discover.assert_called_once()
 
 

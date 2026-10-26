@@ -8,6 +8,7 @@ check the pricing code against fal's published prices, not against itself.
 from __future__ import annotations
 
 import itertools
+import threading
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
@@ -235,7 +236,43 @@ class AgentWorkerRefreshTests(SimpleTestCase):
                 patch("content.pricing.refresh_prices_if_stale") as refresh:
             with self.assertRaises(Stop):
                 call_command("run_agents_worker", stdout=StringIO())
+            join_catalog_refresh()
         refresh.assert_called_once()
+
+    def test_a_slow_refresh_does_not_keep_the_runner_offline(self) -> None:
+        # After a long break both are stale and fal can take minutes; the runner must beat and work meanwhile.
+        class Stop(Exception):
+            pass
+
+        release = threading.Event()
+        refresh_done = threading.Event()
+        seen = {}
+
+        def slow_refresh():
+            release.wait(5)
+            refresh_done.set()
+
+        def claim(**_):
+            seen["refresh_done_at_claim"] = refresh_done.is_set()
+            raise Stop
+
+        module = "agents.management.commands.run_agents_worker"
+        with patch(f"{module}.claim_next", side_effect=claim), patch(f"{module}.run_due", return_value=0), \
+                patch(f"{module}.beat") as beat, \
+                patch("content.fal_models.discover_if_stale"), \
+                patch("content.pricing.refresh_prices_if_stale", side_effect=slow_refresh):
+            with self.assertRaises(Stop):
+                call_command("run_agents_worker", stdout=StringIO())
+            beat.assert_called_once()
+            release.set()
+            join_catalog_refresh()
+        self.assertFalse(seen["refresh_done_at_claim"])
+
+
+def join_catalog_refresh() -> None:
+    for thread in threading.enumerate():
+        if thread.name == "fal-catalog-refresh":
+            thread.join(5)
 
 
 @override_settings(FAL_KEY="")

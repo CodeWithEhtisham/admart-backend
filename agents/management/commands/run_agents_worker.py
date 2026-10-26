@@ -1,8 +1,9 @@
 import logging
+import threading
 import time
 
 from django.core.management.base import BaseCommand
-from django.db import DatabaseError, close_old_connections
+from django.db import DatabaseError, close_old_connections, connection
 
 from agents.engine import beat, claim_next, process
 from agents.runs import run_due
@@ -14,6 +15,20 @@ PRICES_EVERY = 30 * 60  # seconds between checks that fal's price snapshot is fr
 BEAT_EVERY = 10  # seconds between heartbeats (the page shows the runner offline after 60 s without one)
 
 logger = logging.getLogger("agents.worker")
+
+
+def refresh_fal_catalog() -> None:
+    """fal's prices and new models. After a long break both are stale and fal can take minutes to answer."""
+    try:
+        pricing.refresh_prices_if_stale()
+    except Exception as exc:  # prices must never stop the worker
+        logger.warning("fal price refresh failed, keeping the last known prices: %s", exc)
+    try:
+        fal_models.discover_if_stale()
+    except Exception as exc:  # nor must the new-model check
+        logger.warning("fal new-model check failed: %s", exc)
+    finally:
+        connection.close()  # this thread's own database connection
 
 
 class Command(BaseCommand):
@@ -28,17 +43,14 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         last_schedule = last_beat = 0.0
         last_prices = float("-inf")
+        refresher = None
         while True:
-            if not options["once"] and time.monotonic() - last_prices >= PRICES_EVERY:
+            if not options["once"] and time.monotonic() - last_prices >= PRICES_EVERY \
+                    and not (refresher and refresher.is_alive()):
                 last_prices = time.monotonic()
-                try:
-                    pricing.refresh_prices_if_stale()
-                except Exception as exc:  # prices must never stop the worker
-                    logger.warning("fal price refresh failed, keeping the last known prices: %s", exc)
-                try:
-                    fal_models.discover_if_stale()
-                except Exception as exc:  # nor must the new-model check
-                    logger.warning("fal new-model check failed: %s", exc)
+                # In the background, so the heartbeat and queued runs never wait for fal.
+                refresher = threading.Thread(target=refresh_fal_catalog, name="fal-catalog-refresh", daemon=True)
+                refresher.start()
             if time.monotonic() - last_beat >= BEAT_EVERY:
                 beat()
                 last_beat = time.monotonic()
