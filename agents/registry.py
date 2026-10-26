@@ -16,7 +16,7 @@ from django.conf import settings
 from content.pricing import admart_markup_multiplier, quantize_credits, quote_image_job
 
 SHORT_SCENES = 6
-SHORT_NARRATION_CHARS = 900  # ~130 words: the longest (60 s) Short, for cost quotes
+CHARS_PER_WORD = 7  # narration characters per word, for cost quotes
 IMAGE_WIDTH, IMAGE_HEIGHT = 768, 1344  # 9:16, about 1 megapixel; rendered up to 1080x1920
 MAX_TEXT_INPUT = 3000
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}$")
@@ -54,7 +54,7 @@ TONES = {
     "calm": ("Calm", "calm, warm and soothing"),
     "motivational": ("Motivational", "energetic and motivational"),
 }
-LENGTHS = {30: 65, 45: 100, 60: 130}  # seconds -> most narration words (narrators speak ~2.2 words/s)
+LENGTHS = {15: 33, 30: 65, 45: 100, 60: 130}  # seconds -> most narration words (narrators speak ~2.2 words/s)
 
 
 def captions_on(config: dict) -> bool:
@@ -405,7 +405,10 @@ def estimate_credits(spec: AgentSpec, run_input: dict, config: dict | None = Non
     if "visuals" in spec.steps:
         usd += _image_usd(models["image"]) * SHORT_SCENES  # worst case: every scene an AI image
     if "voice" in spec.steps:
-        chars = SHORT_NARRATION_CHARS if "script" in spec.steps else len(str(run_input.get("text", "")))
+        # A Short is quoted for its chosen length (45 s, as the script step, until one is picked).
+        length = (config or {}).get("length")
+        chars = (LENGTHS[length if length in LENGTHS else 45] * CHARS_PER_WORD if "script" in spec.steps
+                 else len(str(run_input.get("text", ""))))
         usd += providers.speech_usd(chars)
     if "captions" in spec.steps:
         usd += providers.timing_usd()

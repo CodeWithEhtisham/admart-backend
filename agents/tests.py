@@ -148,6 +148,12 @@ class EstimateTests(SimpleTestCase):
         with override_settings(AGENTS_LLM_USD_PER_RUN="0.05"):
             self.assertGreater(estimate_credits(BUILTIN_AGENTS["script-writer"], {}), free)
 
+    @NO_PRICES
+    def test_a_shorter_short_is_quoted_for_its_length(self, _prices) -> None:
+        shorts = BUILTIN_AGENTS["youtube-shorts"]
+        self.assertLess(estimate_credits(shorts, {}, {"length": 15}), estimate_credits(shorts, {}, {"length": 60}))
+        self.assertEqual(estimate_credits(shorts, {}, {"length": 45}), estimate_credits(shorts, {}, {}))  # the default length
+
 
 class _AgentAPITestCase(APITestCase):
     dry_run = False
@@ -1201,6 +1207,13 @@ class ScriptLengthTests(_AgentAPITestCase):
         self.assertEqual(post.call_count, 2)
         self.assertIn("at most 65 words", post.call_args.kwargs["json"]["messages"][1]["content"])
         self.assertEqual(sum(len(s["narration"].split()) for s in run.output["scenes"]), 60)
+
+    def test_a_15_second_short_can_be_picked(self) -> None:
+        from agents.registry import catalog_entry
+
+        self.assertEqual(catalog_entry(BUILTIN_AGENTS["youtube-shorts"])["lengths"], [15, 30, 45, 60])
+        run = AgentRun(deployment=self.deploy(config={"length": 15}), project=self.project, user=self.user, input={"topic": "t"})
+        self.assertIn("about 15 seconds, at most 33 words", steps._style_lines(run))
 
 
 SAMPLE_RSS = """<?xml version="1.0"?><rss><channel>
