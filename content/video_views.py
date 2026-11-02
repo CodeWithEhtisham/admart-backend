@@ -13,16 +13,18 @@ from rest_framework.views import APIView
 
 from content import fal_client
 from content.credits import InsufficientCredits, fail_open_job, reserve_credits
-from content.fal_models import catalog_discovery_payload, merged_video_catalog
+from content.fal_models import catalog_discovery_payload
 from content.library import mark_library_generating_video, sync_library_from_video_job
 from content.models import VideoJob
 from content.pricing import attach_video_pricing, quote_response, quote_video_job
 from content.serializers import VideoJobCreateSerializer, VideoJobSerializer
+from content.storage_quota import storage_problem
 from content.storage_utils import absolute_media_url
 from content.url_resolve import resolve_urls_for_fal
 from content.video_catalog import VIDEO_MODEL_CATALOG
 from content.video_jobs import refresh_video_job
 from content.video_mapping import build_video_fal_input
+from users import entitlements
 from content.views import ImageUploadView, _owned_project, _truthy
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,9 @@ class VideoJobListCreateView(APIView):
         data = ser.validated_data
         capability = data["capability"]
         model = data["model"]
+        problem = entitlements.video_problem(request.user, capability, model, data) or storage_problem(request.user)
+        if problem:
+            return Response(problem.response_data(), status=status.HTTP_403_FORBIDDEN)
         quote = quote_video_job(capability, model, data)
         amount = quote["credits_decimal"]
 
@@ -167,17 +172,14 @@ class VideoModelCatalogView(APIView):
         if project_id is not None:
             _owned_project(request.user, project_id)
         discover = _truthy(request.query_params.get("discover"))
-        # Merged (curated + live provider) by default; ?fal=0 opts back into curated-only.
-        include_discovery = discover or request.query_params.get("fal") != "0"
-        fal_error = None
-        try:
-            merged = merged_video_catalog(include_discovery=include_discovery)
-        except FalModelSearchError:
-            merged = {cap: list(models) for cap, models in VIDEO_MODEL_CATALOG.items()}
-            fal_error = "Could not fetch the latest model catalog"
-        payload = attach_video_pricing(merged)
-        if fal_error:
-            payload["_fal_error"] = fal_error
+        # Only curated models: each has a checked input mapping and price. New fal models are
+        # listed for the admin by the discover_fal_models job (FalModelListing).
+        payload = attach_video_pricing({
+            cap: [{**m, "requiredPlan": entitlements.required_plan(entitlements.video_model_problem(request.user, m["id"]))}
+                  for m in models]
+            for cap, models in VIDEO_MODEL_CATALOG.items()
+        })
+        payload["_plan"] = entitlements.plan_summary(request.user)
         if discover:
             payload["_fal"] = catalog_discovery_payload("video")
         return Response(payload)

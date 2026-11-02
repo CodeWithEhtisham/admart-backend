@@ -226,8 +226,18 @@ class ProjectSocialDisconnectView(ProjectScopedSocialMixin, APIView):
                 {"detail": f"No {platform} account connected."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        # Erase the tokens too (platform policies: nothing kept after the user disconnects).
         account.connected = False
-        account.save(update_fields=["connected"])
+        account.access_token = account.refresh_token = ""
+        account.token_expires_at = None
+        account.save(update_fields=["connected", "access_token", "refresh_token", "token_expires_at"])
+        if platform == "youtube":  # YouTube policy: no YouTube Analytics data kept after access ends
+            from agents.models import AgentRun
+
+            for run in AgentRun.objects.filter(project=project, deployment__agent_type="growth-report"):
+                if (run.output.get("numbers") or {}).get("youtube"):
+                    run.output["numbers"]["youtube"] = None
+                    run.save(update_fields=["output", "updated_at"])
         return Response({"message": f"{platform} disconnected successfully."}, status=status.HTTP_200_OK)
 
 

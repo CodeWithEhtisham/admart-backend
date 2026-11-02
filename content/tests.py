@@ -197,10 +197,11 @@ class PricingFormulaTests(APITestCase):
 
         self.assertEqual(nano["fal_cost_decimal"], Decimal("0.0800"))
         self.assertEqual(nano["credits_decimal"], Decimal("0.1689"))
-        self.assertEqual(gpt["fal_cost_decimal"], Decimal("1.0000"))
-        self.assertEqual(gpt["credits_decimal"], Decimal("1.6709"))
+        # GPT Image 2: fal's "$1 per unit" placeholder is overridden by the 1024x1024 high price.
+        self.assertEqual(gpt["fal_cost_decimal"], Decimal("0.2110"))
+        self.assertEqual(gpt["credits_decimal"], Decimal("0.4201"))
         self.assertEqual(veo["fal_cost_decimal"], Decimal("3.2000"))
-        self.assertEqual(veo["credits_decimal"], Decimal("5.3468"))
+        self.assertEqual(veo["credits_decimal"], Decimal("5.3469"))  # credits round up, never down
 
     @override_settings(FAL_KEY="")
     def test_seedance_token_based_pricing(self):
@@ -349,89 +350,35 @@ class MergedCatalogApiTests(APITestCase):
         pricing._CACHE["expires_at"] = 0
 
     @override_settings(FAL_KEY="test-fal-key")
-    @patch("content.fal_models.get_fal_prices")
     @patch("content.fal_models.requests.get")
-    def test_image_catalog_merges_discovered_models(self, mock_models, mock_prices):
-        mock_models.return_value = _json_response(
-            {
-                "models": [
-                    {
-                        "endpoint_id": "fal-ai/new-image-model",
-                        "metadata": {
-                            "display_name": "New Image Model",
-                            "category": "text-to-image",
-                            "status": "active",
-                        },
-                    }
-                ],
-                "next_cursor": None,
-                "has_more": False,
-            }
-        )
-        mock_prices.return_value = {
-            "fal-ai/new-image-model": {
-                "unit_price": "0.03",
-                "unit": "images",
-                "currency": "USD",
-            }
-        }
-
-        response = self.client.get("/api/images/models")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        curated = [m for m in response.data["textToImage"] if m.get("source") != "provider"]
-        discovered = [m for m in response.data["textToImage"] if m.get("source") == "provider"]
-        self.assertTrue(curated)
-        self.assertEqual(len(discovered), 1)
-        self.assertEqual(discovered[0]["id"], "fal-ai/new-image-model")
-        self.assertTrue(discovered[0]["enabled"])
-        self.assertEqual(discovered[0]["pricing"]["unitPrice"], "0.03")
-        self.assertIn("admartUnitPrice", discovered[0]["pricing"])
+    def test_catalogs_list_only_curated_models_and_never_wait_on_fal(self, mock_models):
+        # Unreviewed fal models have no checked price or input mapping, so users never see them;
+        # new ones are listed for the admin by the discover_fal_models job instead.
+        for url, cap in (("/api/images/models", "textToImage"), ("/api/videos/models", "textToVideo")):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertTrue(response.data[cap])
+            self.assertFalse(any(m.get("source") == "provider" for m in response.data[cap]))
+        mock_models.assert_not_called()
 
     @override_settings(FAL_KEY="test-fal-key")
-    @patch("content.fal_models.get_fal_prices")
+    @patch("content.fal_models.get_fal_prices", return_value={})
     @patch("content.fal_models.requests.get")
-    def test_video_catalog_merges_discovered_models(self, mock_models, mock_prices):
-        mock_models.return_value = _json_response(
-            {
-                "models": [
-                    {
-                        "endpoint_id": "fal-ai/new-video-model",
-                        "metadata": {
-                            "display_name": "New Video Model",
-                            "category": "text-to-video",
-                            "status": "active",
-                        },
-                    }
-                ],
-                "next_cursor": None,
-                "has_more": False,
-            }
-        )
-        mock_prices.return_value = {}
+    def test_discovered_models_cannot_be_run(self, mock_models, _prices):
+        from content.catalog import resolve_model
+        from content.video_catalog import get_model_entry, resolve_video_model
 
-        response = self.client.get("/api/videos/models")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        discovered = [m for m in response.data["textToVideo"] if m.get("source") == "provider"]
-        self.assertEqual(len(discovered), 1)
-        self.assertEqual(discovered[0]["id"], "fal-ai/new-video-model")
-        self.assertTrue(discovered[0]["enabled"])
-        self.assertNotIn("pricing", discovered[0])
-
-    @override_settings(FAL_KEY="")
-    @patch("content.fal_models.requests.get")
-    def test_catalog_falls_back_to_curated_when_provider_unreachable(self, mock_models):
-        mock_models.side_effect = requests.RequestException("network down")
-
-        response = self.client.get("/api/images/models")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("_fal_error", response.data)
-        self.assertTrue(response.data["textToImage"])
-        self.assertFalse(
-            any(m.get("source") == "provider" for m in response.data["textToImage"])
-        )
+        mock_models.return_value = _json_response({
+            "models": [{"endpoint_id": "fal-ai/new-model", "metadata": {"display_name": "New", "status": "active"}}],
+            "next_cursor": None,
+            "has_more": False,
+        })
+        with self.assertRaises(ValueError):
+            resolve_model("textToImage", "fal-ai/new-model")
+        with self.assertRaises(ValueError):
+            resolve_video_model("textToVideo", "fal-ai/new-model")
+        self.assertIsNone(get_model_entry("textToVideo", "fal-ai/new-model"))
+        mock_models.assert_not_called()
 
     def test_new_models_are_generatable(self):
         """New models are now enabled and generatable."""
@@ -563,6 +510,37 @@ class MappingTests(APITestCase):
         self.assertEqual(out["duration"], "15")
         self.assertEqual(out["resolution"], "1080p")
         self.assertEqual(out["negative_prompt"], "flicker")
+
+    def test_models_added_october_2026_get_the_inputs_fal_expects(self):
+        # Field names and enums from each model's fal input schema (2026-10-20).
+        for model in ("fal-ai/flux-pro/v1.1-ultra", "xai/grok-imagine-image", "blackforestlabs/flux-3/text-to-image"):
+            out = build_fal_input("textToImage", model, {"prompt": "p", "aspectRatio": "9:16"})
+            self.assertEqual(out["aspect_ratio"], "9:16", model)
+            self.assertNotIn("image_size", out, model)
+            # "auto" is not in every aspect_ratio enum: leave it to the model's default.
+            self.assertNotIn("aspect_ratio", build_fal_input("textToImage", model, {"prompt": "p", "aspectRatio": "auto"}))
+        for model in ("fal-ai/z-image/turbo", "fal-ai/bytedance/seedream/v4.5/text-to-image"):
+            out = build_fal_input("textToImage", model, {"prompt": "p", "aspectRatio": "16:9"})
+            self.assertEqual(out["image_size"], "landscape_16_9", model)
+        self.assertEqual(build_fal_input("textToImage", "fal-ai/flux-2", {"prompt": "p", "imageSize": "square_hd"})["image_size"],
+                         "square_hd")
+        for model in ("xai/grok-imagine-image/edit", "fal-ai/bytedance/seedream/v4.5/edit"):
+            out = build_fal_input("edit", model, {"prompt": "p", "imageUrls": ["https://x/a.png"]})
+            self.assertEqual(out["image_urls"], ["https://x/a.png"], model)
+
+        start, end = "https://x/start.png", "https://x/end.png"
+        wan = build_video_fal_input("imageToVideo", "alibaba/wan-3.0/image-to-video",
+                                    {"prompt": "p", "startImageUrl": start, "duration": "5", "resolution": "720p"})
+        self.assertEqual(wan["start_image_url"], start)
+        for model in ("google/gemini-omni-flash/v1.1/image-to-video", "bytedance/seedance-2.0/fast/image-to-video",
+                      "fal-ai/kling-video/o3/pro/image-to-video"):
+            out = build_video_fal_input("firstLastFrame", model, {"prompt": "p", "startImageUrl": start, "endImageUrl": end})
+            self.assertEqual((out["image_url"], out["end_image_url"]), (start, end), model)
+        h3 = build_video_fal_input("textToVideo", "minimax/h3/text-to-video", {"prompt": "p", "resolution": "768P"})
+        self.assertEqual(h3["resolution"], "768P")
+        o3 = build_video_fal_input("textToVideo", "fal-ai/kling-video/o3/pro/text-to-video",
+                                   {"prompt": "p", "generateAudio": False})
+        self.assertFalse(o3["generate_audio"])
 
 
 @override_settings(FAL_KEY="test-fal-key", MEDIA_ROOT="/tmp/admart-test-media")
@@ -1025,3 +1003,88 @@ class CreditSafetyTests(APITestCase):
         expired = expire_subscription_if_due(self.user)
         self.assertEqual(expired.plan, "free")
         self.assertEqual(expired.credits_remaining, 5)  # paid-for top-ups kept
+
+
+class LargeVideoUploadTests(APITestCase):
+    """Resumable chunked upload for long videos (Clip Maker): start → chunks → finish."""
+
+    def setUp(self):
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        media = override_settings(MEDIA_ROOT=str(self.tmp / "media"), PRIVATE_MEDIA_ROOT=self.tmp / "private",
+                                  MEDIA_BASE_URL="http://testserver", LIBRARY_UPLOAD_CHUNK_BYTES=40_000)
+        media.enable()
+        self.addCleanup(media.disable)
+        self.user = User.objects.create_user(email="big@example.com", password="Password123!", first_name="B", last_name="U")
+        self.client.force_authenticate(user=self.user)
+        self.project = Project.objects.create(owner=self.user, name="Big")
+        clip = self.tmp / "talk.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:d=2:r=30", "-f", "lavfi",
+                        "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(clip)],
+                       check=True)
+        self.video = clip.read_bytes()
+        self.base = f"/api/projects/{self.project.id}/library/uploads/large"
+
+    def _start(self, size=None, content_type="video/mp4", name="My talk.mp4"):
+        return self.client.post(self.base, {"fileName": name, "size": size or len(self.video), "contentType": content_type},
+                                format="json")
+
+    def _put(self, upload_id, start, chunk):
+        end = start + len(chunk) - 1
+        return self.client.put(f"{self.base}/{upload_id}", data=chunk, content_type="application/octet-stream",
+                               HTTP_CONTENT_RANGE=f"bytes {start}-{end}/{len(self.video)}")
+
+    def test_upload_in_chunks_resume_and_finish(self):
+        started = self._start()
+        self.assertEqual(started.status_code, status.HTTP_201_CREATED, started.data)
+        upload_id, step = started.data["id"], started.data["chunkBytes"]
+        self.assertEqual((started.data["received"], step), (0, 40_000))
+        self.assertEqual(self._put(upload_id, 0, self.video[:step]).data["received"], step)
+        wrong = self._put(upload_id, 0, self.video[:step])  # a repeated chunk after a dropped reply
+        self.assertEqual(wrong.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(wrong.data["received"], step, "tells the browser where to continue")
+        self.assertEqual(self.client.get(f"{self.base}/{upload_id}").data["received"], step)
+        pos = step
+        while pos < len(self.video):
+            self.assertEqual(self._put(upload_id, pos, self.video[pos : pos + step]).status_code, 200)
+            pos += step
+        done = self.client.post(f"{self.base}/{upload_id}/finish")
+        self.assertEqual(done.status_code, status.HTTP_201_CREATED, done.data)
+        asset = LibraryAsset.objects.get(id=done.data["id"])
+        self.assertEqual((asset.media_type, asset.title, asset.duration_seconds, asset.width), ("video", "My talk", 2, 320))
+        self.assertTrue(asset.source_url.endswith(".mp4"))
+        self.assertEqual(self.client.get(f"{self.base}/{upload_id}").status_code, 404, "the session is gone")
+
+    def test_limits_and_types(self):
+        self.assertEqual(self._start(content_type="image/png").status_code, 400)
+        self.assertEqual(self._start(size=5 * 1024**3).status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        upload_id = self._start().data["id"]
+        too_big = self._put(upload_id, 0, self.video[:40_001])
+        self.assertEqual(too_big.status_code, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(self.client.post(f"{self.base}/{upload_id}/finish").status_code, 400, "not all bytes arrived")
+        self.assertEqual(self.client.get(f"{self.base}/../../etc").status_code, 404)
+
+    def test_only_the_owner_can_use_a_session(self):
+        upload_id = self._start().data["id"]
+        other = User.objects.create_user(email="o@example.com", password="Password123!", first_name="O", last_name="U")
+        self.client.force_authenticate(user=other)
+        self.assertEqual(self._put(upload_id, 0, self.video[:100]).status_code, 404)
+
+    def test_a_file_that_is_not_a_video_is_rejected(self):
+        self.video = b"\x00" * 1000
+        upload_id = self._start().data["id"]
+        self._put(upload_id, 0, self.video)
+        response = self.client.post(f"{self.base}/{upload_id}/finish")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(LibraryAsset.objects.filter(project=self.project).exists())
+
+    def test_at_most_three_open_uploads_per_user(self):
+        for _ in range(3):
+            self.assertEqual(self._start().status_code, status.HTTP_201_CREATED)
+        response = self._start()
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)

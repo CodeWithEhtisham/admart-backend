@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from content.catalog import (
+    ASPECT_RATIO_MODELS,
     ASPECT_TO_FLUX_SIZE,
     FLUX_MODELS,
+    IMAGE_SIZE_MODELS,
     NANO_MODELS,
     OPENAI_MODELS,
     REMBG_MODEL_MAP,
@@ -39,6 +41,7 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
         or model in OPENAI_MODELS
         or model in WAN_IMAGE_MODELS
         or model in SEEDREAM_MODELS
+        or model in IMAGE_SIZE_MODELS
     ):
         if data.get("imageSize") is not None:
             out["image_size"] = data["imageSize"]
@@ -53,6 +56,9 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
             out["aspect_ratio"] = data["aspectRatio"]
         if data.get("resolution"):
             out["resolution"] = data["resolution"]
+    elif model in ASPECT_RATIO_MODELS:
+        if data.get("aspectRatio") and data["aspectRatio"] != "auto":
+            out["aspect_ratio"] = data["aspectRatio"]
 
     _maybe(out, "num_images", data.get("numImages"))
     _maybe(out, "seed", data.get("seed"))

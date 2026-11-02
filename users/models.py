@@ -72,6 +72,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     credits_reset_at = models.DateTimeField(null=True, blank=True)
     # Part of credits_remaining bought as top-ups; survives plan expiry. Plan credits are spent first.
     topup_credits = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    # Extra storage add-on (content.storage_quota.STORAGE_ADDON) is on until this time.
+    extra_storage_until = models.DateTimeField(null=True, blank=True)
+    # When a long-inactive free account was told its files will be removed (clean_storage).
+    storage_warned_at = models.DateTimeField(null=True, blank=True)
     onboarding_completed = models.BooleanField(default=False)
 
     # Explicit pointer to the user's currently selected project. Nulled when the

@@ -37,6 +37,7 @@ from content.video_catalog import (
     VIDEO_MODEL_CATALOG,
     resolve_video_model,
 )
+from content.storage_quota import STORAGE_ADDON, storage_payload
 from users.plans import get_plan, get_public_plan_ids, serialize_plan
 from users.serializers import PaymentSubmitSerializer
 
@@ -52,6 +53,7 @@ def balance_payload(user) -> dict:
         "creditsResetAt": user.credits_reset_at,
         "canGenerate": user.credits_remaining > 0,
         "currency": ADMART_CREDIT_CURRENCY,
+        "storage": storage_payload(user),
     }
 
 
@@ -105,11 +107,14 @@ def _serialize_payment(payment: Payment, *, request) -> dict:
     """Client-facing manual payment representation."""
     from users.packs import get_topup_pack
 
-    is_topup = getattr(payment, "payment_type", "subscription") == "topup"
-    plan = get_plan(payment.plan or None) if not is_topup else None
+    payment_type = getattr(payment, "payment_type", "subscription")
+    is_topup = payment_type == "topup"
+    plan = get_plan(payment.plan or None) if payment_type == "subscription" else None
     pack = get_topup_pack(payment.pack or None) if is_topup else None
 
-    if is_topup and pack:
+    if payment_type == "storage":
+        display_name = f"{STORAGE_ADDON['name']} (+{STORAGE_ADDON['gb']} GB)"
+    elif is_topup and pack:
         display_name = pack["name"]
     elif plan:
         display_name = plan["name"]
@@ -169,7 +174,19 @@ class CreditsPaymentSubmitView(APIView):
         data = serializer.validated_data
         payment_type = data.get("paymentType", "subscription")
 
-        if payment_type == "topup":
+        if payment_type == "storage":
+            payment = Payment(
+                user=request.user,
+                payment_type="storage",
+                pack=STORAGE_ADDON["id"],
+                amount=STORAGE_ADDON["price_pkr"],
+                currency="PKR",
+                method="easypaisa",
+                status="pending",
+                provider_ref=data["transactionId"],
+                notes=data["note"],
+            )
+        elif payment_type == "topup":
             from users.packs import get_topup_pack
 
             pack = get_topup_pack(data["pack"])

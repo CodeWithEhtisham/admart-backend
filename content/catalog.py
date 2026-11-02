@@ -53,6 +53,17 @@ MODEL_CATALOG = {
             "family": "seedream",
             "default": False,
         },
+        {"id": "blackforestlabs/flux-3/text-to-image", "label": "Flux 3", "family": "flux3", "default": False},
+        {"id": "fal-ai/flux-pro/v1.1-ultra", "label": "FLUX 1.1 Pro Ultra", "family": "flux3", "default": False},
+        {"id": "fal-ai/flux-2", "label": "Flux 2 Dev", "family": "flux", "default": False},
+        {"id": "fal-ai/z-image/turbo", "label": "Z-Image Turbo", "family": "zimage", "default": False},
+        {
+            "id": "fal-ai/bytedance/seedream/v4.5/text-to-image",
+            "label": "Seedream 4.5",
+            "family": "seedream",
+            "default": False,
+        },
+        {"id": "xai/grok-imagine-image", "label": "Grok Imagine", "family": "grok", "default": False},
     ],
     "edit": [
         {
@@ -115,6 +126,13 @@ MODEL_CATALOG = {
             "family": "wan",
             "default": False,
         },
+        {
+            "id": "fal-ai/bytedance/seedream/v4.5/edit",
+            "label": "Seedream 4.5 Edit",
+            "family": "seedream",
+            "default": False,
+        },
+        {"id": "xai/grok-imagine-image/edit", "label": "Grok Imagine Edit", "family": "grok", "default": False},
     ],
     "multiEdit": [
         {
@@ -226,8 +244,21 @@ FLUX_MODELS = {
     "fal-ai/flux/schnell",
     "fal-ai/flux-pro/kontext",
     "fal-ai/flux-pro/v1.1",
-    "fal-ai/flux-pro/v1.1-ultra",
     "fal-ai/flux-2-pro",
+    "fal-ai/flux-2",
+}
+
+# Models that take an image_size preset but are not FLUX (no safety-checker default).
+IMAGE_SIZE_MODELS = {
+    "fal-ai/z-image/turbo",
+}
+
+# Models that take aspect_ratio instead of image_size; "auto" is not in all of their enums.
+ASPECT_RATIO_MODELS = {
+    "fal-ai/flux-pro/v1.1-ultra",
+    "blackforestlabs/flux-3/text-to-image",
+    "xai/grok-imagine-image",
+    "xai/grok-imagine-image/edit",
 }
 
 NANO_MODELS = {
@@ -258,6 +289,7 @@ OPENAI_MODELS = {
 SEEDREAM_MODELS = {
     "bytedance/seedream/v5/pro/text-to-image",
     "bytedance/seedream/v5/pro/edit",
+    "fal-ai/bytedance/seedream/v4.5/text-to-image",
     "fal-ai/bytedance/seedream/v4.5/edit",
 }
 
@@ -284,14 +316,6 @@ def resolve_model(capability: str, model: str | None) -> str:
     chosen = (model or "").strip() or DEFAULT_MODELS[capability]
     if chosen in ALLOW_LISTS.get(capability, set()):
         return chosen
-    # Also permit any active model returned by merged_image_catalog
-    try:
-        from content.fal_models import merged_image_catalog
-        catalog = merged_image_catalog(include_discovery=True)
-        if any(m.get("id") == chosen for m in catalog.get(capability, [])):
-            return chosen
-    except Exception:
-        pass
     raise ValueError(f"Model not allowed for {capability}: {chosen}")
 
 

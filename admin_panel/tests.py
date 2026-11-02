@@ -438,7 +438,7 @@ class AdminSettingsTests(APITestCase):
         self.client.force_authenticate(user=self.staff)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["defaultFreeCredits"], "0")
+        self.assertEqual(response.data["defaultFreeCredits"], "5")
         self.assertIn("youtube", response.data["platforms"])
         self.assertIn("tiktok", response.data["platforms"])
 

@@ -27,6 +27,9 @@ class YouTubeProvider:
         # *second* screen lists Brand Accounts / channels (first screen is always Gmail).
         "https://www.googleapis.com/auth/youtube.force-ssl",
         "https://www.googleapis.com/auth/youtube.upload",
+        # Growth Report: channel analytics (views, watch time, subscribers) and revenue for monetized channels.
+        "https://www.googleapis.com/auth/yt-analytics.readonly",
+        "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
     ]
 
     def build_auth_url(self, state: str) -> str:

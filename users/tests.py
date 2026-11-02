@@ -58,7 +58,7 @@ class UserAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["email"], self.user_data["email"])
         self.assertEqual(response.data["user"]["firstName"], self.user_data["firstName"])
         self.assertEqual(response.data["user"]["plan"], "free")
-        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 5)  # Starter's one-time trial credits
 
     def test_user_registration_allows_blank_names(self) -> None:
         """Registration does not require first/last name fields."""
@@ -281,7 +281,7 @@ class CreditsApiTests(APITestCase):
         self.assertIn("byCapability", response.data)
         self.assertEqual(response.data["currency"], "Admart credits")
         self.assertEqual(response.data["byCapability"]["textToImage"], "0.0543")
-        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.3065")
+        self.assertEqual(response.data["byCapability"]["multiEdit"], "0.3066")
         self.assertEqual(response.data["pricingFormula"][0]["markupMultiplier"], "dynamic")
         self.assertTrue(any(i["capability"] == "edit" for i in response.data["items"]))
 
@@ -297,11 +297,11 @@ class CreditsApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["credits"], "0.1071")
+        self.assertEqual(response.data["credits"], "0.1072")
         self.assertEqual(response.data["falCost"], "0.05")
         self.assertEqual(response.data["markupMultiplier"], "2.1429")
         self.assertEqual(response.data["creditsRemaining"], "40")
-        self.assertEqual(response.data["creditsAfter"], "39.8929")
+        self.assertEqual(response.data["creditsAfter"], "39.8928")
         self.assertTrue(response.data["canAfford"])
 
     def test_history(self) -> None:
@@ -329,10 +329,10 @@ class CreditsApiTests(APITestCase):
         response = self.client.get("/api/credits/plans")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         ids = [item["id"] for item in response.data["items"]]
-        self.assertEqual(ids, ["basic", "plus", "pro"])
-        self.assertEqual(response.data["items"][0]["monthlyCredits"], "8")
+        self.assertEqual(ids, ["free", "basic", "plus", "pro"])  # Starter (free) is listed too
+        self.assertEqual(response.data["items"][1]["monthlyCredits"], "8")
         self.assertTrue(response.data["paymentConnected"])
-        self.assertEqual(response.data["freeSignupCredits"], "0")
+        self.assertEqual(response.data["freeSignupCredits"], "5")
 
     def test_plans_show_admin_free_signup_credits(self) -> None:
         from admin_panel.models import AdminSetting
@@ -571,7 +571,7 @@ class GoogleAuthTests(APITestCase):
         self.assertEqual(response.data["user"]["lastName"], "Lovelace")
         self.assertEqual(response.data["user"]["googleId"], "google-sub-123")
         self.assertTrue(response.data["user"]["emailVerified"])
-        self.assertEqual(response.data["user"]["creditsRemaining"], 0)
+        self.assertEqual(response.data["user"]["creditsRemaining"], 5)
         mock_ex.assert_called_once_with(
             "4/0AX4XfWh-test-code", "http://localhost:5173/auth-callback"
         )

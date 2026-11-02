@@ -223,12 +223,15 @@ class ProjectSocialTests(APITestCase):
         self.assertEqual(len(response.data), 2)
 
     def test_disconnect_social(self) -> None:
-        SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
-        url = self._url("project_social_disconnect", platform="facebook")
+        SocialAccount.objects.create(
+            project=self.project, platform="youtube", connected=True, access_token="a", refresh_token="r"
+        )
+        url = self._url("project_social_disconnect", platform="youtube")
         response = self.client.delete(url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        account = SocialAccount.objects.get(project=self.project, platform="facebook")
+        account = SocialAccount.objects.get(project=self.project, platform="youtube")
         self.assertFalse(account.connected)
+        self.assertEqual((account.access_token, account.refresh_token), ("", ""))
 
     def test_disconnect_nonexistent_returns_404(self) -> None:
         url = self._url("project_social_disconnect", platform="tiktok")
@@ -776,7 +779,7 @@ class OrganicPublishTests(APITestCase):
         self.url = reverse("project_publish", kwargs={"project_id": self.project.id})
 
     def test_schedule_requires_plan_feature(self) -> None:
-        self.user.plan = "basic"
+        self.user.plan = "free"  # Starter: manual and automatic publishing, no scheduled posts
         self.user.save(update_fields=["plan"])
         response = self.client.post(
             self.url,
@@ -1260,33 +1263,29 @@ class YoutubeSuggestTests(APITestCase):
         )
         self.url = reverse("project_youtube_suggest", kwargs={"project_id": self.project.id})
 
-    @override_settings(GEMINI_API_KEY="")
-    def test_suggest_requires_gemini_key(self) -> None:
+    @override_settings(OPENROUTER_API_KEY="")
+    def test_suggest_requires_openrouter_key(self) -> None:
         response = self.client.post(
             self.url,
             {"title": "Summer drop", "prompt": "cinematic product launch for a clothing brand"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
-        self.assertIn("GEMINI_API_KEY", response.data["message"])
+        self.assertIn("OPENROUTER_API_KEY", response.data["message"])
 
-    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
-    @patch("projects.youtube_suggest.requests.post")
-    def test_suggest_uses_gemini_json(self, mock_post) -> None:
-        mock_post.return_value.status_code = 200
+    @override_settings(OPENROUTER_API_KEY="test-key")
+    @patch("agents.providers.requests.post")
+    def test_suggest_uses_openrouter_json(self, mock_post) -> None:
+        mock_post.return_value.ok = True
         mock_post.return_value.json.return_value = {
-            "candidates": [
+            "choices": [
                 {
-                    "content": {
-                        "parts": [
-                            {
-                                "text": (
-                                    '{"title":"Summer Drop Official","description":"New arrivals '
-                                    'this season.","tags":["sale","fashion","brand"],'
-                                    '"categoryId":"26","language":"en"}'
-                                )
-                            }
-                        ]
+                    "message": {
+                        "content": (
+                            '{"title":"Summer Drop Official","description":"New arrivals '
+                            'this season.","tags":["sale","fashion","brand"],'
+                            '"categoryId":"26","language":"en"}'
+                        )
                     }
                 }
             ]
@@ -1302,19 +1301,19 @@ class YoutubeSuggestTests(APITestCase):
         self.assertEqual(response.data["tags"], ["sale", "fashion", "brand"])
         self.assertEqual(response.data["categoryId"], "26")
         self.assertEqual(response.data["language"], "en")
+        self.assertIn("Brand: Shop Co", mock_post.call_args.kwargs["json"]["messages"][1]["content"])
 
-    @override_settings(GEMINI_API_KEY="test-gemini-key", PROMPT_ENHANCER_MODEL="gemini-test")
-    @patch("projects.youtube_suggest.requests.post")
-    def test_suggest_gemini_error_is_not_hidden(self, mock_post) -> None:
-        mock_post.return_value.status_code = 404
-        mock_post.return_value.text = "model not found"
+    @override_settings(OPENROUTER_API_KEY="test-key")
+    @patch("agents.providers.requests.post")
+    def test_suggest_ai_error_is_not_hidden(self, mock_post) -> None:
+        mock_post.return_value.raise_for_status.side_effect = RuntimeError("HTTP 429")
         response = self.client.post(
             self.url,
             {"title": "clip", "prompt": "summer fashion haul"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn("Gemini", response.data["message"])
+        self.assertIn("failed", response.data["message"])
 
     def test_suggest_requires_prompt_or_title(self) -> None:
         response = self.client.post(self.url, {}, format="json")
@@ -1554,7 +1553,7 @@ class ProjectAnalyticsTests(APITestCase):
         self.url = reverse("project_analytics", kwargs={"project_id": self.project.id})
 
     def test_plan_without_analytics_is_forbidden(self) -> None:
-        self.user.plan = "plus"
+        self.user.plan = "basic"
         self.user.save(update_fields=["plan"])
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1912,7 +1911,7 @@ class SocialConnectionLimitTests(APITestCase):
     """The plan's max_social_connections_per_project applies to real OAuth connects."""
 
     def setUp(self) -> None:
-        self.user = User.objects.create_user(email="limit@example.com", password="Password123!")  # Free: 1 slot
+        self.user = User.objects.create_user(email="limit@example.com", password="Password123!")  # Starter: 2 slots
         self.project = Project.objects.create(owner=self.user, name="Brand")
         self.client.force_authenticate(user=self.user)
 
@@ -1923,8 +1922,9 @@ class SocialConnectionLimitTests(APITestCase):
         )
 
     @patch("projects.oauth.YouTubeProvider.exchange_code")
-    def test_second_platform_over_limit_is_refused(self, mock_exchange) -> None:
+    def test_third_platform_over_limit_is_refused(self, mock_exchange) -> None:
         SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
+        SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
         response = _complete_oauth(self, "social", "youtube", "code", self._state("youtube"))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data["code"], "SOCIAL_CONNECTION_LIMIT_REACHED")
@@ -2009,6 +2009,7 @@ class SingleMetaConnectionTests(APITestCase):
     def test_free_plan_slot_connects_facebook_and_explains_instagram_skip(self) -> None:
         self.user.plan = "free"
         self.user.save(update_fields=["plan"])
+        SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)  # 1 of Starter's 2
         response = self._connect()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["instagramSkipped"], "plan_limit")

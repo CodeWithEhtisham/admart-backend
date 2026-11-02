@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import requests
 from django.conf import settings
 
-from content.prompt_enhancer import GEMINI_ENDPOINT, _extract_candidate_text, _parse_json_text
+from agents import providers
 
 
 class YoutubeSuggestConfigError(RuntimeError):
-    """GEMINI_API_KEY is missing."""
+    """OPENROUTER_API_KEY is missing."""
 
 
 class YoutubeSuggestProviderError(RuntimeError):
-    """Gemini call failed."""
+    """The AI call failed."""
 
 CATEGORY_IDS = {
     "1",
@@ -53,48 +52,18 @@ def suggest_youtube_copy(*, prompt: str = "", title: str = "", brand_name: str =
     title = (title or "").strip()
     if not prompt and not title:
         raise ValueError("prompt or title is required")
-    if not settings.GEMINI_API_KEY:
-        raise YoutubeSuggestConfigError(
-            "Set GEMINI_API_KEY in the backend .env (Google AI Studio). FAL_KEY is only for image/video generation."
-        )
-    try:
-        return _normalize(_call_gemini(prompt=prompt, title=title, brand_name=brand_name, industry=industry))
-    except YoutubeSuggestProviderError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise YoutubeSuggestProviderError(str(exc)) from exc
-
-
-def _call_gemini(*, prompt: str, title: str, brand_name: str, industry: str) -> dict:
-    url = GEMINI_ENDPOINT.format(model=settings.PROMPT_ENHANCER_MODEL)
+    if not settings.OPENROUTER_API_KEY:
+        raise YoutubeSuggestConfigError("Set OPENROUTER_API_KEY in the backend .env to use AI suggestions.")
     user = (
         f"Brand: {brand_name or 'none'}\n"
         f"Industry: {industry or 'none'}\n"
         f"Working title: {title or 'none'}\n"
         f"Creative prompt: {prompt or 'none'}\n"
     )
-    response = requests.post(
-        url,
-        headers={"Content-Type": "application/json", "x-goog-api-key": settings.GEMINI_API_KEY},
-        json={
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
-            "generationConfig": {
-                "temperature": 0.5,
-                "maxOutputTokens": 800,
-                "responseMimeType": "application/json",
-            },
-        },
-        timeout=settings.PROMPT_ENHANCER_TIMEOUT,
-    )
-    if response.status_code >= 400:
-        raise YoutubeSuggestProviderError(
-            f"Gemini HTTP {response.status_code}: {(response.text or '')[:240]}"
-        )
-    parsed = _parse_json_text(_extract_candidate_text(response.json()))
-    if not isinstance(parsed, dict):
-        raise RuntimeError("Gemini returned non-object JSON")
-    return parsed
+    try:
+        return _normalize(providers.text(SYSTEM_PROMPT, user, temperature=0.5))
+    except Exception as exc:  # noqa: BLE001
+        raise YoutubeSuggestProviderError(str(exc)) from exc
 
 
 def _normalize(raw: dict) -> dict:

@@ -59,6 +59,8 @@ def _start_template_auto_refresher():
         interval_minutes = 30
     if interval_minutes <= 0:
         return
+    if settings.USE_CELERY:  # Celery Beat runs content.tasks.refresh_templates instead (once, not per process)
+        return
 
     # runserver with autoreload calls ready() twice (parent + child).
     # Only the child (RUN_MAIN=true) serves requests, so only it should refresh.

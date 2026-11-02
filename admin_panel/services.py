@@ -25,7 +25,7 @@ ZERO = Decimal("0")
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    "default_free_credits": "0",
+    "default_free_credits": "5",  # one-time trial credits on the Starter (free) plan
     "maintenance_banner": "",
     "easypaisa_number": "03XX-XXXXXXX",
     "easypaisa_name": "Admart Support",
@@ -519,6 +519,19 @@ def review_payment(payment_id, decision: str, admin, reason: str = "") -> Paymen
             payment.notes = reason
         payment.save(
             update_fields=["status", "reviewed_by", "reviewed_at", "notes", "updated_at"]
+        )
+        return payment
+
+    if payment.payment_type == "storage":
+        from content.storage_quota import extend_addon
+
+        # Lock the row: a concurrent reserve/refund must not be overwritten (lost update).
+        user = User.objects.select_for_update().get(pk=payment.user_id)
+        extend_addon(user)
+        user.save(update_fields=["extra_storage_until", "updated_at"])
+        payment.status = "paid"
+        payment.save(
+            update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"]
         )
         return payment
 

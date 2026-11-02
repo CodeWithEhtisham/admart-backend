@@ -1,6 +1,37 @@
 from django.contrib import admin
 
-from content.models import ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
+from django.utils.html import format_html
+
+from content.models import FalModelListing, ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
+
+
+@admin.register(FalModelListing)
+class FalModelListingAdmin(admin.ModelAdmin):
+    """New fal models found by the daily discover_fal_models job. Users never see these; adding
+    one to Admart is a code change (input mapping + option prices), then it shows as "added"."""
+
+    list_display = ("label", "endpoint_id", "category", "price", "status", "first_seen", "fal_page")
+    list_filter = ("status", "category")
+    search_fields = ("label", "endpoint_id")
+    readonly_fields = ("endpoint_id", "label", "category", "description", "model_url", "unit_price", "unit",
+                       "first_seen", "last_seen")
+    actions = ("mark_ignored", "mark_new")
+
+    @admin.display(description="fal price")
+    def price(self, obj):
+        return f"${obj.unit_price.normalize()} per {obj.unit}" if obj.unit_price is not None else "-"
+
+    @admin.display(description="fal page")
+    def fal_page(self, obj):
+        return format_html('<a href="{}" target="_blank" rel="noopener">Open</a>', obj.model_url) if obj.model_url else "-"
+
+    @admin.action(description="Ignore (not useful for Admart)")
+    def mark_ignored(self, request, queryset):
+        queryset.update(status="ignored")
+
+    @admin.action(description="Mark as new again")
+    def mark_new(self, request, queryset):
+        queryset.exclude(status="added").update(status="new")
 
 
 @admin.register(ImageJob)

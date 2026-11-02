@@ -336,3 +336,53 @@ class FavoriteTemplate(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user_id} ♥ {self.template_id}"
+
+
+class FalPriceSnapshot(models.Model):
+    """The last unit price fal's pricing API returned for one endpoint.
+
+    Shared by every process (web, agents worker, Celery) so they all quote from the same
+    prices, and kept across restarts and fal outages. Rows hold fal's raw answer; the
+    price guard in content.pricing decides at read time whether to trust it.
+    """
+
+    endpoint_id = models.CharField(max_length=200, unique=True)
+    unit_price = models.DecimalField(max_digits=18, decimal_places=10)
+    unit = models.CharField(max_length=64)
+    currency = models.CharField(max_length=8, default="USD")
+    source = models.CharField(max_length=16, default="fal")
+    fetched_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["endpoint_id"]
+
+    def __str__(self) -> str:
+        return f"{self.endpoint_id}: {self.unit_price} per {self.unit}"
+
+
+class FalModelListing(models.Model):
+    """An image/video model fal offers that Admart's curated catalog does not have yet.
+
+    Filled by the discover_fal_models job and reviewed by staff in the Django admin. A listed
+    model is never offered to users: adding one needs its input mapping and option prices in
+    content.catalog / content.video_catalog / content.fal_price_tables.
+    """
+
+    STATUS_CHOICES = (("new", "New"), ("ignored", "Ignored"), ("added", "Added to Admart"))
+
+    endpoint_id = models.CharField(max_length=200, unique=True)
+    label = models.CharField(max_length=200)
+    category = models.CharField(max_length=64)
+    description = models.TextField(blank=True)
+    model_url = models.URLField(max_length=300, blank=True)
+    unit_price = models.DecimalField(max_digits=18, decimal_places=10, null=True, blank=True)
+    unit = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="new")
+    first_seen = models.DateTimeField(default=timezone.now)
+    last_seen = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-first_seen", "endpoint_id"]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.endpoint_id})"

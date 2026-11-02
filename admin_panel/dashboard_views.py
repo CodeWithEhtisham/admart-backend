@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render
 
@@ -8,5 +9,5 @@ def admin_dashboard(request):
     return render(
         request,
         "admin_panel/dashboard.html",
-        {"is_owner": request.user.is_superuser},
+        {"is_owner": request.user.is_superuser, "frontend_url": settings.FRONTEND_URL.rstrip("/")},
     )

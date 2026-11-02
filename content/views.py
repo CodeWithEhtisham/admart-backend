@@ -20,11 +20,10 @@ from content.credits import InsufficientCredits, fail_open_job, reserve_credits
 from content.fal_models import (
     FalModelSearchError,
     catalog_discovery_payload,
-    merged_image_catalog,
     search_fal_models,
 )
 from content.jobs import refresh_job
-from content.library import mark_library_generating, sync_library_from_image_job
+from content.library import delete_asset_file, mark_library_generating, sync_library_from_image_job
 from content.mapping import build_fal_input
 from content.models import FavoriteTemplate, ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
 from content.pricing import attach_image_pricing, quote_image_job, quote_response
@@ -36,9 +35,11 @@ from content.serializers import (
     PromptEnhanceSerializer,
     TemplateSerializer,
 )
+from content.storage_quota import storage_changed, storage_problem
 from content.storage_utils import absolute_media_url, verified_image_name
 from content.url_resolve import resolve_urls_for_fal
 from projects.models import Project
+from users import entitlements
 
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
@@ -94,6 +95,9 @@ class ImageJobListCreateView(APIView):
         data = ser.validated_data
         capability = data["capability"]
         model = data["model"]
+        problem = entitlements.image_problem(request.user, data) or storage_problem(request.user)
+        if problem:
+            return Response(problem.response_data(), status=status.HTTP_403_FORBIDDEN)
         quote = quote_image_job(capability, model, data)
         amount = quote["credits_decimal"]
 
@@ -208,6 +212,9 @@ class ImageUploadView(APIView):
             )
         if upload.size > MAX_UPLOAD_BYTES:
             return Response({"message": "File too large"}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        full = storage_problem(request.user, upload.size)
+        if full:
+            return Response(full.response_data(), status=status.HTTP_403_FORBIDDEN)
 
         filename = verified_image_name(upload, content_type)
         if filename is None:
@@ -223,6 +230,7 @@ class ImageUploadView(APIView):
             byte_size=upload.size,
         )
         record.file.save(filename, upload, save=True)
+        storage_changed(request.user.pk)
         url = absolute_media_url(record.file.name, request=request)
         return Response(
             {
@@ -241,17 +249,10 @@ class ImageModelCatalogView(APIView):
         if project_id is not None:
             _owned_project(request.user, project_id)
         discover = _truthy(request.query_params.get("discover"))
-        # Merged (curated + live provider) by default; ?fal=0 opts back into curated-only.
-        include_discovery = discover or request.query_params.get("fal") != "0"
-        fal_error = None
-        try:
-            merged = merged_image_catalog(include_discovery=include_discovery)
-        except FalModelSearchError:
-            merged = {cap: list(models) for cap, models in MODEL_CATALOG.items()}
-            fal_error = "Could not fetch the latest model catalog"
-        payload = attach_image_pricing(merged)
-        if fal_error:
-            payload["_fal_error"] = fal_error
+        # Only curated models: each has a checked input mapping and price. New fal models are
+        # listed for the admin by the discover_fal_models job (FalModelListing).
+        payload = attach_image_pricing({cap: list(models) for cap, models in MODEL_CATALOG.items()})
+        payload["_plan"] = entitlements.plan_summary(request.user)
         if discover:
             payload["_fal"] = catalog_discovery_payload("image")
         return Response(payload)
@@ -607,7 +608,7 @@ class LibraryListView(APIView):
 
 
 class LibraryDetailView(APIView):
-    """DELETE /api/projects/:id/library/:assetId — soft delete."""
+    """DELETE /api/projects/:id/library/:assetId — soft delete; the file goes, freeing storage."""
 
     permission_classes = [IsAuthenticated]
 
@@ -618,6 +619,7 @@ class LibraryDetailView(APIView):
         )
         asset.deleted_at = timezone.now()
         asset.save(update_fields=["deleted_at", "updated_at"])
+        delete_asset_file(asset)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -661,6 +663,9 @@ class LibraryUploadView(APIView):
                 {"message": "File too large"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
+        full = storage_problem(request.user, upload.size)
+        if full:
+            return Response(full.response_data(), status=status.HTTP_403_FORBIDDEN)
 
         # Never trust the client filename extension — map from verified MIME only.
         ext_by_type = {
@@ -678,6 +683,7 @@ class LibraryUploadView(APIView):
 
         rel = f"projects/{project.id}/library/{uuid.uuid4().hex}{ext}"
         saved = default_storage.save(rel, upload)
+        storage_changed(request.user.pk)
         url = absolute_media_url(saved, request=request)
         raw_name = Path(upload.name or "").stem
         # Strip path junk / control chars from display title only.
