@@ -87,3 +87,15 @@ local_settings.py
 
 .env
 db.sqlite3
+media/
+.venv/
+venv/
+
+# Payment proofs and other never-public uploads
+private_media/
+staticfiles/
+agent_music/
+agent_models/
+
+# Docker: one-time data import
+.docker-import.json

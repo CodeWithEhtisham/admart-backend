@@ -1,0 +1,11 @@
+# /etc/systemd/system/admart-backup.timer
+[Unit]
+Description=Nightly Admart backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
