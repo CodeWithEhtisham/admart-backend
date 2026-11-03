@@ -10,6 +10,8 @@ from typing import Any
 import requests
 from django.conf import settings
 
+from content.moderation import GEMINI_SAFETY_SETTINGS
+
 logger = logging.getLogger(__name__)
 
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -123,6 +125,7 @@ def _call_gemini(
             "maxOutputTokens": 1100,
             "responseMimeType": "application/json",
         },
+        "safetySettings": GEMINI_SAFETY_SETTINGS,
     }
     response = requests.post(
         url,

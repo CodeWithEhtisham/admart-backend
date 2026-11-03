@@ -8,6 +8,7 @@ import re
 
 from content import fal_client
 from content.credits import fail_open_job, mark_open_job, succeed_open_job
+from content.moderation import ContentBlocked, ModerationUnavailable, check_video
 from content.library import sync_library_from_video_job
 from content.models import VideoJob
 from content.storage_utils import normalize_fal_video, persist_remote_video
@@ -67,6 +68,11 @@ def refresh_video_job(job: VideoJob, *, request=None) -> VideoJob:
     raw_video, seed = normalize_fal_video(payload)
     if not raw_video or not raw_video.get("url"):
         _fail_job(job, "Provider returned no video")
+        return job
+    try:
+        check_video(raw_video["url"], user=job.user_id, source="video job output")
+    except (ContentBlocked, ModerationUnavailable) as exc:
+        _fail_job(job, str(exc))  # refunded; the video never reaches the library
         return job
 
     try:

@@ -19,7 +19,8 @@ from content.models import LibraryAsset
 from content.storage_utils import absolute_media_url
 from content.url_resolve import fetch_media
 from projects.models import PublishJob, SocialAccount
-from projects.publish import PLATFORM_LABELS, PUBLISHERS, user_error
+from projects.publish import PLATFORM_LABELS, user_error
+from projects.publish_limits import publish
 
 PLATFORMS = ("youtube", "instagram", "facebook")
 LISTEN_SECONDS = 180  # enough of the video to know what it is about
@@ -222,8 +223,8 @@ def step_post(run) -> None:
         posted[platform] = {"status": "running"}
         base._save(run)
         try:
-            result = PUBLISHERS[platform](accounts[platform], kind="video", source_url=asset.source_url,
-                                          **_publish_kwargs(platform, out["posts"][platform], asset, thumbnail))
+            result = publish(accounts[platform], kind="video", source_url=asset.source_url,
+                             **_publish_kwargs(platform, out["posts"][platform], asset, thumbnail))
         except Exception as exc:  # noqa: BLE001 — shown per platform
             result = {"status": "failed", "error": user_error(exc, platform)}
         posted[platform] = result

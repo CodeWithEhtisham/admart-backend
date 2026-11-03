@@ -15,7 +15,8 @@ from projects.analytics import build_project_analytics
 from projects.calendar import build_project_calendar
 from projects.media_policy import validate_organic_platforms
 from projects.models import PublishJob, SocialAccount
-from projects.publish import PUBLISHERS, list_facebook_pages, list_youtube_playlists, user_error
+from projects.publish import list_facebook_pages, list_youtube_playlists, user_error
+from projects.publish_limits import jitter, publish
 from projects.serializers import PublishJobSerializer
 from projects.views import ProjectScopedSocialMixin
 from users.plans import get_plan
@@ -152,6 +153,8 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
         youtube_kwargs = _youtube_publish_kwargs(
             request.data, title, (asset.thumbnail_url if asset else "") or ""
         )
+        if asset is not None and asset.capability != "upload":
+            youtube_kwargs["synthetic_media"] = True  # Admart made it: YouTube requires the AI disclosure
         facebook_kwargs = _facebook_publish_kwargs(request.data, title)
         instagram_kwargs = _instagram_publish_kwargs(request.data, title)
         error = validate_organic_platforms(kind, platforms)
@@ -173,6 +176,7 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                 return Response({"message": "Pick a date and time to schedule."}, status=status.HTTP_400_BAD_REQUEST)
             if scheduled_at <= timezone.now():
                 return Response({"message": "Schedule time must be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+            scheduled_at = jitter(scheduled_at)
             youtube_kwargs["publish_at"] = scheduled_at.astimezone(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             facebook_kwargs["scheduled_at"] = scheduled_at
 
@@ -213,7 +217,6 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
             if action == "schedule" and platform not in NATIVE_SCHEDULE:
                 results[platform] = {"status": "scheduled"}
                 continue
-            publisher = PUBLISHERS[platform]
             try:
                 kwargs = {"kind": kind, "source_url": source_url, "title": title}
                 if platform == "youtube":
@@ -222,7 +225,9 @@ class ProjectPublishView(ProjectScopedSocialMixin, APIView):
                     kwargs.update(facebook_kwargs)
                 elif platform == "instagram":
                     kwargs.update(instagram_kwargs)
-                results[platform] = publisher(connected[platform], **kwargs)
+                results[platform] = publish(
+                    connected[platform], post_at=scheduled_at if action == "schedule" else None, **kwargs
+                )
                 if action == "schedule" and results[platform].get("status") == "succeeded":
                     results[platform]["status"] = "scheduled"
             except Exception as exc:  # noqa: BLE001

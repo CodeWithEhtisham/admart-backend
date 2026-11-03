@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content import fal_client
+from content.moderation import ContentBlocked, ModerationUnavailable
 from content.credits import InsufficientCredits, fail_open_job, reserve_credits
 from content.fal_models import catalog_discovery_payload
 from content.library import mark_library_generating_video, sync_library_from_video_job
@@ -114,7 +115,12 @@ class VideoJobListCreateView(APIView):
         )
 
         try:
-            submission = fal_client.submit(model, fal_input)
+            submission = fal_client.submit(model, fal_input, user=request.user)
+        except (ContentBlocked, ModerationUnavailable) as exc:
+            fail_open_job(job, str(exc))  # refunds the reservation
+            if isinstance(exc, ContentBlocked):
+                return Response({"message": str(exc), "code": "CONTENT_BLOCKED"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except fal_client.FalError as exc:
             fail_open_job(job, str(exc) if settings.DEBUG else "Provider error")
             code = (

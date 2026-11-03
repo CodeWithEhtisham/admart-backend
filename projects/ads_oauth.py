@@ -227,15 +227,15 @@ ADS_PROVIDERS = {
 def _google_youtube_boost(account, *, source_url: str, title: str, budget: str) -> dict:
     """Host the creative on the connected YouTube channel, then create a paused Google Ads campaign."""
     from projects.models import SocialAccount
-    from projects.publish import publish_youtube
+    from projects.publish_limits import publish
 
     yt = SocialAccount.objects.filter(
         project=account.project, platform="youtube", connected=True
     ).first()
     if yt is None:
         raise ValueError("Connect YouTube first. Google Ads needs a video on your channel.")
-    uploaded = publish_youtube(
-        yt, kind="video", source_url=source_url, title=title, privacy="unlisted"
+    uploaded = publish(
+        yt, kind="video", source_url=source_url, title=title, privacy="unlisted", organic=False
     )
     video_id = uploaded.get("externalId") or ""
     token = account.get_access_token()

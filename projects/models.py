@@ -184,6 +184,28 @@ class PublishJob(models.Model):
         ordering = ["-created_at"]
 
 
+class PublishEvent(models.Model):
+    """One upload sent to a platform. Feeds the posting caps in projects.publish_limits."""
+
+    STATUS_CHOICES = [
+        ("running", "Running"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
+        ("blocked", "Blocked"),  # the platform answered with a rate-limit / spam error
+    ]
+
+    account = models.ForeignKey(SocialAccount, on_delete=models.CASCADE, related_name="publish_events")
+    # platform:external_id, so one channel linked to several projects shares its caps
+    channel = models.CharField(max_length=300, db_index=True)
+    platform = models.CharField(max_length=20)
+    kind = models.CharField(max_length=16)
+    source_url = models.CharField(max_length=2000, blank=True, default="")
+    organic = models.BooleanField(default=True)
+    post_at = models.DateTimeField()  # when it goes live: the scheduled time, or the upload time
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="running")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+
 class AdAccount(models.Model):
     """Ads Manager connection for a project. Meta covers Facebook + Instagram ads."""
 

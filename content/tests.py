@@ -1088,3 +1088,94 @@ class LargeVideoUploadTests(APITestCase):
             self.assertEqual(self._start().status_code, status.HTTP_201_CREATED)
         response = self._start()
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+def _moderation_reply(*flags: str) -> Mock:
+    categories = {name: True for name in flags}
+    return Mock(ok=True, json=lambda: {"results": [{"flagged": bool(flags), "categories": categories}]})
+
+
+@override_settings(OPENAI_API_KEY="test-key", MODERATION_REQUIRED=True)
+class ModerationTests(APITestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="mod@example.com", password="pass12345", credits_total=100, credits_remaining=100, credits_used=0
+        )
+        self.project = Project.objects.create(owner=self.user, name="Ads")
+        self.client.force_authenticate(user=self.user)
+
+    def test_blocks_adult_text_and_logs_it_but_lets_plain_violence_through(self):
+        from content import moderation
+        from content.models import ModerationEvent
+
+        with patch("content.moderation.requests.post", return_value=_moderation_reply("violence")):
+            moderation.check_text("Two boxers trade punches in the ring", user=self.user)
+        with patch("content.moderation.requests.post", return_value=_moderation_reply("sexual")):
+            with self.assertRaises(moderation.ContentBlocked):
+                moderation.check_text("explicit request", user=self.user, source="test")
+        event = ModerationEvent.objects.get()
+        self.assertEqual((event.user, event.categories), (self.user, ["sexual"]))
+
+    def test_five_blocks_pause_the_user_until_reviewed(self):
+        from content import moderation
+        from content.models import ModerationEvent
+
+        for _ in range(moderation.LOCK_AFTER):
+            ModerationEvent.objects.create(user=self.user, source="test", kind="text", categories=["sexual"])
+        with patch("content.moderation.requests.post", return_value=_moderation_reply()) as post:
+            with self.assertRaisesMessage(moderation.ContentBlocked, "paused"):
+                moderation.check_text("a sunny beach", user=self.user)
+            post.assert_not_called()
+            ModerationEvent.objects.update(reviewed=True)
+            moderation.check_text("a sunny beach", user=self.user)
+
+    def test_fails_closed_when_the_check_cannot_run(self):
+        from content import moderation
+
+        with patch("content.moderation.requests.post", side_effect=requests.ConnectionError("down")):
+            with self.assertRaises(moderation.ModerationUnavailable):
+                moderation.check_text("a sunny beach")
+        with override_settings(OPENAI_API_KEY=""):
+            with self.assertRaises(moderation.ModerationUnavailable):
+                moderation.check_text("a sunny beach")
+            with override_settings(MODERATION_REQUIRED=False):
+                moderation.check_text("a sunny beach")  # local development without a key
+
+    def test_fal_input_checks_prompt_and_every_input_image(self):
+        from content import moderation
+
+        with patch("content.moderation.requests.post", return_value=_moderation_reply()) as post:
+            moderation.check_fal_input(
+                {"prompt": "a cat", "image_urls": ["https://a/1.png", "https://a/2.png"], "mask_url": "https://a/m.png"}
+            )
+        self.assertEqual(post.call_count, 3)  # the prompt + two images; the mask is not content
+
+    @patch("content.fal_client.requests.post")
+    def test_blocked_prompt_is_refused_and_refunded(self, fal_post):
+        with patch("content.moderation.requests.post", return_value=_moderation_reply("sexual")):
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/images/jobs",
+                {"capability": "textToImage", "prompt": "explicit request", "aspectRatio": "1:1"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "CONTENT_BLOCKED")
+        fal_post.assert_not_called()
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.credits_remaining, 100)
+        self.assertEqual(ImageJob.objects.get().status, "failed")
+
+    @patch("content.jobs.fal_client.result", return_value={"images": [{"url": "https://fal.media/out.png"}]})
+    @patch("content.jobs.fal_client.status", return_value={"status": "COMPLETED"})
+    def test_flagged_output_image_never_reaches_the_library(self, _status, _result):
+        from content.jobs import refresh_job
+
+        job = ImageJob.objects.create(
+            project=self.project, user=self.user, capability="textToImage", model="fal-ai/flux/dev",
+            status="running", prompt="a beach", fal_request_id="r1",
+        )
+        with patch("content.moderation.requests.post", return_value=_moderation_reply("sexual")):
+            refresh_job(job)
+        job.refresh_from_db()
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.images, [])

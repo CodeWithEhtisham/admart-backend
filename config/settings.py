@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -387,6 +388,13 @@ if not DEBUG and not SOCIAL_TOKEN_ENCRYPTION_KEY:
 FAL_KEY = os.getenv("FAL_KEY", "")
 FAL_WEBHOOK_SECRET = os.getenv("FAL_WEBHOOK_SECRET", "")
 FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux/dev")
+
+# Content moderation (content/moderation.py): OpenAI's free Moderation API checks prompts,
+# input images and generated output. Tests never call it. Without a key, checks are skipped
+# in DEBUG and generation is refused otherwise (MODERATION_REQUIRED), so production fails closed.
+TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
+OPENAI_API_KEY = "" if TESTING else os.getenv("OPENAI_API_KEY", "")
+MODERATION_REQUIRED = os.getenv("MODERATION_REQUIRED", str(not DEBUG and not TESTING)).lower() in ("true", "1", "yes")
 
 # Prompt enhancer (server-side only)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

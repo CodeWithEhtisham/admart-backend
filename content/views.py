@@ -15,6 +15,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from content import fal_client
+from content import moderation
+from content.moderation import ContentBlocked, ModerationUnavailable
 from content.catalog import MODEL_CATALOG
 from content.credits import InsufficientCredits, fail_open_job, reserve_credits
 from content.fal_models import (
@@ -144,7 +146,12 @@ class ImageJobListCreateView(APIView):
         )
 
         try:
-            submission = fal_client.submit(model, fal_input)
+            submission = fal_client.submit(model, fal_input, user=request.user)
+        except (ContentBlocked, ModerationUnavailable) as exc:
+            fail_open_job(job, str(exc))  # refunds the reservation
+            if isinstance(exc, ContentBlocked):
+                return Response({"message": str(exc), "code": "CONTENT_BLOCKED"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except fal_client.FalError as exc:
             fail_open_job(job, str(exc) if settings.DEBUG else "Provider error")
             code = status.HTTP_503_SERVICE_UNAVAILABLE if exc.status_code == 503 else status.HTTP_502_BAD_GATEWAY
@@ -275,12 +282,20 @@ class PromptEnhanceView(APIView):
             return Response({"message": "Invalid request"}, status=status.HTTP_400_BAD_REQUEST)
 
         data = ser.validated_data
-        result = enhance_prompt(
-            prompt=data["prompt"],
-            kind=data.get("kind") or "image",
-            negative_prompt=data.get("negativePrompt") or "",
-            context=data.get("context") or {},
-        )
+        try:
+            moderation.check_text(data["prompt"], user=request.user, source="prompt enhancer")
+            result = enhance_prompt(
+                prompt=data["prompt"],
+                kind=data.get("kind") or "image",
+                negative_prompt=data.get("negativePrompt") or "",
+                context=data.get("context") or {},
+            )
+            # Negative prompts list what to avoid ("no nudity"), so only the prompt itself is checked.
+            moderation.check_text(result.get("enhancedPrompt", ""), user=request.user, source="prompt enhancer output")
+        except ContentBlocked as exc:
+            return Response({"message": str(exc), "code": "CONTENT_BLOCKED"}, status=status.HTTP_400_BAD_REQUEST)
+        except ModerationUnavailable as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(result)
 
 

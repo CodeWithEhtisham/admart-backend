@@ -18,7 +18,7 @@ from pathlib import Path
 import requests
 from django.conf import settings
 
-from content import fal_client
+from content import fal_client, moderation
 from content.prompt_enhancer import _parse_json_text
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,9 @@ def _failure_message(job: str, name: str, exc: BaseException) -> str:
     while exc is not None and len(chain) < 5:
         chain.append(exc)
         exc = exc.__cause__ or exc.__context__
+    refused = next((e for e in chain if isinstance(e, (moderation.ContentBlocked, moderation.ModerationUnavailable))), None)
+    if refused is not None:
+        return str(refused)
     if any(isinstance(e, (requests.ConnectionError, requests.Timeout)) for e in chain):
         return (f"The {job} service ({name}) couldn't be reached: your internet connection looks slow or offline. "
                 "Check your Wi-Fi or connection and try again.")
@@ -146,6 +149,7 @@ def _gemini(system: str, user: str, json_mode: bool, temperature: float):
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 8000,
                              **({"responseMimeType": "application/json"} if json_mode else {})},
+        "safetySettings": moderation.GEMINI_SAFETY_SETTINGS,
     }
     status = None
     for model in [m.strip() for m in settings.AGENTS_GEMINI_MODELS.split(",") if m.strip()]:
@@ -178,11 +182,13 @@ def text(system: str, user: str, *, json_mode: bool = True, search: bool = False
     use_gemini = not settings.OPENROUTER_API_KEY and bool(settings.GEMINI_API_KEY)
 
     def run():
+        moderation.check_text(user, source="agent writer")
         for _ in range(2):
             if use_gemini:
                 raw, sources = _gemini(system, user, json_mode, temperature)
             else:
                 raw, sources = _openrouter(system, user, json_mode, search, temperature, model)
+            moderation.check_text(raw, source="agent writer output")
             if not json_mode:
                 return raw, sources
             parsed = _as_dict(raw)
@@ -316,6 +322,7 @@ def image(prompt: str, width: int, height: int, model: str | None = None) -> tup
             raise RuntimeError("fal returned no image")
         resp = _download(images[0]["url"])
         kind = resp.headers.get("Content-Type", "").split(";")[0]
+        moderation.check_image_bytes(resp.content, kind or "image/png", source="agent image output")
         return resp.content, {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(kind, ".png")
 
     return _call("image", "fal", bool(settings.FAL_KEY), run)

@@ -81,9 +81,8 @@ def build_fal_input(capability: str, model: str, data: dict) -> dict:
     _maybe(out, "quality", data.get("quality"))
     _maybe(out, "mask_url", data.get("maskUrl"))
 
-    if data.get("enableSafetyChecker") is not None:
-        out["enable_safety_checker"] = data["enableSafetyChecker"]
-    elif model in FLUX_MODELS and capability == "textToImage":
+    # Always on and never user-switchable: a request asking for false still gets the checker.
+    if model in FLUX_MODELS or data.get("enableSafetyChecker") is not None:
         out["enable_safety_checker"] = True
 
     if capability == "upscale":

@@ -2,7 +2,15 @@ from django.contrib import admin
 
 from django.utils.html import format_html
 
-from content.models import FalModelListing, ImageJob, ImageUpload, LibraryAsset, Template, TemplateUseEvent
+from content.models import (
+    FalModelListing,
+    ImageJob,
+    ImageUpload,
+    LibraryAsset,
+    ModerationEvent,
+    Template,
+    TemplateUseEvent,
+)
 
 
 @admin.register(FalModelListing)
@@ -88,3 +96,19 @@ class TemplateUseEventAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     search_fields = ("template__title", "user__email")
     readonly_fields = ("id", "template", "user", "created_at")
+
+
+@admin.register(ModerationEvent)
+class ModerationEventAdmin(admin.ModelAdmin):
+    """Prompts, inputs and outputs blocked by content moderation. Five unreviewed events in
+    24 hours pause that user's generation; marking them reviewed lifts the pause."""
+
+    list_display = ("created_at", "user", "source", "kind", "categories", "reviewed")
+    list_filter = ("reviewed", "kind", "source")
+    search_fields = ("user__email", "excerpt")
+    readonly_fields = ("user", "source", "kind", "categories", "excerpt", "created_at")
+    actions = ("mark_reviewed",)
+
+    @admin.action(description="Mark reviewed (lifts the user's pause)")
+    def mark_reviewed(self, request, queryset):
+        queryset.update(reviewed=True)

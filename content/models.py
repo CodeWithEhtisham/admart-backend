@@ -386,3 +386,30 @@ class FalModelListing(models.Model):
 
     def __str__(self) -> str:
         return f"{self.label} ({self.endpoint_id})"
+
+
+class ModerationEvent(models.Model):
+    """One prompt, input or output refused by content/moderation.py. Unreviewed events in the
+    last 24 hours count toward pausing the user's generation; marking them reviewed lifts it."""
+
+    KIND_CHOICES = [("text", "Text"), ("image", "Image"), ("video", "Video")]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="moderation_events",
+    )
+    source = models.CharField(max_length=40)  # where it was caught, e.g. "image job", "agent writer"
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES)
+    categories = models.JSONField(default=list)
+    excerpt = models.TextField(blank=True, default="")
+    reviewed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.kind} blocked ({', '.join(self.categories)})"

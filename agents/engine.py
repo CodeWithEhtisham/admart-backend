@@ -19,6 +19,7 @@ from agents.registry import get_agent
 from agents import clips, cross_post, growth, video_edit
 from agents.steps import STEPS, NeedsReview, RunCancelled, WaitUntil
 from content.credits import refund_credits, reserve_credits
+from content import moderation
 
 # The Video Editor's and Cross-poster's steps live in their own modules (they import agents.steps).
 STEPS.update(video_edit.STEPS)
@@ -165,7 +166,8 @@ def process(run: AgentRun) -> None:
             run.locked_until = timezone.now() + LEASE
             run.save(update_fields=["step", "locked_until", "updated_at"])
             used, started = providers.track(), timezone.now()
-            STEPS[step](run)
+            with moderation.acting_as(run.user_id):
+                STEPS[step](run)
             _log(run, step, started, used, providers.text_spent())
     except RunCancelled:
         logger.info("Run %s was cancelled while working", run.id)

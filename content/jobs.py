@@ -7,6 +7,7 @@ import logging
 
 from content import fal_client
 from content.credits import fail_open_job, mark_open_job, succeed_open_job
+from content.moderation import ContentBlocked, ModerationUnavailable, check_image
 from content.library import sync_library_from_image_job
 from content.models import ImageJob
 from content.storage_utils import normalize_fal_images, persist_remote_image
@@ -55,6 +56,12 @@ def refresh_job(job: ImageJob, *, request=None) -> ImageJob:
     raw_images, raw_mask, seed = normalize_fal_images(payload)
     if not raw_images:
         _fail_job(job, "Provider returned no images")
+        return job
+    try:
+        for item in raw_images:
+            check_image(item["url"], user=job.user_id, source="image job output")
+    except (ContentBlocked, ModerationUnavailable) as exc:
+        _fail_job(job, str(exc))  # refunded; the image never reaches the library
         return job
 
     durable: list[dict] = []

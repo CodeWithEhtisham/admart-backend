@@ -9,7 +9,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from projects.crypto import decrypt
-from projects.models import Project, PublishJob, SocialAccount
+from projects.models import Project, PublishEvent, PublishJob, SocialAccount
 from projects.views import OAUTH_STATE_SALT
 
 
@@ -808,7 +808,7 @@ class OrganicPublishTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _youtube_ok})
+    @patch.dict("projects.publish.PUBLISHERS", {"youtube": _youtube_ok})
     def test_video_youtube_returns_201(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
         response = self.client.post(
@@ -825,7 +825,7 @@ class OrganicPublishTests(APITestCase):
 
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
         boom = MagicMock(side_effect=requests.ConnectionError("('Connection aborted.', ConnectionResetError(104))"))
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": boom}), self.assertLogs("projects.publish", "WARNING"):
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": boom}), self.assertLogs("projects.publish", "WARNING"):
             response = self.client.post(
                 self.url,
                 {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
@@ -838,7 +838,7 @@ class OrganicPublishTests(APITestCase):
     def test_platform_message_passes_through(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
         quota = MagicMock(side_effect=RuntimeError("Upload quota exceeded"))
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": quota}):
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": quota}):
             response = self.client.post(
                 self.url,
                 {"kind": "video", "sourceUrl": "https://cdn.example/v.mp4", "platforms": ["youtube"]},
@@ -848,7 +848,7 @@ class OrganicPublishTests(APITestCase):
 
     def test_draft_does_not_call_publisher(self) -> None:
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": MagicMock(side_effect=AssertionError("draft"))}):
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": MagicMock(side_effect=AssertionError("draft"))}):
             response = self.client.post(
                 self.url,
                 {
@@ -877,7 +877,7 @@ class OrganicPublishTests(APITestCase):
 
         when = timezone.now() + timedelta(days=2)
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": _capture}):
             response = self.client.post(
                 self.url,
                 {
@@ -913,7 +913,7 @@ class OrganicPublishTests(APITestCase):
         from datetime import timedelta
 
         SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"instagram": MagicMock(side_effect=AssertionError("ig"))}):
+        with patch.dict("projects.publish.PUBLISHERS", {"instagram": MagicMock(side_effect=AssertionError("ig"))}):
             response = self.client.post(
                 self.url,
                 {
@@ -937,7 +937,7 @@ class OrganicPublishTests(APITestCase):
             return {"status": "succeeded", "externalId": "yt-2"}
 
         SocialAccount.objects.create(project=self.project, platform="youtube", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": _capture}):
             response = self.client.post(
                 self.url,
                 {
@@ -967,7 +967,8 @@ class OrganicPublishTests(APITestCase):
         self.assertEqual(captured["license_type"], "youtube")
 
         captured.clear()
-        with patch.dict("projects.publish_views.PUBLISHERS", {"youtube": _capture}):
+        PublishEvent.objects.all().delete()  # this test checks field mapping, not the posting caps
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": _capture}):
             response = self.client.post(
                 self.url,
                 {
@@ -1025,7 +1026,7 @@ class OrganicPublishTests(APITestCase):
             return {"status": "succeeded", "externalId": "fb-1"}
 
         SocialAccount.objects.create(project=self.project, platform="facebook", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"facebook": _capture}):
+        with patch.dict("projects.publish.PUBLISHERS", {"facebook": _capture}):
             response = self.client.post(
                 self.url,
                 {
@@ -1061,7 +1062,7 @@ class OrganicPublishTests(APITestCase):
             return {"status": "succeeded", "externalId": "ig-1"}
 
         SocialAccount.objects.create(project=self.project, platform="instagram", connected=True)
-        with patch.dict("projects.publish_views.PUBLISHERS", {"instagram": _capture}):
+        with patch.dict("projects.publish.PUBLISHERS", {"instagram": _capture}):
             response = self.client.post(
                 self.url,
                 {
@@ -2064,3 +2065,60 @@ class SingleMetaConnectionTests(APITestCase):
             "https://graph.facebook.com/v21.0/ig-17841/media",
             "https://graph.facebook.com/v21.0/ig-17841/media_publish",
         ])
+
+
+class PublishLimitTests(APITestCase):
+    def setUp(self) -> None:
+        user = User.objects.create_user(email="cap@example.com", password="Password123!", first_name="C", last_name="P")
+        project = Project.objects.create(owner=user, name="Caps")
+        self.yt = SocialAccount.objects.create(project=project, platform="youtube", connected=True, external_id="UC1")
+        self.now = timezone.now()
+
+    def _post(self, url: str, hours: float = 0, **kwargs):
+        from datetime import timedelta
+
+        from projects.publish_limits import publish
+
+        return publish(self.yt, kind="video", source_url=url, title="T", post_at=self.now + timedelta(hours=hours), **kwargs)
+
+    @patch.dict("projects.publish.PUBLISHERS", {"youtube": _youtube_ok})
+    def test_daily_cap_gap_and_duplicate(self) -> None:
+        from projects.publish_limits import DAILY_CAP, PublishLimited
+
+        self._post("https://cdn.example/0.mp4")
+        with self.assertRaisesMessage(PublishLimited, "at least an hour"):
+            self._post("https://cdn.example/new.mp4", hours=-0.5)
+        for i in range(1, DAILY_CAP["youtube"]):
+            self._post(f"https://cdn.example/{i}.mp4", hours=2 * i)
+        with self.assertRaisesMessage(PublishLimited, "posts per account in 24 hours"):
+            self._post("https://cdn.example/new.mp4", hours=12)
+        with self.assertRaisesMessage(PublishLimited, "already posted"):
+            self._post("https://cdn.example/0.mp4", hours=48)
+        self._post("https://cdn.example/new.mp4", hours=30)  # a day later the cap is free again
+
+    def test_failed_upload_does_not_count_but_spam_error_pauses(self) -> None:
+        from projects.publish_limits import PublishLimited
+
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": MagicMock(side_effect=RuntimeError("network"))}):
+            with self.assertRaises(RuntimeError):
+                self._post("https://cdn.example/a.mp4")
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": MagicMock(side_effect=RuntimeError("uploadLimitExceeded"))}):
+            with self.assertRaises(RuntimeError):
+                self._post("https://cdn.example/a.mp4", hours=2)
+        with patch.dict("projects.publish.PUBLISHERS", {"youtube": _youtube_ok}):
+            with self.assertRaisesMessage(PublishLimited, "paused for 24 hours"):
+                self._post("https://cdn.example/b.mp4", hours=5)
+
+    @patch.dict("projects.publish.PUBLISHERS", {"youtube": _youtube_ok})
+    def test_shared_youtube_allowance_applies_to_ads_too(self) -> None:
+        from projects.models import PublishEvent
+        from projects.publish_limits import YOUTUBE_PROJECT_DAILY_UPLOADS, PublishLimited
+
+        self._post("https://cdn.example/a.mp4")
+        self._post("https://cdn.example/a.mp4", organic=False)  # ad creative: skips the per-account rules
+        PublishEvent.objects.bulk_create(
+            PublishEvent(account=self.yt, channel="youtube:other", platform="youtube", kind="video", post_at=self.now)
+            for _ in range(YOUTUBE_PROJECT_DAILY_UPLOADS)
+        )
+        with self.assertRaisesMessage(PublishLimited, "upload allowance"):
+            self._post("https://cdn.example/b.mp4", organic=False)

@@ -52,8 +52,15 @@ def _queue_base_for_model(model: str) -> str:
     return f"{QUEUE_BASE}/{model}"
 
 
-def submit(model: str, arguments: dict) -> FalSubmission:
-    """Submit a job; return fal request id + canonical poll URLs."""
+def submit(model: str, arguments: dict, *, user=None) -> FalSubmission:
+    """Submit a job; return fal request id + canonical poll URLs.
+
+    The prompt and input images pass content moderation first (raises ContentBlocked /
+    ModerationUnavailable), so nothing unchecked reaches fal.
+    """
+    from content.moderation import check_fal_input
+
+    check_fal_input(arguments, user=user)
     url = f"{QUEUE_BASE}/{model}"
     resp = requests.post(
         url, headers=_auth_headers(json_body=True), json=arguments, timeout=REQUEST_TIMEOUT

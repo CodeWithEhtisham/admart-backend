@@ -39,6 +39,7 @@ from content.pricing import serialize_decimal
 from content.storage_utils import absolute_media_url
 from projects.models import Project
 from projects.publish import PLATFORM_LABELS
+from projects.publish_limits import jitter
 from users import entitlements
 from users.plans import get_plan
 
@@ -692,7 +693,7 @@ class RunActionView(_ProjectScoped):
             if not get_plan(run.user.plan).get("limits", {}).get("can_schedule_publishing"):
                 return "Scheduled posting is not included in your plan. Post it now, or upgrade."
         out["chosen"] = chosen
-        out["post_at"] = at.isoformat() if at else None
+        out["post_at"] = jitter(at).isoformat() if at else None
         return None
 
     @staticmethod

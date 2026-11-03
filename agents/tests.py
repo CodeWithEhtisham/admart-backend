@@ -1065,6 +1065,7 @@ class VideoCleanAudioTests(_AgentAPITestCase):
 
 from agents import cross_post  # noqa: E402
 from projects.models import PublishJob, SocialAccount  # noqa: E402
+from projects.publish import PUBLISHERS  # noqa: E402
 
 
 class CrossPosterTests(_AgentAPITestCase):
@@ -1081,7 +1082,7 @@ class CrossPosterTests(_AgentAPITestCase):
             SocialAccount.objects.create(project=self.project, platform=platform)
         self.calls = []
         fake = lambda name: lambda account, **kw: self.calls.append((name, kw)) or {"status": "succeeded"}  # noqa: E731
-        publishers = patch.dict(cross_post.PUBLISHERS, {"youtube": fake("youtube"), "instagram": fake("instagram")})
+        publishers = patch.dict(PUBLISHERS, {"youtube": fake("youtube"), "instagram": fake("instagram")})
         publishers.start()
         self.addCleanup(publishers.stop)
 
@@ -1126,7 +1127,7 @@ class CrossPosterTests(_AgentAPITestCase):
         run.refresh_from_db()
         run.output["posted"] = {"youtube": {"status": "running"}}  # the worker died mid-upload
         run.save()
-        with patch.dict(cross_post.PUBLISHERS, {"instagram": MagicMock(side_effect=RuntimeError("IG down"))}):
+        with patch.dict(PUBLISHERS, {"instagram": MagicMock(side_effect=RuntimeError("IG down"))}):
             self._work()
         run.refresh_from_db()
         self.assertEqual(run.status, "failed")  # nothing confirmed posted: refunded
